@@ -87,7 +87,7 @@ fi
 
 HOST="${DATABRICKS_HOST:-$(python -c "import sys;sys.path.insert(0,'backend');from genie_voice.config import get_settings;print(get_settings().databricks.host)" 2>/dev/null || true)}"
 if [[ -z "$HOST" ]] || [[ "$HOST" == *"<your-workspace>"* ]]; then
-  log "Set databricks.host in config/config.yaml or export DATABRICKS_HOST before deploy."
+  log "Create config/config.local.yaml from config/config.local.yaml.example and set databricks.host (or export DATABRICKS_HOST)."
   exit 1
 fi
 

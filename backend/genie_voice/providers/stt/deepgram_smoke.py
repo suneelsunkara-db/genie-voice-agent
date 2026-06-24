@@ -25,7 +25,8 @@ def _deepgram_key() -> str:
     key = get_settings().secrets.deepgram_api_key.strip()
     if not key:
         raise RuntimeError(
-            "DEEPGRAM_API_KEY is empty. Put it in .env (not config/.env.example)."
+            "DEEPGRAM_API_KEY is empty. Set secrets.deepgram_api_key in "
+            "config/config.local.yaml or DEEPGRAM_API_KEY in .env."
         )
     return key
 

@@ -1,9 +1,8 @@
 """Configuration loader.
 
-Loads non-secret config from `config/config.yaml`, optionally overlaid by
-gitignored `config/config.local.yaml`, then secrets from the environment (.env), and exposes a single cached `Settings` object. Every tunable
-in the system is config-driven - no hardcoded hosts, table names, or vendor
-options anywhere else in the codebase.
+Loads `config/config.yaml` (committed template), deep-merges gitignored
+`config/config.local.yaml` when present (local wins — use a complete file for
+local development), then `.env` secrets and `GENIE_*` env overrides.
 """
 from __future__ import annotations
 
@@ -188,7 +187,11 @@ class DatagenConfig(BaseModel):
 
 
 class Secrets(BaseModel):
-    """Loaded exclusively from environment variables / .env."""
+    """API keys and optional static Lakebase credentials.
+
+    Loaded from config `secrets:` (typically config.local.yaml) with environment
+    variables overriding when set (DEEPGRAM_API_KEY, etc.).
+    """
     databricks_token: str = ""
     databricks_client_id: str = ""
     databricks_client_secret: str = ""
@@ -285,6 +288,7 @@ class Settings(BaseModel):
 
 
 def _load_yaml() -> dict[str, Any]:
+    """Load config.yaml, then overlay config.local.yaml if it exists (local wins)."""
     if os.environ.get("GENIE_CONFIG"):
         path = _config_path()
         if not path.exists():
@@ -304,7 +308,20 @@ def _load_yaml() -> dict[str, Any]:
             local = yaml.safe_load(fh) or {}
         if local:
             raw = _deep_merge(raw, local)
+    elif _looks_like_template_config(raw):
+        import warnings
+
+        warnings.warn(
+            "config/config.local.yaml is missing. Copy config/config.local.yaml.example "
+            "to config/config.local.yaml and set your workspace values for local dev.",
+            stacklevel=2,
+        )
     return raw
+
+
+def _looks_like_template_config(raw: dict[str, Any]) -> bool:
+    host = str((raw.get("databricks") or {}).get("host") or "")
+    return "<your-workspace>" in host
 
 
 def _apply_env_overrides(raw: dict[str, Any]) -> None:
@@ -328,18 +345,23 @@ def _apply_env_overrides(raw: dict[str, Any]) -> None:
             node[path[-1]] = yaml.safe_load(val)
 
 
-def _load_secrets() -> Secrets:
+def _load_secrets(yaml_secrets: dict[str, Any] | None = None) -> Secrets:
+    sec = yaml_secrets or {}
+
+    def _pick(env_key: str, yaml_key: str, default: str = "") -> str:
+        return os.environ.get(env_key) or str(sec.get(yaml_key) or default)
+
     return Secrets(
-        databricks_token=os.environ.get("DATABRICKS_TOKEN", ""),
-        databricks_client_id=os.environ.get("DATABRICKS_CLIENT_ID", ""),
-        databricks_client_secret=os.environ.get("DATABRICKS_CLIENT_SECRET", ""),
-        deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY", ""),
-        elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY", ""),
-        lakebase_host=os.environ.get("LAKEBASE_HOST", ""),
-        lakebase_port=int(os.environ.get("LAKEBASE_PORT", "5432")),
-        lakebase_database=os.environ.get("LAKEBASE_DATABASE", ""),
-        lakebase_user=os.environ.get("LAKEBASE_USER", ""),
-        lakebase_password=os.environ.get("LAKEBASE_PASSWORD", ""),
+        databricks_token=_pick("DATABRICKS_TOKEN", "databricks_token"),
+        databricks_client_id=_pick("DATABRICKS_CLIENT_ID", "databricks_client_id"),
+        databricks_client_secret=_pick("DATABRICKS_CLIENT_SECRET", "databricks_client_secret"),
+        deepgram_api_key=_pick("DEEPGRAM_API_KEY", "deepgram_api_key"),
+        elevenlabs_api_key=_pick("ELEVENLABS_API_KEY", "elevenlabs_api_key"),
+        lakebase_host=_pick("LAKEBASE_HOST", "lakebase_host"),
+        lakebase_port=int(os.environ.get("LAKEBASE_PORT") or sec.get("lakebase_port") or 5432),
+        lakebase_database=_pick("LAKEBASE_DATABASE", "lakebase_database"),
+        lakebase_user=_pick("LAKEBASE_USER", "lakebase_user"),
+        lakebase_password=_pick("LAKEBASE_PASSWORD", "lakebase_password"),
     )
 
 
@@ -359,6 +381,8 @@ def get_settings() -> Settings:
         raw["deployment"] = os.environ["GENIE_DEPLOYMENT"]
     _apply_env_overrides(raw)
 
+    yaml_secrets = raw.pop("secrets", None) or {}
+
     return Settings(
         deployment=raw.get("deployment", "local"),
         databricks=DatabricksConfig(**raw.get("databricks", {})),
@@ -371,5 +395,5 @@ def get_settings() -> Settings:
         pipeline=PipelineConfig(**raw.get("pipeline", {})),
         enrichment=EnrichmentConfig(**raw.get("enrichment", {})),
         datagen=DatagenConfig(**raw.get("datagen", {})),
-        secrets=_load_secrets(),
+        secrets=_load_secrets(yaml_secrets),
     )

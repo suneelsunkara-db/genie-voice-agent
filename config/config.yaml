@@ -1,12 +1,12 @@
 # =============================================================================
-# Genie Voice Agent - central configuration (NON-SECRET values only)
-# Secrets live in .env (see config/.env.example). Anything here can be
-# overridden by an environment variable of the same dotted path uppercased
-# with GENIE_ prefix, e.g. GENIE_DATABRICKS__CATALOG=my_catalog
+# Genie Voice Agent - committed configuration TEMPLATE (placeholders only)
 #
-# Replace all <placeholder> values below with your workspace settings before
-# running online, or put them in gitignored config/config.local.yaml (see
-# config/config.local.yaml.example). Keep API keys in .env only.
+# For local development on your machine, use gitignored config/config.local.yaml
+# (full file — copy config/config.local.yaml.example). The loader deep-merges
+# config.local.yaml over this file; local values win.
+#
+# Secrets live in gitignored config/config.local.yaml (`secrets:`) or .env.
+# Env overrides: GENIE_<SECTION>__<KEY>  e.g. GENIE_DATABRICKS__CATALOG=my_catalog
 # =============================================================================
 
 # Deployment target - the ONLY run switch. It selects who PRODUCES live/mock data

@@ -16,19 +16,31 @@ log() { printf "\033[35m[start-app]\033[0m %s\n" "$*"; }
 warn() { printf "\033[33m[start-app]\033[0m %s\n" "$*"; }
 err() { printf "\033[31m[start-app]\033[0m %s\n" "$*"; }
 
-# Load .env first; fallback to .env.example for convenience.
+# Minimal env setup.
+if [[ ! -d .venv ]]; then
+  log "creating virtualenv"
+  python3 -m venv .venv
+fi
+source .venv/bin/activate
+if python -c "import genie_voice, fastapi, uvicorn" >/dev/null 2>&1; then
+  :
+else
+  log "installing backend + api deps"
+  pip install -q --upgrade pip || true
+  pip install -q -e backend
+  pip install -q -r api/requirements.txt
+fi
+
+# Load .env if present (env overrides config.local.yaml secrets).
 if [[ -f .env ]]; then
   set -a; source .env; set +a
 fi
-if [[ -z "${DEEPGRAM_API_KEY:-}" && -f config/.env.example ]]; then
-  DEEPGRAM_API_KEY="$(python3 - <<'PY'
-from pathlib import Path
-for line in Path("config/.env.example").read_text().splitlines():
-    if line.startswith("DEEPGRAM_API_KEY="):
-        print(line.split("=", 1)[1].strip())
-        break
-PY
-)"
+if [[ -z "${DEEPGRAM_API_KEY:-}" ]]; then
+  DEEPGRAM_API_KEY="$(PYTHONPATH="$ROOT/backend" python -c "
+from genie_voice.config import get_settings
+get_settings.cache_clear()
+print(get_settings().secrets.deepgram_api_key or '')
+" 2>/dev/null || true)"
   export DEEPGRAM_API_KEY
 fi
 
@@ -45,21 +57,6 @@ if [[ -n "${DEEPGRAM_API_KEY:-}" ]]; then
   log "Deepgram auth check passed."
 else
   warn "DEEPGRAM_API_KEY not found; mic transcription will fail."
-fi
-
-# Minimal env setup.
-if [[ ! -d .venv ]]; then
-  log "creating virtualenv"
-  python3 -m venv .venv
-fi
-source .venv/bin/activate
-if python -c "import genie_voice, fastapi, uvicorn" >/dev/null 2>&1; then
-  :
-else
-  log "installing backend + api deps"
-  pip install -q --upgrade pip || true
-  pip install -q -e backend
-  pip install -q -r api/requirements.txt
 fi
 
 # Stop previous API/UI if our pid files exist.

@@ -64,20 +64,22 @@ The app runs **as your Databricks user** via OAuth U2M — no tokens or secrets 
 `.env`. `local-deploy.sh` runs `databricks auth login --host <host>` for you
 (opens a browser) and everything thereafter runs under that identity.
 
-Set these in `config/config.yaml` before the first online run, or copy
-`config/config.local.yaml.example` to `config/config.local.yaml` (gitignored)
-for workspace-specific values:
+Set workspace values in **`config/config.local.yaml`** (gitignored full config).
+The committed `config/config.yaml` is a placeholder template. Copy the example:
+
+```bash
+cp config/config.local.yaml.example config/config.local.yaml
+```
+
+Key fields to customize:
 
 ```yaml
 databricks:
   host: "https://<your-workspace>.cloud.databricks.com"
   profile: "<your-databricks-profile>"
-  auth_type: default                       # OAuth U2M
-  run_as: "user@example.com"               # identity the app runs as
-  catalog: "<your-catalog>"                # EXISTING catalog (not created by us)
-  create_catalog: false
-  schema: genie_voice_contact_center
-  sql_warehouse_id: "<your-sql-warehouse-id>"  # REQUIRED for bootstrap/load/Genie
+  run_as: "user@example.com"
+  catalog: "<your-catalog>"
+  sql_warehouse_id: "<your-sql-warehouse-id>"
 lakebase:
   instance: "<your-lakebase-instance>"
 ```
@@ -93,12 +95,17 @@ uses **runtime-minted Postgres tokens** (no stored password); set
 ## Quick start
 
 ```bash
-cp config/.env.example .env      # optional for U2M; only for live vendor keys
+cp config/.env.example .env              # optional for U2M; add vendor keys for live mode
+cp config/config.local.yaml.example config/config.local.yaml   # required for local dev
+# Edit config/config.local.yaml with your Databricks workspace + Lakebase instance
 ./local-deploy.sh                # logs you in, sets up perms, runs flow, starts API+UI
 # UI:  http://localhost:5173
 # API: http://localhost:8000/health
 ./local-undeploy.sh              # stop API + UI
 ```
+
+`config/config.yaml` in git is a placeholder template only. **`config/config.local.yaml`**
+(gitignored) is your full local profile and is deep-merged on top at runtime.
 
 One-command startup with optional Deepgram validation:
 
