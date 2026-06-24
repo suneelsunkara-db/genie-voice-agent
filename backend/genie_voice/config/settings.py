@@ -93,6 +93,7 @@ class LakebaseConfig(BaseModel):
     enabled: bool = False                    # use real Lakebase (else in-memory fallback)
     instance: str = "genie_voice_lakebase"   # Lakebase database instance name
     database: str = "databricks_postgres"    # Postgres database inside the instance
+    port: int = 5432                         # Postgres port for the compute endpoint
     schema_name: str = Field("genie_voice_contact_center", alias="schema")  # Postgres serving schema
     capacity: str = "CU_1"                   # autoscaling capacity unit
     serving_table: str = "call_state"
@@ -187,21 +188,13 @@ class DatagenConfig(BaseModel):
 
 
 class Secrets(BaseModel):
-    """API keys and optional static Lakebase credentials.
+    """Vendor API keys for live STT/TTS.
 
     Loaded from config `secrets:` (typically config.local.yaml) with environment
     variables overriding when set (DEEPGRAM_API_KEY, etc.).
     """
-    databricks_token: str = ""
-    databricks_client_id: str = ""
-    databricks_client_secret: str = ""
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
-    lakebase_host: str = ""
-    lakebase_port: int = 5432
-    lakebase_database: str = ""   # empty -> use lakebase.database from config
-    lakebase_user: str = ""
-    lakebase_password: str = ""
 
 
 class Settings(BaseModel):
@@ -352,16 +345,8 @@ def _load_secrets(yaml_secrets: dict[str, Any] | None = None) -> Secrets:
         return os.environ.get(env_key) or str(sec.get(yaml_key) or default)
 
     return Secrets(
-        databricks_token=_pick("DATABRICKS_TOKEN", "databricks_token"),
-        databricks_client_id=_pick("DATABRICKS_CLIENT_ID", "databricks_client_id"),
-        databricks_client_secret=_pick("DATABRICKS_CLIENT_SECRET", "databricks_client_secret"),
         deepgram_api_key=_pick("DEEPGRAM_API_KEY", "deepgram_api_key"),
         elevenlabs_api_key=_pick("ELEVENLABS_API_KEY", "elevenlabs_api_key"),
-        lakebase_host=_pick("LAKEBASE_HOST", "lakebase_host"),
-        lakebase_port=int(os.environ.get("LAKEBASE_PORT") or sec.get("lakebase_port") or 5432),
-        lakebase_database=_pick("LAKEBASE_DATABASE", "lakebase_database"),
-        lakebase_user=_pick("LAKEBASE_USER", "lakebase_user"),
-        lakebase_password=_pick("LAKEBASE_PASSWORD", "lakebase_password"),
     )
 
 

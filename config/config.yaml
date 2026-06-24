@@ -2,10 +2,10 @@
 # Genie Voice Agent - committed configuration TEMPLATE (placeholders only)
 #
 # For local development on your machine, use gitignored config/config.local.yaml
-# (full file — copy config/config.local.yaml.example). The loader deep-merges
-# config.local.yaml over this file; local values win.
+# (full file with your workspace values). The loader deep-merges config.local.yaml
+# over this file; local values win.
 #
-# Secrets live in gitignored config/config.local.yaml (`secrets:`) or .env.
+# Secrets: empty placeholders below; put real keys in config/config.local.yaml.
 # Env overrides: GENIE_<SECTION>__<KEY>  e.g. GENIE_DATABRICKS__CATALOG=my_catalog
 # =============================================================================
 
@@ -55,10 +55,10 @@ lakebase:
   enabled: true                     # use real Lakebase (offline deploy overrides to false)
   instance: "<your-lakebase-instance>"    # Lakebase database instance name
   database: databricks_postgres     # Postgres database inside the instance
+  port: 5432                        # Postgres port for the compute endpoint
   schema: genie_voice_contact_center # Postgres schema for low-latency serving tables
   capacity: CU_1                    # autoscaling capacity unit
-  # With U2M we MINT a short-lived Postgres OAuth token at runtime (no stored
-  # password). Static LAKEBASE_* in .env still override if you prefer.
+  # With U2M we MINT a short-lived Postgres OAuth token at runtime (no stored password).
   serving_table: call_state         # live state served to agents
   live_utterances_table: live_call_utterances # live transcript turns for CDF back to UC
   # Lakebase CDF is started in the UI. The orchestration job gates UC analytics /
@@ -161,3 +161,10 @@ datagen:
   num_customers: 40
   num_calls: 60
   months_history: 4         # months of invoices per customer
+
+# Vendor API keys for live STT/TTS (deployment: live).
+# Set real values in gitignored config/config.local.yaml (overrides these).
+# Environment variables (DEEPGRAM_API_KEY, etc.) override YAML when set.
+secrets:
+  deepgram_api_key: ""
+  elevenlabs_api_key: ""

@@ -10,8 +10,7 @@ Auth model (matches the app's U2M identity): instead of storing a Postgres
 password, we MINT a short-lived Postgres OAuth token via the Lakebase
 Autoscaling (Projects) API (`/api/2.0/postgres/credentials`, scoped to the
 project's read-write compute endpoint) and connect as the running user. The
-endpoint host is discovered from `/api/2.0/postgres/`. Static LAKEBASE_* in .env
-still take precedence if you'd rather pin a connection.
+endpoint host is discovered from `/api/2.0/postgres/`.
 
 When `lakebase.enabled` is false (e.g. offline deploy) it falls back to an
 in-process store so the end-to-end local flow still works.
@@ -140,24 +139,14 @@ def _apply_resolution_overlay(facts: dict[str, Any], resolution: dict[str, Any] 
 class LakebaseServing:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self._sec = self.settings.secrets
         self.enabled = self.settings.lakebase.enabled
         self._cred: dict[str, Any] | None = None  # cached {host,user,token,exp}
 
     # ---- credential resolution -------------------------------------------- #
     def _credentials(self) -> dict[str, Any]:
-        """Resolve (host, port, dbname, user, password). Prefer static .env; else
-        discover the instance + mint a Postgres OAuth token via the SDK."""
+        """Resolve (host, port, dbname, user, password) by discovering the instance
+        and minting a short-lived Postgres OAuth token via the SDK."""
         lb = self.settings.lakebase
-        # Static override (pinned connection).
-        if self._sec.lakebase_host and self._sec.lakebase_password:
-            return {
-                "host": self._sec.lakebase_host,
-                "port": self._sec.lakebase_port,
-                "dbname": self._sec.lakebase_database or lb.database,
-                "user": self._sec.lakebase_user,
-                "password": self._sec.lakebase_password,
-            }
         # Reuse a still-valid minted token (tokens last ~1h; refresh at 50 min).
         if self._cred and self._cred["exp"] > time.time():
             return self._cred["value"]
@@ -179,8 +168,8 @@ class LakebaseServing:
         user = self.settings.databricks.run_as or current_user(client)
         value = {
             "host": host,
-            "port": self._sec.lakebase_port or 5432,
-            "dbname": self._sec.lakebase_database or lb.database,
+            "port": lb.port,
+            "dbname": lb.database,
             "user": user,
             "password": cred["token"],
         }

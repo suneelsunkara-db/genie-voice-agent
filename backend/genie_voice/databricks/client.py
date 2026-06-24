@@ -10,6 +10,8 @@ Auth is config-driven (`databricks.auth_type`):
 """
 from __future__ import annotations
 
+import os
+
 from genie_voice.config import Settings, get_settings
 
 # One client per process. We can't @lru_cache on `settings` (a pydantic model is
@@ -34,15 +36,15 @@ def _build_workspace_client(settings: Settings):
     if auth == "pat":
         if not host:
             raise RuntimeError("Databricks host is not configured (DATABRICKS_HOST / config).")
-        return WorkspaceClient(host=host, token=settings.secrets.databricks_token)
+        return WorkspaceClient(host=host, token=os.environ.get("DATABRICKS_TOKEN", ""))
 
     if auth == "oauth":
         if not host:
             raise RuntimeError("Databricks host is not configured (DATABRICKS_HOST / config).")
         return WorkspaceClient(
             host=host,
-            client_id=settings.secrets.databricks_client_id,
-            client_secret=settings.secrets.databricks_client_secret,
+            client_id=os.environ.get("DATABRICKS_CLIENT_ID", ""),
+            client_secret=os.environ.get("DATABRICKS_CLIENT_SECRET", ""),
         )
 
     # auth == "default": let the SDK resolve credentials.
