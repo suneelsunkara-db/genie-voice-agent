@@ -1,0 +1,41 @@
+# Databricks brand theme (palette sourced from the base template's theme1).
+# Colours are referenced by name from deck specs (e.g. color: green).
+palette:
+  ink:       "1B3139"   # dark teal - primary text / dark backgrounds
+  paper:     "F9F7F4"   # off-white page
+  card:      "FFFFFF"
+  green:     "00A972"   # lakehouse green
+  orange:    "FF5F46"
+  amber:     "FFAB00"
+  maroon:    "98102A"
+  blue:      "4299E0"
+  teal:      "1B5162"
+  grey:      "5B6B72"    # secondary text on light
+  line:      "E3E0DA"    # hairlines on light
+  white:     "FFFFFF"
+  muted:     "9FB0B6"    # secondary text on dark
+  rule_dark: "33474F"    # hairlines on dark
+  panel:     "EFEDE8"    # subtle filled panel on light
+
+fonts:
+  # The base template's embedded Inter/DM Sans are SUBSETTED, so reusing them
+  # drops glyphs and falls back to a serif. Arial is the theme default family
+  # and is present on every machine, so it renders fully and consistently.
+  body: "Arial"
+  mono: "Courier New"
+
+canvas:        # EMU (1 inch = 914400). 16:9 at 10in x 5.625in (Google-Slides origin).
+  w: 9144000
+  h: 5143500
+  margin: 571500
+
+# Which slideLayout in the base template each generated slide inherits its
+# background from (BLANK light layout).
+layout: "slideLayout11.xml"
+
+# Logos already embedded in the base template's media (referenced by slides).
+# w/h are pixel dimensions, used only to preserve aspect ratio.
+logos:
+  databricks_light: { media: "image1.png",  w: 1427, h: 227 }   # light wordmark -> dark backgrounds
+  databricks_dark:  { media: "image19.png", w: 1018, h: 171 }   # black wordmark -> light backgrounds
+

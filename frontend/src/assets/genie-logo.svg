@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="88" height="32" viewBox="0 0 88 32" fill="none">
+  <rect width="88" height="32" rx="8" fill="#151630"/>
+  <circle cx="14" cy="16" r="8" fill="#7C6CFF"/>
+  <path d="M10.5 16.5L13 19L18 13.5" stroke="#E7E2FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="28" y="20" fill="#DAD3FF" font-size="11" font-family="Inter, Arial, sans-serif" font-weight="700">Genie</text>
+</svg>

@@ -1,0 +1,5 @@
+# API deps. The backend package must also be installed: pip install -e backend
+fastapi>=0.110
+uvicorn[standard]>=0.29
+websockets>=12
+pydantic>=2

@@ -1,0 +1,195 @@
+# =============================================================================
+# Deck content spec: "Genie for Voice Use Cases".
+# All topic inputs (text/structure/branding) live here; the engine + theme are
+# generic. Copy this file to start a new deck.
+# =============================================================================
+meta:
+  output: "Genie_for_Voice_Usecases.pptx"
+  theme: "themes/databricks.yaml"
+  template: "templates/base.pptx"
+  footer: "Genie for Voice  \u00b7  Contact-Center Intelligence"
+
+slides:
+  # ---- 1. cover ----
+  - type: cover
+    eyebrow: "Voice Intelligence for the Contact Center"
+    title: "Genie for Voice Use Cases"
+    subtitle: "Turn customer phone calls into governed data you can question in plain English \u2014 on Databricks"
+    meta: "Suneel Sunkara   \u00b7   Jun 2026"
+
+  # ---- 2. agenda ----
+  - type: agenda
+    eyebrow: "Agenda"
+    title: "What we'll cover"
+    items:
+      - { num: "01", color: green,  title: "The problem",            sub: "Why call insight is lost today" }
+      - { num: "02", color: orange, title: "Today's tools & gaps",   sub: "What teams use now \u2014 and where it falls short" }
+      - { num: "03", color: blue,   title: "Our approach",           sub: "How we do it on Databricks" }
+      - { num: "04", color: amber,  title: "Impact & scope",         sub: "What it changes \u2014 and what it doesn't" }
+
+  # ---- 3. section 01 ----
+  - type: section
+    num: "01"
+    title: "The problem"
+    subtitle: "Every call is full of useful information \u2014 today most of it disappears when the call ends."
+
+  # ---- 4. problem (cards) ----
+  - type: cards
+    eyebrow: "The problem"
+    title: "The information in a call disappears when the call ends"
+    intro: >-
+      Contact centers handle huge volumes of calls about bills, payments, and accounts.
+      Each call is full of useful detail — but today it is rarely captured as data.
+    columns: 3
+    y: 2120000
+    card_height: 1960000
+    cards:
+      - accent: green
+        label: "During the call"
+        lines:
+          - "Agents can't quickly see the caller's account, balance, or recent payments."
+          - "No live prompt on what to say or do next."
+      - accent: orange
+        label: "After the call"
+        lines:
+          - "No clean record of what was actually discussed."
+          - "Nothing that links back to billing and payment data."
+      - accent: blue
+        label: "For the business"
+        lines:
+          - "Managers can't get answers without asking a data team to build a report."
+
+  # ---- 5. section 02 ----
+  - type: section
+    num: "02"
+    title: "Today's tools & gaps"
+    subtitle: "Useful tools exist \u2014 but the call content stays outside your data platform and its governance."
+
+  # ---- 6. current solutions (2x2 cards) ----
+  - type: cards
+    eyebrow: "Today's tools"
+    title: "How teams handle this today"
+    columns: 2
+    card_height: 1480000
+    row_gap: 180000
+    y: 1480000
+    cards:
+      - { accent: teal, label: "Phone-system reports",            lines: ["Your call platform shows call counts and handle times \u2014 not what was actually said."] }
+      - { accent: teal, label: "Listening to recordings by hand", lines: ["Supervisors review a handful of calls manually. Slow, and covers only a tiny fraction."] }
+      - { accent: teal, label: "Dashboards built after the fact", lines: ["Charts on call metadata, disconnected from billing and customer data."] }
+      - { accent: teal, label: "Standalone speech tools",         lines: ["Separate products that flag keywords, but live outside your data platform and its rules."] }
+
+  # ---- 7. the gap (bullets) ----
+  - type: bullets
+    eyebrow: "The gap"
+    title: "What's still missing"
+    bullet_color: orange
+    bullets:
+      - "Agents get no live help that's tied to the caller's real account."
+      - "There's no structured, reusable record of each call linked to billing and customer data."
+      - "Call insight sits outside the data platform \u2014 no single place for permissions, lineage, and auditing."
+      - "Every new question needs a data team; business users can't just ask."
+      - "Speech tools are locked to one vendor and kept apart from the rest of your data."
+
+  # ---- 8. section 03 ----
+  - type: section
+    num: "03"
+    title: "Our approach"
+    subtitle: "Capture each call, help the agent live, and make every call ask-able with AI/BI Genie \u2014 all on Databricks."
+
+  # ---- 9. approach (2 cards + product chips) ----
+  - type: cards
+    eyebrow: "Our approach"
+    title: "Help the agent live, then make every call ask-able with Genie"
+    columns: 2
+    card_height: 1940000
+    y: 1470000
+    label_sz: 1180
+    line_sz: 1080
+    cards:
+      - accent: green
+        label: "During the call \u2014 live help"
+        lines:
+          - "Transcribe the call with the two speakers separated."
+          - "Detect intent and sentiment, flag compliance, and suggest the next best action."
+          - "Show the caller's account and recent payments instantly, served from Lakebase."
+      - accent: blue
+        label: "After the call \u2014 ask questions"
+        lines:
+          - "Save a clean, structured summary of every call (built by a Databricks Foundation Model)."
+          - "Join it to your existing billing and customer tables in Unity Catalog."
+          - "Ask questions in plain English with AI/BI Genie \u2014 no SQL needed."
+    chips_label: "Built on Databricks"
+    chips:
+      - { name: "Lakebase",          color: teal,  glyph: cylinder }
+      - { name: "Unity Catalog",     color: blue,  glyph: dot }
+      - { name: "AI/BI Genie",       color: green, glyph: sparkle }
+      - { name: "Foundation Models", color: amber, glyph: dot }
+
+  # ---- 10. how it works (steps + product chips) ----
+  - type: steps
+    eyebrow: "How it works"
+    title: "One platform, from phone call to answer"
+    steps:
+      - { color: green,  label: "Capture",   desc: "Transcribe calls with a speech provider \u2014 the design isn't tied to any one vendor." }
+      - { color: teal,   label: "Serve live", desc: "Live call state is written to Lakebase (fast Postgres) so the agent screen updates instantly." }
+      - { color: blue,   label: "Govern",    desc: "Lakebase keeps a full history in Unity Catalog, with permissions, masking, and lineage." }
+      - { color: amber,  label: "Summarize", desc: "A Databricks Foundation Model turns each transcript into a clean record \u2014 quality-checked before it's published." }
+      - { color: orange, label: "Ask",       desc: "AI/BI Genie answers plain-English questions over the call data joined to billing and customers." }
+    chips_label: "Built on Databricks"
+    chips:
+      - { name: "Lakebase",          color: teal,  glyph: cylinder }
+      - { name: "Unity Catalog",     color: blue,  glyph: dot }
+      - { name: "AI/BI Genie",       color: green, glyph: sparkle }
+      - { name: "Foundation Models", color: amber, glyph: dot }
+
+  # ---- 11. why genie (bullets + Genie mark + example questions) ----
+  - type: bullets
+    eyebrow: "Why Genie"
+    title: "Why Genie gives trustworthy answers"
+    title_chip: { name: "AI/BI Genie", color: green, glyph: sparkle }
+    bullets:
+      - { lead: "Everything links up", text: "every call ties to a real customer, agent, and invoice." }
+      - { lead: "Relationships are defined", text: "tables are connected with keys, so Genie joins them correctly instead of guessing." }
+      - { lead: "Plain-English meaning", text: "every column is described, and categories (like call reason) use a small, fixed set of values." }
+      - { lead: "Genie sees a curated view", text: "clean business tables \u2014 customers, invoices, payments, and the per-call summary \u2014 not raw transcripts." }
+    panel:
+      label: "Example questions you can ask Genie"
+      lines:
+        - "\u201cWhich customers called about a billing dispute and have an overdue invoice?\u201d"
+        - "\u201cAverage handle time by team?\u201d"
+
+  # ---- 12. section 04 ----
+  - type: section
+    num: "04"
+    title: "Impact & scope"
+    subtitle: "What measurably changes \u2014 stated as design targets, not proven results."
+
+  # ---- 13. impact (kpis + bullets + honesty note) ----
+  - type: kpis
+    eyebrow: "Impact"
+    title: "What this changes"
+    kpis:
+      - { value: "< 50 ms",   color: green, label: "Account details appear almost instantly while the agent is talking (design target)." }
+      - { value: "Real-time", color: blue,  label: "Live prompts and sentiment during the call (design target)." }
+      - { value: "Every call", color: amber, label: "Becomes a clean, governed record \u2014 not just a sampled few." }
+    bullets:
+      - "Anyone can ask: managers and analysts get answers in plain English over calls + billing, with no data-team request."
+      - "Governed by default: sensitive data is masked before storage, with permissions and lineage in Unity Catalog."
+    note: >-
+      Speed figures are design targets. The system is built and validated against real vendor
+      data formats; live call accuracy and latency are tested separately.
+
+  # ---- 14. scope & non-goals (dark) ----
+  - type: bullets
+    eyebrow: "Scope"
+    title: "What this is \u2014 and isn't"
+    dark: true
+    bullets:
+      - "It works alongside your phone / call-center system \u2014 it doesn't replace it."
+      - "It helps the human agent \u2014 it isn't an automated bot replacing agents."
+      - "Genie answers questions over your data; it doesn't build forecasts or predictive models (a separate effort)."
+      - "Genie analytics are for after the call, not live during it."
+    footnote:
+      lead: "In short:"
+      text: "a governed path from a phone call to an answer \u2014 on Databricks."

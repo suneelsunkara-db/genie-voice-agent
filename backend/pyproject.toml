@@ -1,0 +1,29 @@
+[project]
+name = "genie-voice-agent-backend"
+version = "0.1.0"
+description = "Databricks Genie Voice Agent - backend core (capture, medallion, enrichment, serving, Genie)"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2",
+    "pyyaml>=6",
+    "python-dotenv>=1",
+    "databricks-sdk>=0.40",
+    "httpx>=0.27",
+    "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+# Installed on Databricks clusters / for local Spark experiments.
+spark = ["pyspark>=3.5"]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+# Console entry point invoked by the Databricks python_wheel_task.
+[project.scripts]
+genie-pipeline = "genie_voice.pipeline.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["genie_voice*"]

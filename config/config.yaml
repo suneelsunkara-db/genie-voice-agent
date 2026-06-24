@@ -1,0 +1,159 @@
+# =============================================================================
+# Genie Voice Agent - central configuration (NON-SECRET values only)
+# Secrets live in .env (see config/.env.example). Anything here can be
+# overridden by an environment variable of the same dotted path uppercased
+# with GENIE_ prefix, e.g. GENIE_DATABRICKS__CATALOG=my_catalog
+# =============================================================================
+
+# Deployment target - the ONLY run switch. It selects who PRODUCES live/mock data
+# on this machine; Lakebase is the low-latency serving store, and UC is analytics:
+#   local = synthetic producer (genie_voice.datagen) generates vendor-shaped
+#           Deepgram/ElevenLabs payloads + reference records (no vendor API calls).
+#   live  = real Deepgram/ElevenLabs capture produces the payloads.
+# In BOTH cases the live serving path writes primary tables in Lakebase first.
+# UC is the asynchronous analytics/Genie path.
+deployment: local
+
+databricks:
+  # Host can also be set via DATABRICKS_HOST in .env (env wins).
+  host: "https://fe-vm-vdm-classic-rcn6ip.cloud.databricks.com"
+  # default = OAuth U2M (run AS the user via `databricks auth login`). No secrets.
+  auth_type: default        # default | pat | oauth
+  profile: "fe-vm-vdm-classic-rcn6ip"   # ~/.databrickscfg profile (disambiguates when several match the host)
+  run_as: "suneel.sunkara@databricks.com"   # identity the app runs as (GRANTs/Lakebase role)
+  catalog: partner_demo_catalog             # existing catalog (not created by us)
+  create_catalog: false     # never CREATE CATALOG; we use an existing one
+  schema: genie_voice_contact_center        # our schema inside the catalog
+  sql_warehouse_id: d0a0a25efd015c58      # REQUIRED: set for bootstrap / table load / Genie
+  # Genie space is created/resolved dynamically by NAME (no hardcoded id).
+  genie_space_name: "Genie Voice - Contact Center"
+
+# Unity Catalog Volumes for raw landing.
+volume:
+  batch_name: raw_batch_data
+  streaming_name: raw_streaming_data
+  # Path templates resolved at runtime with catalog/schema/batch_volume/streaming_volume.
+  reference_path: "/Volumes/{catalog}/{schema}/{batch_volume}/reference"
+  raw_stt_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/raw_stt"
+  call_facts_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/call_facts"
+  audio_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/audio"
+  transcript_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/transcripts"
+  checkpoint_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/_pipeline_state" # Auto Loader checkpoints/schema (OUTSIDE raw_stt)
+
+# UC analytics tables (created in {catalog}.{schema}). Lakebase is the source
+# and serving store; job tasks derive governed analytics from Lakebase CDF history
+# plus the streaming transcript path.
+medallion:
+  gold_call_insights: gold_call_insights               # NLP insights per call
+
+# Lakebase autoscaling project (low-latency serving for agent assist).
+lakebase:
+  enabled: true                     # use real Lakebase (offline deploy overrides to false)
+  instance: genie_voice_lakebase    # Lakebase database instance name
+  database: databricks_postgres     # Postgres database inside the instance
+  schema: genie_voice_contact_center # Postgres schema for low-latency serving tables
+  capacity: CU_1                    # autoscaling capacity unit
+  # With U2M we MINT a short-lived Postgres OAuth token at runtime (no stored
+  # password). Static LAKEBASE_* in .env still override if you prefer.
+  serving_table: call_state         # live state served to agents
+  live_utterances_table: live_call_utterances # live transcript turns for CDF back to UC
+  # Lakebase CDF is started in the UI. The orchestration job gates UC analytics /
+  # Genie until wal2delta.tables reports sync running and UC history tables exist.
+  cdf_required: true
+  cdf_history_prefix: "lb_"
+  cdf_history_suffix: "_history"
+  cdf_wait_timeout_seconds: 600
+  cdf_poll_seconds: 15
+  cdf_required_tables:
+    - call_facts
+    - live_call_utterances
+  # Lakebase-native operational call tables loaded under lakebase.schema using
+  # primary names. Customer/billing reference tables stay in UC Delta only.
+  sync_tables:
+    - call_facts
+    - live_call_utterances
+
+# Swappable external providers - fully vendor-agnostic.
+#   adapters: logical name -> "module.path:ClassName" (loaded dynamically; the
+#             core code never imports a vendor). Add a vendor by dropping in an
+#             adapter file and adding a line here. No core code changes.
+#   active:   which adapter to use.
+#   options:  per-adapter settings block.
+# `deployment` (top-level) controls mock vs live vendor transport.
+providers:
+  stt:
+    adapters:
+      deepgram: "genie_voice.providers.stt.deepgram:DeepgramSTT"
+      # assemblyai: "genie_voice.providers.stt.assemblyai:AssemblyAISTT"
+      # azure:      "genie_voice.providers.stt.azure:AzureSTT"
+    active: deepgram
+    options:
+      deepgram:
+        model: nova-3
+        language: en-US
+        diarize: true
+        multichannel: true        # dual-channel telephony => channel == speaker
+        smart_format: true
+        redact: [pci, ssn, numbers]
+        endpointing_ms: 10
+  tts:
+    adapters:
+      elevenlabs: "genie_voice.providers.tts.elevenlabs:ElevenLabsTTS"
+      # deepgram_aura: "genie_voice.providers.tts.deepgram_aura:DeepgramAuraTTS"
+      # azure:         "genie_voice.providers.tts.azure:AzureTTS"
+    active: elevenlabs
+    options:
+      elevenlabs:
+        model_id: eleven_turbo_v2_5
+        voice_id: Rachel
+        output_format: mp3_44100_128
+
+# Mock generator behavior (dev only).
+mock:
+  interim_words_step: 2     # words added per interim event
+  realtime_pacing: true     # sleep to emulate real-call timing
+  inject_low_confidence: true
+  channels:
+    agent: 0
+    customer: 1
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins:
+    - http://localhost:5173
+
+# Lakebase-first orchestration:
+#   1. seed primary Lakebase serving tables
+#   2. verify Lakebase CDF sync is running and lb_<table>_history exists in UC
+#   3. refresh UC analytics from Lakebase CDF history + transcripts
+#   4. reconcile Genie space
+pipeline:
+  autoloader_format: cloudFiles   # Auto Loader source for the streaming voice job
+  source_format: json
+  analytics_pipeline_name: "Genie Voice - UC Analytics Pipeline" # legacy cleanup name
+  orchestration_job_name: "Genie Voice - Lakebase First Orchestration"
+  # Workspace folder the deployer copies the job wheel + config into (serverless
+  # installs from here). Empty -> /Users/<run_as>/genie_voice_pipeline.
+  workspace_dir: ""
+  environment_version: "3"   # serverless env version (Python + base libraries)
+
+# Conversation intelligence (intent/sentiment/next-best-action/summary).
+# The Databricks Foundation Model API is the SOLE engine: live agent-assist calls
+# the serving endpoint per utterance; batch gold uses ai_query with structured
+# (json_schema) output. No heuristic fallback - if the FM is unavailable the
+# insight is reported as unavailable, not faked.
+enrichment:
+  model_endpoint: "databricks-claude-opus-4-8"   # any model serving endpoint
+  max_tokens: 512
+  # null = omit temperature. Claude Opus 4.x (a reasoning model) rejects it; set a
+  # number (e.g. 0.0) only for endpoints that support it for deterministic output.
+  temperature: null
+
+# Enterprise dataset generation (quality + referential integrity for Genie).
+datagen:
+  seed: 42                  # deterministic / reproducible dataset
+  num_agents: 6
+  num_customers: 40
+  num_calls: 60
+  months_history: 4         # months of invoices per customer
