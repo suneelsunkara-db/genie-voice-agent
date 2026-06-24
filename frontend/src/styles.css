@@ -420,3 +420,98 @@ body {
   font-size: 11px;
   overflow-x: auto;
 }
+
+.cc-customer-name { font-size: 13px; font-weight: 700; }
+.cc-customer-call { font-size: 10px; color: #8fb4e8; margin-top: 2px; }
+.cc-customer-row.cc-customer-muted { opacity: 0.72; }
+.cc-empty-call {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 24px;
+  background: var(--bg-soft);
+  min-height: 320px;
+}
+
+.assist-pipeline-strip {
+  border: 1px solid #33476e;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #0d1628 0%, #0a1220 100%);
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+.assist-pipeline-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.assist-pipeline-total {
+  font-size: 11px;
+  color: #9db3dc;
+  font-weight: 600;
+}
+.assist-pipeline-track {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.assist-pipeline-step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 150px;
+  flex: 1;
+  padding-right: 18px;
+}
+.assist-pipeline-node {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid #3a527d;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: #101a2f;
+}
+.assist-pipeline-index {
+  font-size: 11px;
+  font-weight: 700;
+  color: #bfd0ef;
+}
+.assist-pipeline-copy { min-width: 0; padding-top: 2px; }
+.assist-pipeline-label { font-size: 12px; font-weight: 700; color: #e4edff; }
+.assist-pipeline-detail {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #9db3dc;
+  line-height: 1.35;
+}
+.assist-pipeline-ms {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #7fa6de;
+}
+.assist-pipeline-connector {
+  position: absolute;
+  top: 13px;
+  right: 4px;
+  width: 14px;
+  height: 2px;
+  background: #3a527d;
+}
+.assist-pipeline-step.s-pending .assist-pipeline-node { border-color: #2f4368; opacity: 0.65; }
+.assist-pipeline-step.s-active .assist-pipeline-node {
+  border-color: #ff744c;
+  box-shadow: 0 0 0 4px rgba(255, 116, 76, 0.15);
+  background: #2a1712;
+}
+.assist-pipeline-step.s-active .assist-pipeline-label { color: #ffd5c8; }
+.assist-pipeline-step.s-done .assist-pipeline-node {
+  border-color: #1f805f;
+  background: #123226;
+}
+.assist-pipeline-step.s-done .assist-pipeline-index { color: #93f2ce; }
+.assist-pipeline-step.s-skipped { opacity: 0.45; }

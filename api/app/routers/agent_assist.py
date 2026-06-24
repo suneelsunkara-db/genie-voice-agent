@@ -91,6 +91,11 @@ _BAD_AGENT_REPLY_MARKERS = (
     "i cannot provide",
     "no resolvable genie space",
     "authenticate to databricks",
+    "unrelated to the database",
+    "database schema",
+    "provided tables",
+    "only able to answer questions about the data",
+    "data-related question",
 )
 
 
@@ -101,6 +106,17 @@ def _looks_like_bad_agent_reply(text: str) -> bool:
     if "`" in text and "=" in text:
         return True
     return False
+
+
+def _pipeline_step(key: str, label: str, started: float, *, detail: str = "") -> dict[str, object]:
+    elapsed = round((time.perf_counter() - started) * 1000)
+    return {
+        "key": key,
+        "label": label,
+        "status": "done",
+        "elapsed_ms": elapsed,
+        **({"detail": detail} if detail else {}),
+    }
 
 
 def _account_context_snippet(
@@ -220,14 +236,16 @@ Do NOT use SQL, table/column names, backticks, or portfolio-wide aggregates."""
 
     try:
         t0 = time.perf_counter()
-        result = genie().ask(genie_question)
+        from genie_voice.enrich.fm import fm_compose_agent_reply
+        from genie_voice.config import get_settings
+
+        raw = fm_compose_agent_reply(genie_question, settings=get_settings()).strip()
         log.info(
-            "assist genie prose call_id=%s elapsed_ms=%.0f closed=%s",
+            "assist fm prose call_id=%s elapsed_ms=%.0f closed=%s",
             call_id,
             (time.perf_counter() - t0) * 1000,
             issue_closed,
         )
-        raw = (result.get("answer") or "").strip()
         if raw and not _looks_like_bad_agent_reply(raw):
             ok, issues = validate_reply_against_metrics(
                 raw,
@@ -269,6 +287,7 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
 
     s = get_settings()
     t_start = time.perf_counter()
+    pipeline_steps: list[dict[str, object]] = []
     existing = serving().get_call_state(call_id) or {}
     inner = existing.get("state") or {}
     previous_resolution = dict(inner.get("resolution") or {})
@@ -278,6 +297,8 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
     nudge = enrich_utterance(
         body.text, s, speaker=body.speaker, issue_status=current_status
     )
+    fm_detail = "unavailable" if not nudge.get("available", True) else str(nudge.get("primary_intent") or "enriched")
+    pipeline_steps.append(_pipeline_step("fm_enrich", "Foundation model enrichment", t_fm, detail=fm_detail))
     log.info("assist fm call_id=%s elapsed_ms=%.0f", call_id, (time.perf_counter() - t_fm) * 1000)
 
     inner["live"] = nudge
@@ -286,9 +307,18 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
     inner["utterances"] = utterances
 
     customer_id = existing.get("customer_id")
+    t_resolution = time.perf_counter()
     account_source = serving().load_account_facts_source(customer_id) if customer_id else None
     resolution = evaluate_resolution(
         inner, body.text, body.speaker, account_source, nudge, s
+    )
+    pipeline_steps.append(
+        _pipeline_step(
+            "resolution",
+            "Resolution evaluation",
+            t_resolution,
+            detail=str(resolution.get("status") or "open"),
+        )
     )
 
     pending_adjustment: dict[str, object] | None = None
@@ -320,6 +350,15 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
             reply_resolution,
             reply_account,
         )
+        genie_detail = "reply ready" if agent_reply else str((agent_validation or {}).get("genie_error") or "unavailable")
+        if agent_validation:
+            if agent_validation.get("reply_available"):
+                genie_detail = "reply validated"
+            elif agent_validation.get("mismatches"):
+                genie_detail = f"mismatch: {', '.join(str(m) for m in agent_validation.get('mismatches') or [])}"
+        pipeline_steps.append(
+            _pipeline_step("genie_reply", "Genie agent reply", t_genie, detail=genie_detail)
+        )
         log.info(
             "assist agent_reply call_id=%s elapsed_ms=%.0f reply=%s",
             call_id,
@@ -332,6 +371,7 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
 
     billing_result: dict[str, object] | None = None
     if actions.get("pending_close") and customer_id and account_source:
+        t_billing = time.perf_counter()
         if not pending_adjustment:
             billing_result = {"applied": False, "reason": "no_overdue_invoice"}
         elif body.speaker == 1 and not agent_reply:
@@ -345,8 +385,17 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
                 adjustment=pending_adjustment,
             )
         resolution = finalize_resolution_after_billing(resolution, billing_result)
+        billing_detail = (
+            "applied"
+            if billing_result and billing_result.get("applied")
+            else str(billing_result.get("reason") if billing_result else "skipped")
+        )
+        pipeline_steps.append(
+            _pipeline_step("billing", "Billing adjustment", t_billing, detail=billing_detail)
+        )
 
     inner["resolution"] = resolution
+    t_persist = time.perf_counter()
     serving().upsert_call_state(call_id, existing.get("customer_id"), inner)
 
     transition = resolution_event_for_transition(previous_resolution, resolution)
@@ -358,6 +407,8 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
             note=transition.get("note"),
             actions=transition.get("actions") or {},
         )
+
+    pipeline_steps.append(_pipeline_step("persist", "Lakebase state update", t_persist))
 
     log.info(
         "assist complete call_id=%s total_ms=%.0f status=%s",
@@ -375,6 +426,8 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
         "agent_validation": agent_validation,
         "billing": billing_result,
         "close_block_reason": (resolution.get("actions") or {}).get("close_block_reason"),
+        "pipeline_steps": pipeline_steps,
+        "total_elapsed_ms": round((time.perf_counter() - t_start) * 1000),
     }
 
 

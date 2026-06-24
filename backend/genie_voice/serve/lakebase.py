@@ -31,6 +31,8 @@ _MEM: dict[str, dict[str, Any]] = {}
 _MEM_EVENTS: dict[str, list[dict[str, Any]]] = {}
 _MEM_ADJUSTMENTS: dict[str, list[dict[str, Any]]] = {}
 _LOCK = threading.Lock()
+_ISSUES_CACHE: dict[str, Any] = {"ts": 0.0, "value": None}
+_ISSUES_TTL_S = 60.0
 
 
 def _pg_ident(name: str) -> str:
@@ -129,6 +131,57 @@ def _apply_billing_adjustments(facts: dict[str, Any], adjustments: list[dict[str
     facts["invoices"] = invoices
     _recompute_summary(facts)
     return facts
+
+
+def _customer_has_account_issue(facts: dict[str, Any]) -> bool:
+    """True when a customer has billing/account risk like the CUST-4028 demo profile."""
+    if not facts.get("found"):
+        return False
+    summary = facts.get("summary") or {}
+    customer = facts.get("customer") or {}
+    if str(customer.get("status")) == "at_risk":
+        return True
+    if int(summary.get("overdue_invoice_count") or 0) > 0:
+        return True
+    if int(summary.get("recent_declined_payments") or 0) > 0:
+        return True
+    if not summary.get("autopay_enabled") and int(summary.get("open_invoice_count") or 0) > 0:
+        return True
+    return any(str(inv.get("status")) == "disputed" for inv in facts.get("invoices") or [])
+
+
+def _issue_rationale(facts: dict[str, Any]) -> str:
+    summary = facts.get("summary") or {}
+    customer = facts.get("customer") or {}
+    parts: list[str] = []
+    if str(customer.get("status")) == "at_risk":
+        parts.append("at-risk account")
+    if int(summary.get("overdue_invoice_count") or 0) > 0:
+        parts.append("overdue invoice exposure")
+    if not summary.get("autopay_enabled"):
+        parts.append("autopay off")
+    if int(summary.get("recent_declined_payments") or 0) > 0:
+        parts.append("declined payments")
+    if any(str(inv.get("status")) == "disputed" for inv in facts.get("invoices") or []):
+        parts.append("billing dispute")
+    if int(summary.get("disputed_count") or 0) > 0:
+        parts.append("billing dispute")
+    return ", ".join(dict.fromkeys(parts)) if parts else "account issue"
+
+
+def _row_to_issue_rationale(row: dict[str, Any]) -> str:
+    return _issue_rationale(
+        {
+            "customer": {"status": row.get("customer_status")},
+            "summary": {
+                "overdue_invoice_count": row.get("overdue_invoice_count"),
+                "autopay_enabled": row.get("autopay_enabled"),
+                "recent_declined_payments": row.get("recent_declined_payments"),
+                "disputed_count": row.get("disputed_count"),
+            },
+            "invoices": [{"status": "disputed"}] if int(row.get("disputed_count") or 0) > 0 else [],
+        }
+    )
 
 
 def _apply_resolution_overlay(facts: dict[str, Any], resolution: dict[str, Any] | None) -> dict[str, Any]:
@@ -878,3 +931,230 @@ class LakebaseServing:
                 (limit,),
             )
             return [{"call_id": r[0], "customer_id": r[1], "state": r[2]} for r in cur.fetchall()]
+
+    def _reference_tables_dir(self) -> str | None:
+        import os
+
+        base = os.environ.get("GENIE_LOCAL_VOLUME_DIR")
+        if not base:
+            return None
+        return os.path.normpath(os.path.join(base, "..", "tables"))
+
+    def _load_reference_table(self, name: str) -> list[dict[str, Any]]:
+        import os
+
+        tables = self._reference_tables_dir()
+        if not tables:
+            return []
+        path = os.path.join(tables, f"{name}.json")
+        if not os.path.exists(path):
+            return []
+        with open(path) as fh:
+            rows = json.load(fh)
+        return rows if isinstance(rows, list) else []
+
+    def _warehouse_query(self, sql: str) -> list[dict[str, Any]]:
+        from genie_voice.databricks.client import get_workspace_client
+
+        wh = self.settings.databricks.sql_warehouse_id
+        if not wh:
+            raise RuntimeError("databricks.sql_warehouse_id is required.")
+        client = get_workspace_client(self.settings)
+        res = client.statement_execution.execute_statement(
+            warehouse_id=wh,
+            statement=sql,
+            wait_timeout="45s",
+        )
+        manifest = getattr(res, "manifest", None)
+        cols = [
+            c.name for c in (getattr(getattr(manifest, "schema", None), "columns", None) or [])
+        ]
+        rows = (res.result.data_array if res.result else None) or []
+        return [dict(zip(cols, row)) for row in rows]
+
+    def _customers_with_issues_rows(self) -> list[dict[str, Any]]:
+        """One batch pass over reference tables — no per-customer warehouse round-trips."""
+        if self._reference_tables_dir():
+            return self._customers_with_issues_local()
+        if warehouse_configured(self.settings):
+            return self._customers_with_issues_uc()
+        raise RuntimeError("no reference data source configured")
+
+    def _customers_with_issues_local(self) -> list[dict[str, Any]]:
+        customers = self._load_reference_table("customers")
+        invoices = self._load_reference_table("invoices")
+        payments = self._load_reference_table("payments")
+        inv_by: dict[str, list[dict[str, Any]]] = {}
+        pay_by: dict[str, list[dict[str, Any]]] = {}
+        for inv in invoices:
+            cid = str(inv.get("customer_id") or "")
+            if cid:
+                inv_by.setdefault(cid, []).append(inv)
+        for pay in payments:
+            cid = str(pay.get("customer_id") or "")
+            if cid:
+                pay_by.setdefault(cid, []).append(pay)
+
+        out: list[dict[str, Any]] = []
+        for customer in customers:
+            cid = str(customer.get("customer_id") or "")
+            if not cid:
+                continue
+            cust_invoices = inv_by.get(cid, [])
+            cust_payments = pay_by.get(cid, [])
+            facts = _account_facts(cid, customer, cust_invoices, cust_payments)
+            if not _customer_has_account_issue(facts):
+                continue
+            summary = facts.get("summary") or {}
+            disputed = sum(1 for i in cust_invoices if str(i.get("status")) == "disputed")
+            out.append(
+                {
+                    "customer_id": cid,
+                    "full_name": customer.get("full_name"),
+                    "customer_status": customer.get("status"),
+                    "autopay_enabled": summary.get("autopay_enabled"),
+                    "overdue_invoice_count": summary.get("overdue_invoice_count", 0),
+                    "overdue_amount": summary.get("overdue_amount", 0),
+                    "recent_declined_payments": summary.get("recent_declined_payments", 0),
+                    "disputed_count": disputed,
+                }
+            )
+        return out
+
+    def _customers_with_issues_uc(self) -> list[dict[str, Any]]:
+        customers = self.settings.fqtn("customers")
+        invoices = self.settings.fqtn("invoices")
+        payments = self.settings.fqtn("payments")
+        sql = f"""
+        WITH inv AS (
+          SELECT customer_id,
+                 SUM(CASE WHEN status IN ('open', 'overdue', 'disputed') THEN 1 ELSE 0 END) AS open_invoice_count,
+                 SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) AS overdue_invoice_count,
+                 SUM(CASE WHEN status = 'overdue' THEN CAST(amount AS DOUBLE) ELSE 0 END) AS overdue_amount,
+                 SUM(CASE WHEN status = 'disputed' THEN 1 ELSE 0 END) AS disputed_count
+          FROM {invoices}
+          GROUP BY customer_id
+        ),
+        pays AS (
+          SELECT customer_id, COUNT(*) AS recent_declined_payments
+          FROM {payments}
+          WHERE status = 'declined'
+          GROUP BY customer_id
+        )
+        SELECT c.customer_id,
+               c.full_name,
+               c.status AS customer_status,
+               c.autopay_enabled,
+               COALESCE(inv.overdue_invoice_count, 0) AS overdue_invoice_count,
+               COALESCE(inv.overdue_amount, 0) AS overdue_amount,
+               COALESCE(pays.recent_declined_payments, 0) AS recent_declined_payments,
+               COALESCE(inv.disputed_count, 0) AS disputed_count
+        FROM {customers} c
+        LEFT JOIN inv ON inv.customer_id = c.customer_id
+        LEFT JOIN pays ON pays.customer_id = c.customer_id
+        WHERE c.status = 'at_risk'
+           OR COALESCE(inv.overdue_invoice_count, 0) > 0
+           OR COALESCE(pays.recent_declined_payments, 0) > 0
+           OR COALESCE(inv.disputed_count, 0) > 0
+           OR (NOT COALESCE(c.autopay_enabled, false) AND COALESCE(inv.open_invoice_count, 0) > 0)
+        ORDER BY overdue_invoice_count DESC, overdue_amount DESC, c.customer_id
+        """
+        return self._warehouse_query(sql)
+
+    def _attach_call_context(
+        self,
+        row: dict[str, Any],
+        call_by_customer: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        cid = str(row["customer_id"])
+        call = call_by_customer.get(cid)
+        signals: dict[str, Any] = {}
+        if call:
+            state = call.get("state") or {}
+            gold = state.get("gold") or {}
+            live = state.get("live") or {}
+            signals = {
+                "primary_intent": gold.get("primary_intent") or live.get("primary_intent"),
+                "sentiment_label": gold.get("sentiment_label") or live.get("sentiment_label"),
+                "next_best_action": gold.get("next_best_action") or live.get("next_best_action"),
+            }
+        resolution = ((call or {}).get("state") or {}).get("resolution") or {}
+        return {
+            "customer_id": cid,
+            "full_name": row.get("full_name"),
+            "customer_status": row.get("customer_status"),
+            "call_id": call.get("call_id") if call else None,
+            "issue_status": str(resolution.get("status") or "open"),
+            "overdue_invoice_count": row.get("overdue_invoice_count", 0),
+            "overdue_amount": row.get("overdue_amount", 0),
+            "autopay_enabled": row.get("autopay_enabled"),
+            "recent_declined_payments": row.get("recent_declined_payments", 0),
+            "rationale": _row_to_issue_rationale(row),
+            **signals,
+        }
+
+    def list_customers_with_issues(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Customers with billing/account risk and their active assist call when present."""
+        now = time.monotonic()
+        issue_rows: list[dict[str, Any]]
+        cached_rows = _ISSUES_CACHE.get("value")
+        if cached_rows is None or now - float(_ISSUES_CACHE["ts"]) >= _ISSUES_TTL_S:
+            try:
+                issue_rows = self._customers_with_issues_rows()
+            except Exception:
+                issue_rows = []
+            _ISSUES_CACHE["value"] = issue_rows
+            _ISSUES_CACHE["ts"] = now
+        else:
+            issue_rows = list(cached_rows)
+
+        calls = self.list_call_states(limit=200)
+        call_by_customer: dict[str, dict[str, Any]] = {}
+        for row in calls:
+            cid = row.get("customer_id")
+            if cid and cid not in call_by_customer:
+                call_by_customer[str(cid)] = row
+
+        if not issue_rows:
+            seen: set[str] = set()
+            for row in calls:
+                cid = row.get("customer_id")
+                if not cid or str(cid) in seen:
+                    continue
+                seen.add(str(cid))
+                try:
+                    facts = self.get_account_facts(str(cid))
+                except Exception:
+                    continue
+                if not _customer_has_account_issue(facts):
+                    continue
+                summary = facts.get("summary") or {}
+                customer = facts.get("customer") or {}
+                issue_rows.append(
+                    {
+                        "customer_id": str(cid),
+                        "full_name": customer.get("full_name"),
+                        "customer_status": customer.get("status"),
+                        "autopay_enabled": summary.get("autopay_enabled"),
+                        "overdue_invoice_count": summary.get("overdue_invoice_count", 0),
+                        "overdue_amount": summary.get("overdue_amount", 0),
+                        "recent_declined_payments": summary.get("recent_declined_payments", 0),
+                        "disputed_count": sum(
+                            1 for i in facts.get("invoices") or [] if str(i.get("status")) == "disputed"
+                        ),
+                    }
+                )
+
+        out = [self._attach_call_context(row, call_by_customer) for row in issue_rows]
+
+        def _priority(item: dict[str, Any]) -> tuple:
+            open_issue = 0 if str(item.get("issue_status")) == "closed" else 1
+            return (
+                open_issue,
+                int(item.get("overdue_invoice_count") or 0),
+                float(item.get("overdue_amount") or 0),
+                1 if item.get("customer_status") == "at_risk" else 0,
+            )
+
+        out.sort(key=_priority, reverse=True)
+        return out[:limit]

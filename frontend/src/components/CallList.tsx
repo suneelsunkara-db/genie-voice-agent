@@ -1,17 +1,20 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { AccountFacts, api, CallState, LiveNudge, ResolutionEvent } from "../api/client";
-import { WS_BASE_URL } from "../config";
-import { callPriority, intentLabel, PRIORITY_RANK, recommend } from "../guidance";
+import {
+  AccountFacts,
+  api,
+  AssistPipelineStep,
+  CallState,
+  CustomerWithIssue,
+  LiveNudge,
+  ResolutionEvent,
+} from "../api/client";
+import { POLL_INTERVAL_MS, WS_BASE_URL } from "../config";
+import { intentLabel, PRIORITY_RANK, recommend } from "../guidance";
 import { startMicStream, VoiceUiState } from "../lib/micStream";
 import databricksLogo from "../assets/databricks-logo.png";
 import genieLogo from "../assets/genie-logo.png";
 
-const SPOTLIGHT_CUSTOMER = {
-  id: "CUST-4028",
-  name: "Omar Patel",
-  rationale:
-    "at_risk account with autopay off, overdue invoice exposure, and declined payments",
-};
+const SPOTLIGHT_CUSTOMER_ID = "CUST-4028";
 
 function signalsOf(call: CallState) {
   const gold = (call.state?.gold ?? {}) as Record<string, any>;
@@ -27,42 +30,96 @@ function signalsOf(call: CallState) {
   };
 }
 
+function customerPriority(c: CustomerWithIssue) {
+  if (c.issue_status !== "closed") return "high" as const;
+  if ((c.overdue_invoice_count ?? 0) > 0 || c.customer_status === "at_risk") return "medium" as const;
+  return "low" as const;
+}
+
 export function CallList({ calls }: { calls: CallState[] }) {
-  const spotlightCall = useMemo(
-    () => calls.find((c) => c.customer_id === SPOTLIGHT_CUSTOMER.id) ?? null,
-    [calls]
-  );
+  const [customers, setCustomers] = useState<CustomerWithIssue[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(true);
+  const [customersErr, setCustomersErr] = useState<string | null>(null);
 
-  const sorted = useMemo(() => {
-    const base = [...calls].sort((a, b) => {
-      const sa = signalsOf(a);
-      const sb = signalsOf(b);
-      const pa = callPriority(sa.nba, sa.disposition, sa.sentiment);
-      const pb = callPriority(sb.nba, sb.disposition, sb.sentiment);
-      return PRIORITY_RANK[pa] - PRIORITY_RANK[pb];
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      api
+        .customersWithIssues()
+        .then((r) => {
+          if (!active) return;
+          setCustomers(r.customers ?? []);
+          setCustomersErr(null);
+        })
+        .catch((e) => active && setCustomersErr(e instanceof Error ? e.message : "failed"))
+        .finally(() => active && setCustomersLoading(false));
+    };
+    load();
+    const id = setInterval(load, POLL_INTERVAL_MS);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const sortedCustomers = useMemo(() => {
+    const base = [...customers].sort((a, b) => {
+      const pa = PRIORITY_RANK[customerPriority(a)];
+      const pb = PRIORITY_RANK[customerPriority(b)];
+      if (pa !== pb) return pa - pb;
+      return (b.overdue_amount ?? 0) - (a.overdue_amount ?? 0);
     });
-    if (!spotlightCall) return base;
-    return [
-      spotlightCall,
-      ...base.filter((c) => c.call_id !== spotlightCall.call_id),
-    ];
-  }, [calls, spotlightCall]);
+    const spotlight = base.find((c) => c.customer_id === SPOTLIGHT_CUSTOMER_ID);
+    if (!spotlight) return base;
+    return [spotlight, ...base.filter((c) => c.customer_id !== SPOTLIGHT_CUSTOMER_ID)];
+  }, [customers]);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const callByCustomer = useMemo(() => {
+    const map = new Map<string, CallState>();
+    for (const c of calls) {
+      if (c.customer_id && !map.has(c.customer_id)) map.set(c.customer_id, c);
+    }
+    return map;
+  }, [calls]);
+
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [userPicked, setUserPicked] = useState(false);
+
+  useEffect(() => {
+    if (!sortedCustomers.length || userPicked) return;
+    const defaultId =
+      sortedCustomers.find((c) => c.customer_id === SPOTLIGHT_CUSTOMER_ID)?.customer_id ??
+      sortedCustomers[0].customer_id;
+    setSelectedCustomerId(defaultId);
+  }, [sortedCustomers, userPicked]);
+
+  const selectedCustomer =
+    sortedCustomers.find((c) => c.customer_id === selectedCustomerId) ?? sortedCustomers[0] ?? null;
+  const selectedCall = selectedCustomer?.call_id
+    ? calls.find((c) => c.call_id === selectedCustomer.call_id) ??
+      callByCustomer.get(selectedCustomer.customer_id) ??
+      null
+    : selectedCustomer
+    ? callByCustomer.get(selectedCustomer.customer_id) ?? null
+    : null;
+
   const [conversationByCall, setConversationByCall] = useState<
     Record<string, { text: string; speaker?: number }[]>
   >({});
 
-  useEffect(() => {
-    if (!sorted.length || userPicked) return;
-    setSelectedId((spotlightCall ?? sorted[0]).call_id);
-  }, [sorted, userPicked]);
+  if (customersLoading && !customers.length) {
+    return <p className="muted">Loading customers with issues…</p>;
+  }
 
-  const selected =
-    sorted.find((c) => c.call_id === selectedId) ?? sorted[0] ?? null;
-
-  if (!calls.length) return <p className="muted">No calls processed yet…</p>;
+  if (!sortedCustomers.length) {
+    return (
+      <p className="muted">
+        {customersErr
+          ? `Unable to load customers: ${customersErr}`
+          : "No customers with open issues found in account data."}
+      </p>
+    );
+  }
 
   return (
     <div className="cc-layout">
@@ -71,72 +128,67 @@ export function CallList({ calls }: { calls: CallState[] }) {
           <img className="hero-logo dbx-full side" src={databricksLogo} alt="Databricks" />
           <img className="hero-logo genie-full side" src={genieLogo} alt="Genie" />
         </div>
-        <div className="cc-sidebar-title">Live Call Queue</div>
-        <div className="cc-sidebar-sub">Select a call to open the assist cockpit</div>
-        <div className="cc-spotlight">
-          <div className="cc-spotlight-label">Spotlight customer</div>
-          <div className="cc-spotlight-name">
-            {SPOTLIGHT_CUSTOMER.name} ({SPOTLIGHT_CUSTOMER.id})
-          </div>
-          <div className="cc-spotlight-call">
-            CALL ID: {spotlightCall?.call_id ?? "not in current queue"}
-          </div>
-          {spotlightCall && selected?.call_id !== spotlightCall.call_id && (
-            <button
-              className="cc-spotlight-jump"
-              onClick={() => {
-                setUserPicked(true);
-                setSelectedId(spotlightCall.call_id);
-              }}
-            >
-              Switch to spotlight call
-            </button>
-          )}
-          <div className="cc-spotlight-note">{SPOTLIGHT_CUSTOMER.rationale}</div>
+        <div className="cc-sidebar-title">Customers with issues</div>
+        <div className="cc-sidebar-sub">
+          Billing risk, overdue exposure, and accounts needing agent assist
         </div>
-        {sorted.map((c) => {
-          const s = signalsOf(c);
-          const prio = callPriority(s.nba, s.disposition, s.sentiment);
-          const active = selected?.call_id === c.call_id;
+        {sortedCustomers.map((c) => {
+          const prio = customerPriority(c);
+          const active = selectedCustomer?.customer_id === c.customer_id;
+          const hasLiveCall = Boolean(c.call_id ?? callByCustomer.get(c.customer_id)?.call_id);
           return (
             <button
-              key={c.call_id}
-              className={`cc-call-row ${active ? "active" : ""}`}
+              key={c.customer_id}
+              className={`cc-call-row cc-customer-row ${active ? "active" : ""} ${
+                !hasLiveCall ? "cc-customer-muted" : ""
+              }`}
               onClick={() => {
                 setUserPicked(true);
-                setSelectedId(c.call_id);
+                setSelectedCustomerId(c.customer_id);
               }}
             >
               <span className={`prio-dot p-${prio}`} />
               <span className="cc-call-main">
-                <span className="cc-call-id">{c.call_id}</span>
-                <span className="cc-call-intent">{intentLabel(s.intent)}</span>
+                <span className="cc-customer-name">{c.full_name ?? c.customer_id}</span>
+                <span className="cc-call-id">{c.customer_id}</span>
+                <span className="cc-call-intent">{c.rationale ?? intentLabel(c.primary_intent)}</span>
+                {c.call_id && <span className="cc-customer-call">Call {c.call_id}</span>}
               </span>
-              <span className={`badge sentiment cc-sentiment ${s.sentiment ?? "neutral"}`}>
-                {s.sentiment ?? "—"}
+              <span className={`badge sentiment cc-sentiment ${c.sentiment_label ?? "neutral"}`}>
+                {c.sentiment_label ?? c.issue_status ?? "—"}
               </span>
             </button>
           );
         })}
       </aside>
 
-      {selected && (
+      {selectedCall ? (
         <Cockpit
-          call={selected}
-          localTurns={conversationByCall[selected.call_id] ?? []}
+          call={selectedCall}
+          customer={selectedCustomer}
+          localTurns={conversationByCall[selectedCall.call_id] ?? []}
           onAppendLocalTurn={(turn) =>
             setConversationByCall((prev) => ({
               ...prev,
-              [selected.call_id]: [...(prev[selected.call_id] ?? []), turn],
+              [selectedCall.call_id]: [...(prev[selectedCall.call_id] ?? []), turn],
             }))
           }
           onResetLocalTurns={() =>
             setConversationByCall((prev) => ({
               ...prev,
-              [selected.call_id]: [],
+              [selectedCall.call_id]: [],
             }))
           }
         />
+      ) : (
+        <div className="cc-main cc-empty-call">
+          <div className="eyebrow">No live call</div>
+          <h2>{selectedCustomer?.full_name ?? selectedCustomer?.customer_id}</h2>
+          <p className="muted">
+            This customer has an open account issue but is not in the active assist queue yet.
+          </p>
+          {selectedCustomer?.rationale && <p>{selectedCustomer.rationale}</p>}
+        </div>
       )}
     </div>
   );
@@ -144,11 +196,13 @@ export function CallList({ calls }: { calls: CallState[] }) {
 
 function Cockpit({
   call,
+  customer,
   localTurns,
   onAppendLocalTurn,
   onResetLocalTurns,
 }: {
   call: CallState;
+  customer: CustomerWithIssue | null;
   localTurns: { text: string; speaker?: number }[];
   onAppendLocalTurn: (turn: { text: string; speaker?: number }) => void;
   onResetLocalTurns: () => void;
@@ -479,12 +533,228 @@ function Cockpit({
             {genieAnswer && <div className="genie-answer">{genieAnswer}</div>}
             {!genieAnswer && (
               <div className="genie-hint">
-                Designed around {SPOTLIGHT_CUSTOMER.name}: ask for payment arrangement + late fee relief.
+                Designed around {customer?.full_name ?? "spotlight customers"}: ask for payment
+                arrangement + late fee relief.
               </div>
             )}
             {genieSql && <pre className="sql">{genieSql}</pre>}
           </div>
         </div>
+      </div>
+
+      <ResolutionJourneyStrip
+        issueStatus={issueStatus}
+        localTurns={utterances}
+        assistMeta={assistMeta}
+        voiceUi={voiceUi}
+        live={live}
+        facts={facts}
+        intent={intent}
+      />
+    </div>
+  );
+}
+
+function buildResolutionJourney({
+  issueStatus,
+  localTurns,
+  assistMeta,
+  voiceUi,
+  live,
+  facts,
+  intent,
+}: {
+  issueStatus: string;
+  localTurns: { text: string; speaker?: number }[];
+  assistMeta: LiveNudge | null;
+  voiceUi: VoiceUiState;
+  live: Record<string, any> | null;
+  facts: AccountFacts | null;
+  intent?: string;
+}): AssistPipelineStep[] {
+  const stages: { key: string; label: string }[] = [
+    { key: "describe", label: "Customer describes the issue" },
+    { key: "understand", label: "Request understood" },
+    { key: "review", label: "Account reviewed with Genie" },
+    { key: "offer", label: "Resolution offered to customer" },
+    { key: "apply", label: "Agreement applied to billing" },
+    { key: "close", label: "Issue closed" },
+  ];
+
+  const hasCustomerTurn = localTurns.some((t) => (t.speaker ?? 0) === 1);
+  const hasAgentTurn = localTurns.some((t) => (t.speaker ?? 0) === 0);
+  const lastCustomer = [...localTurns].reverse().find((t) => (t.speaker ?? 0) === 1)?.text;
+  const resolution = assistMeta?.resolution;
+  const status = String(resolution?.status ?? issueStatus ?? "open");
+  const actions = (resolution?.actions ?? {}) as Record<string, unknown>;
+  const nudge = assistMeta?.live ?? live ?? {};
+  const billing = assistMeta?.billing;
+  const overdue = Number(facts?.summary?.overdue_amount ?? 0);
+  const overdueCount = Number(facts?.summary?.overdue_invoice_count ?? 0);
+
+  let doneThrough = -1;
+  if (hasCustomerTurn || voiceUi.phase === "speaking" || voiceUi.phase === "transcribing") {
+    doneThrough = 0;
+  }
+  if (assistMeta && hasCustomerTurn) doneThrough = 1;
+  if (assistMeta?.agent_validation || assistMeta?.agent_reply) doneThrough = 2;
+  if (hasAgentTurn || assistMeta?.agent_reply) doneThrough = 3;
+  if (billing?.applied) doneThrough = 4;
+  if (status === "closed") doneThrough = 5;
+
+  if (status === "closed" && !hasCustomerTurn && !assistMeta) {
+    doneThrough = 5;
+  }
+
+  let activeKey: string | null = null;
+  const inProgressDetail: Record<string, string> = {};
+
+  if (voiceUi.phase === "speaking") {
+    activeKey = "describe";
+    inProgressDetail.describe =
+      voiceUi.interimText?.trim() || "Listening — customer is explaining the issue…";
+  } else if (voiceUi.phase === "transcribing") {
+    activeKey = "describe";
+    inProgressDetail.describe =
+      voiceUi.interimText?.trim() || "Capturing what the customer said…";
+  } else if (voiceUi.phase === "agent_reply") {
+    activeKey = assistMeta ? "offer" : "review";
+    if (!assistMeta) {
+      inProgressDetail.understand = "Understanding the customer's billing request…";
+      inProgressDetail.review =
+        "Genie is reviewing account facts and preparing the resolution offer for the agent…";
+    }
+  } else if (
+    !billing?.applied &&
+    status !== "closed" &&
+    (String(nudge.customer_signal) === "confirm_proceed" || actions.pending_close)
+  ) {
+    activeKey = "apply";
+    inProgressDetail.apply = "Applying the agreed payment arrangement and waiver to billing…";
+  }
+
+  const details: Record<string, string> = {};
+  if (doneThrough >= 0) {
+    details.describe =
+      voiceUi.interimText?.trim() ||
+      lastCustomer?.slice(0, 120) ||
+      "Customer explains their billing concern on the call.";
+  }
+  if (doneThrough >= 1) {
+    const plan = nudge.payment_plan_requested ? "payment plan" : null;
+    const waiver = nudge.waiver_requested ? "late fee relief" : null;
+    const extras = [plan, waiver].filter(Boolean).join(" + ");
+    details.understand = extras
+      ? `${intentLabel(intent)} — customer asked for ${extras}`
+      : intentLabel(intent) || "Billing concern identified from the conversation.";
+  }
+  if (doneThrough >= 2) {
+    if (overdueCount > 0) {
+      details.review = `Genie confirmed ${overdueCount} overdue invoice(s) totaling $${overdue.toFixed(2)}.`;
+    } else if (assistMeta?.agent_validation?.reply_available) {
+      details.review = "Account facts checked against governed billing records.";
+    } else {
+      details.review = "Account context reviewed before offering next steps.";
+    }
+  }
+  if (doneThrough >= 3) {
+    if (actions.waiver_requested && actions.payment_plan_requested) {
+      details.offer = "Agent proposed a payment arrangement and late fee waiver.";
+    } else if (actions.waiver_requested) {
+      details.offer = "Agent proposed late fee relief on the overdue balance.";
+    } else if (actions.payment_plan_requested) {
+      details.offer = "Agent proposed a payment arrangement.";
+    } else {
+      details.offer = "Agent shared next steps to resolve the billing issue.";
+    }
+  }
+  if (doneThrough >= 4) {
+    if (billing?.applied) {
+      details.apply = `Billing updated (${String(billing.adjustment?.invoice_id ?? "invoice")}).`;
+    } else if (billing && !billing.applied) {
+      details.apply = `Billing not updated: ${billing.reason ?? "pending customer confirmation"}.`;
+    } else if (status === "closed") {
+      details.apply = "Payment arrangement and waiver recorded on the account.";
+    }
+  } else if (actions.waiver_requested || actions.payment_plan_requested) {
+    details.apply = "Waiting for customer confirmation before updating billing.";
+  }
+  if (doneThrough >= 5) {
+    details.close =
+      resolution?.note ||
+      facts?.summary?.resolution_note ||
+      "Issue closed — customer informed that changes will appear on the next statement.";
+  }
+
+  if (doneThrough < 0 && voiceUi.phase === "idle" && !assistMeta) {
+    return [
+      {
+        key: "waiting",
+        label: "Awaiting customer",
+        status: "pending",
+        detail: "The resolution journey begins when the customer describes their issue.",
+      },
+    ];
+  }
+
+  return stages.map((stage, idx) => {
+    const isActive = activeKey === stage.key;
+    const isDone = !isActive && idx <= doneThrough;
+    return {
+      key: stage.key,
+      label: stage.label,
+      status: isActive ? "active" : isDone ? "done" : "pending",
+      detail: (isActive && inProgressDetail[stage.key]) || details[stage.key],
+    };
+  });
+}
+
+function ResolutionJourneyStrip({
+  issueStatus,
+  localTurns,
+  assistMeta,
+  voiceUi,
+  live,
+  facts,
+  intent,
+}: {
+  issueStatus: string;
+  localTurns: { text: string; speaker?: number }[];
+  assistMeta: LiveNudge | null;
+  voiceUi: VoiceUiState;
+  live: Record<string, any> | null;
+  facts: AccountFacts | null;
+  intent?: string;
+}) {
+  const steps = buildResolutionJourney({
+    issueStatus,
+    localTurns,
+    assistMeta,
+    voiceUi,
+    live,
+    facts,
+    intent,
+  });
+
+  return (
+    <div className="assist-pipeline-strip resolution-journey">
+      <div className="assist-pipeline-head">
+        <span className="panel-title">Issue resolution journey</span>
+        <span className="assist-pipeline-total">Status: {issueStatus}</span>
+      </div>
+      <div className="assist-pipeline-track">
+        {steps.map((step, idx) => (
+          <div key={step.key} className={`assist-pipeline-step s-${step.status}`}>
+            <div className="assist-pipeline-node">
+              <span className="assist-pipeline-index">{idx + 1}</span>
+            </div>
+            <div className="assist-pipeline-copy">
+              <div className="assist-pipeline-label">{step.label}</div>
+              {step.detail && <div className="assist-pipeline-detail">{step.detail}</div>}
+            </div>
+            {idx < steps.length - 1 && <div className="assist-pipeline-connector" aria-hidden="true" />}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -593,7 +863,6 @@ function AssistStatusPanel({ meta }: { meta: LiveNudge | null }) {
 
 function LiveAssist({
   callId,
-  customerId,
   onNudge,
   onLocalTurn,
   onVoiceUiChange,
@@ -629,6 +898,7 @@ function LiveAssist({
       if (speaker === 1) {
         onVoiceUiChange({
           phase: "agent_reply",
+          source: "text",
           processingLabel: "Genie is preparing the agent response…",
         });
       }
@@ -673,6 +943,7 @@ function LiveAssist({
           if (voicePhaseRef.current !== "speaking") return;
           onVoiceUiChange({
             phase: "speaking",
+            source: "mic",
             interimText: voiceRef.current.interim,
             micLevel: voiceRef.current.level,
           });
@@ -682,6 +953,7 @@ function LiveAssist({
           if (voicePhaseRef.current !== "speaking") return;
           onVoiceUiChange({
             phase: "speaking",
+            source: "mic",
             interimText: voiceRef.current.interim,
             micLevel: level,
           });
@@ -692,6 +964,7 @@ function LiveAssist({
       setRecording(true);
       onVoiceUiChange({
         phase: "speaking",
+        source: "mic",
         interimText: "",
         processingLabel: "Listening…",
         micLevel: 0.15,
@@ -711,6 +984,7 @@ function LiveAssist({
     voicePhaseRef.current = "transcribing";
     onVoiceUiChange({
       phase: "transcribing",
+      source: "mic",
       interimText: voiceRef.current.interim,
       processingLabel: "Processing voice with Deepgram…",
     });
@@ -722,6 +996,7 @@ function LiveAssist({
       voicePhaseRef.current = "agent_reply";
       onVoiceUiChange({
         phase: "agent_reply",
+        source: "mic",
         processingLabel: "Genie is preparing the agent response…",
       });
       const n = await api.sendUtterance(callId, textFromMic, 1);

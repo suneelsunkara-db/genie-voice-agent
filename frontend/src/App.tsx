@@ -7,11 +7,12 @@ import genieLogo from "./assets/genie-logo.png";
 
 export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [issueCount, setIssueCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    const tick = async () => {
+    const loadStatus = async () => {
       try {
         const s = await api.status();
         if (active) {
@@ -21,6 +22,18 @@ export default function App() {
       } catch (e) {
         if (active) setError(String(e));
       }
+    };
+    const loadIssues = async () => {
+      try {
+        const issues = await api.customersWithIssues();
+        if (active) setIssueCount(issues.count);
+      } catch {
+        if (active) setIssueCount(null);
+      }
+    };
+    const tick = () => {
+      void loadStatus();
+      void loadIssues();
     };
     tick();
     const id = setInterval(tick, POLL_INTERVAL_MS);
@@ -41,7 +54,9 @@ export default function App() {
           </div>
           <div className="hero-meta">
             <div className="meta-pill">runtime: {status?.mode ?? "…"}</div>
-            <div className="meta-pill">active calls: {(status?.call_states ?? []).length}</div>
+            <div className="meta-pill">
+              customers with issues: {issueCount ?? "…"}
+            </div>
           </div>
         </div>
 

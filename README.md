@@ -4,16 +4,68 @@ Contact-center voice intelligence on Databricks. Captures agent↔customer calls
 serves live agent assist from **Lakebase**, and publishes governed analytics to
 Unity Catalog for **AI/BI Genie**.
 
-> `deployment` (`local` | `live`) selects who generates data. Lakebase is the
-> low-latency serving system; UC is the asynchronous analytics path.
-> One serverless orchestration job runs: reference UC ingest and Lakebase call
-> ingest in parallel → CDF freshness check → gold insights refresh → UC constraints
-> → data quality → Genie reconcile.
-
 See [`docs/PRD.md`](docs/PRD.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and
 [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) (entities, relationships, Genie sample questions).
 
-## Architecture (Lakebase First)
+## Problem statement: Genie for voice use cases
+
+Voice contact centers need **account-aware, governed intelligence during the call** —
+not after it. Agents still spend hold time searching CRM, billing, and ticket systems
+while the customer waits. Generic LLM chatbots are not the answer: they are expensive
+at call volume, hard to audit, and disconnected from the warehouse of record.
+
+This project shows how **Databricks Genie**, **streaming capture**, and **Lakebase**
+work together so customer context and insights arrive **while the agent is on the
+line**, grounded in Unity Catalog — without token-maxing every syllable.
+
+## Today's tools and gaps
+
+| What exists today | Gap on live voice calls |
+|---|---|
+| CRM / billing portals | Agent leaves the call flow to look up account facts |
+| Post-call analytics & QA | Insights arrive too late to change the outcome |
+| Generic agentic chat (full-context LLM per turn) | High token cost, weak governance, latency on every utterance |
+| Batch Genie / BI dashboards | Great for portfolio questions, not millisecond agent assist |
+
+**Core gap:** missing **customer context and insights in live calls** — overdue
+balances, dispute signals, waiver eligibility, and resolution state are not
+streamed to the agent at the moment they matter.
+
+## Proposed approach: streaming, Genie, and Lakebase
+
+```
+Voice (Deepgram)  →  utterance-bound inference  →  Lakebase live serving
+Governed UC data  →  Genie fact validation      →  Agent Assist UI
+Lakebase CDF      →  UC analytics + gold         →  Genie space (portfolio intelligence)
+```
+
+1. **Streaming capture** — STT turns continuous audio into **final utterances**
+   (not per-chunk LLM calls). Local mode uses synthetic producer; live mode uses Deepgram.
+2. **Lakebase (hot path)** — sub-second reads/writes for `call_state`, account facts
+   overlay, `resolution_events`, and `billing_adjustments`. No warehouse round-trip
+   on every UI poll.
+3. **Foundation Model (per turn)** — one structured FM call per customer utterance
+   (intent, sentiment, `customer_signal`, waiver/plan flags) plus short agent prose.
+4. **Genie (governed facts)** — NL→SQL over curated UC tables to **validate** account
+   metrics and power the Genie console; not every spoken word goes through Genie chat.
+5. **Unity Catalog (cold path)** — batch reference ingest, CDF history, gold insights,
+   data quality gate, then Genie space reconcile.
+
+> `deployment` (`local` | `live`) selects who generates capture data. Lakebase is the
+> low-latency serving system; UC is the asynchronous analytics path.
+
+## Impact
+
+- **Streaming customer insights with Genie while the agent engages the customer** —
+  overdue exposure, at-risk status, recommended next action, and resolution journey
+  update on each customer turn; Genie validates facts against governed tables.
+- **Less hold time and faster issue resolution** — account context is pre-loaded from
+  Lakebase; FM enrichment and billing close run in one assist transaction per utterance.
+- **Avoids token-maxing for agentic solutions** — LLM spend scales with **meaningful
+  customer turns**, not audio frames or full transcript re-summarization; Lakebase
+  serves state without tokens; Genie runs for analytics validation, not live prose.
+
+## Architecture (Lakebase first)
 
 ```
 HOST / SERVERLESS JOBS                    DATABRICKS
@@ -53,7 +105,7 @@ backend/        genie_voice package (core library)
     serve/        Lakebase autoscaling serving (call state, resolution events, billing adjustments)
     genie/        Genie Conversation API client
 api/            FastAPI service (health, agent-assist, accounts, genie, status)
-frontend/       Vite/React agent-assist cockpit (live calls, Genie panel, resolution timeline)
+frontend/       Vite/React agent-assist cockpit (customers with issues, resolution journey, Genie panel)
 infra/lakebase/ Lakebase Autoscaling provisioning
 local-deploy.sh end-to-end local deploy
 ```
@@ -64,14 +116,9 @@ The app runs **as your Databricks user** via OAuth U2M — no tokens or secrets 
 `.env`. `local-deploy.sh` runs `databricks auth login --host <host>` for you
 (opens a browser) and everything thereafter runs under that identity.
 
-Set workspace values in **`config/config.local.yaml`** (gitignored full config).
-The committed `config/config.yaml` is a placeholder template. Copy the example:
-
-```bash
-cp config/config.local.yaml.example config/config.local.yaml
-```
-
-Key fields to customize:
+Set workspace values in **`config/config.local.yaml`** (gitignored full config,
+deep-merged over `config/config.yaml`). Copy `config/config.yaml` as a starting
+point and replace placeholders with your workspace values.
 
 ```yaml
 databricks:
@@ -96,8 +143,8 @@ uses **runtime-minted Postgres tokens** (no stored password); set
 
 ```bash
 cp config/.env.example .env              # optional for U2M; add vendor keys for live mode
-cp config/config.local.yaml.example config/config.local.yaml   # required for local dev
-# Edit config/config.local.yaml with your Databricks workspace + Lakebase instance
+cp config/config.yaml config/config.local.yaml   # then edit with your workspace values
+# Edit config/config.local.yaml — host, catalog, sql_warehouse_id, lakebase instance, secrets
 ./local-deploy.sh                # logs you in, sets up perms, runs flow, starts API+UI
 # UI:  http://localhost:5173
 # API: http://localhost:8000/health
@@ -126,7 +173,8 @@ volume dir + in-process serving) so you can see the full flow immediately.
 | GET | `/status` | Medallion stages + table row counts + live call states |
 | GET | `/calls` | List live call states (Lakebase) |
 | GET | `/calls/{call_id}/assist` | Read persisted call enrichment + resolution state |
-| POST | `/calls/{call_id}/assist` | Enrich one utterance (FM), advance resolution, optional billing close, Genie agent reply |
+| GET | `/accounts/with-issues` | Customers with billing/account risk (sidebar queue) |
+| POST | `/calls/{call_id}/assist` | Enrich one utterance (FM), advance resolution, optional billing close, FM agent reply |
 | POST | `/calls/{call_id}/mic-transcribe` | Deepgram mic blob → same flow as `POST /assist` |
 | WS | `/calls/{call_id}/mic-stream` | Streaming mic → Deepgram → `POST /assist` |
 | GET | `/calls/{call_id}/account` | Account facts for the call's customer (Lakebase overlay + billing adjustments) |
@@ -147,14 +195,17 @@ datagen export.
    heuristics; unavailable FM returns `available: false`).
 2. **Resolution** — FM-driven transitions: `open` → `in_progress` → `closed`.
    Close requires customer `confirm_proceed` and validated account facts.
-3. **Genie agent reply** — Genie phrases a customer-facing reply grounded in
-   Lakebase metrics; reply is validated against authoritative account numbers.
-   If Genie fails validation, `agent_reply` is `null` (no template fallback).
+3. **FM agent reply** — Foundation Model phrases a customer-facing reply using a
+   small validated fact block from Lakebase. **Genie cross-checks metrics** when
+   needed; Genie Conversation API is for analytics Q&A (`POST /genie/ask`), not
+   live spoken prose. If validation fails, `agent_reply` is `null` (no template fallback).
 4. **Billing commit** — waiver/payment-plan writes to Lakebase
    `billing_adjustments` and UC `invoices` run **after** the agent reply on
    customer turns. Issue status moves to `closed` only when billing succeeds.
 5. **Timeline** — one `resolution_events` row per status transition; duplicates
-   are suppressed. **Reset scenario** clears timeline, billing, and call state.
+   are suppressed. The UI **issue resolution journey** reflects business steps
+   (describe → understand → review → offer → apply → close). **Reset scenario**
+   clears timeline, billing, and call state.
 
 Spotlight demo customer: **CUST-4028 / CALL-2028 (Omar Patel)** — overdue invoice
 with late-fee waiver + payment plan path.
@@ -220,4 +271,3 @@ python -m genie_voice.genie.space     # runs DQ, recreates by name, prints the U
 
 The orchestration job runs this automatically online after constraints and DQ.
 At query time `GenieClient` just resolves the space by name.
-```

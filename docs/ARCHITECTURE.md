@@ -1,6 +1,41 @@
 # Genie Voice Contact Center Architecture
 
-The architecture separates enterprise reference data from live call data.
+## Problem statement: Genie for voice use cases
+
+Contact-center voice is a **real-time** channel: the agent and customer are on the
+line together. Success depends on having the right account context at the moment
+of each customer utterance — not in a post-call report or a separate BI tab.
+
+This architecture demonstrates how **Databricks Genie** fits voice workflows when
+paired with **streaming capture** and **Lakebase** operational serving: governed
+warehouse data powers live assist without treating every audio frame or full
+transcript as an open-ended agentic chat session.
+
+## Today's tools and gaps
+
+| Capability | Limitation on live calls |
+|---|---|
+| CRM / billing UIs | Context lookup pulls the agent out of the conversation |
+| Post-call transcription + summarization | Insights arrive after resolution decisions are made |
+| Full-context LLM per turn | High latency, high token cost, weak audit trail |
+| Genie / BI on batch gold | Strong for portfolio analytics, not millisecond assist |
+
+**Gap:** agents lack **streaming customer context and insights during the call** —
+balances, risk flags, waiver eligibility, and resolution state are not fused into
+the live assist surface at utterance boundaries.
+
+## Proposed approach: streaming, Genie, and Lakebase
+
+The architecture separates enterprise reference data from live call data and
+assigns each layer a distinct job:
+
+| Layer | Role in voice assist |
+|---|---|
+| **Streaming capture** | STT produces **final utterances** (Deepgram live or synthetic producer); not per-chunk LLM |
+| **Lakebase** | Hot path: `call_state`, account overlay, `resolution_events`, `billing_adjustments` |
+| **Foundation Model** | One structured + prose call **per customer turn** (intent, signals, agent reply) |
+| **Genie** | Governed NL→SQL over curated UC tables — fact validation and portfolio Q&A |
+| **Unity Catalog** | Batch reference, CDF history, `gold_call_insights`, DQ gate, Genie space |
 
 - Reference/customer/billing data is batch-ingested from `raw_batch_data` into
   governed Unity Catalog Delta tables.
@@ -11,7 +46,20 @@ The architecture separates enterprise reference data from live call data.
 - Job tasks build final UC `call_facts` and `gold_call_insights`.
 - Genie reads curated Unity Catalog business tables plus `billing_adjustments`.
 
-## Architecture
+## Impact
+
+1. **Streaming customer insights with Genie while the agent engages the customer**
+   — each customer turn refreshes Lakebase-backed account facts, FM enrichment,
+   resolution journey, and Genie-validated metrics in the Agent Assist UI.
+2. **Less hold time and faster issue resolution** — customers-with-issues queue,
+   pre-loaded account context, and utterance-bound resolution/billing close reduce
+   dead air and repeat lookups.
+3. **Avoids token-maxing for agentic solutions** — token spend scales with
+   **customer turns**, not streaming audio chunks or full-history re-prompts;
+   Lakebase serves state without LLM calls; Genie validates governed facts rather
+   than composing every spoken response.
+
+## System diagram
 
 ```mermaid
 flowchart LR
@@ -47,7 +95,7 @@ flowchart LR
     end
 
     subgraph SERVE["Consumption"]
-        UI["Agent Assist UI<br/>Lakebase + API"]
+        UI["Agent Assist UI<br/>issues queue + resolution journey"]
         API["FastAPI<br/>POST /assist"]
         GENIE["Genie Space<br/>curated UC tables"]
     end
@@ -109,31 +157,43 @@ sequenceDiagram
     participant G as Genie
 
     UI->>API: POST /assist (customer utterance)
-    API->>FM: enrich customer utterance + resolution signals
+    API->>FM: enrich utterance + resolution signals
     FM-->>API: intent, sentiment, customer_signal, waiver/plan flags
     API->>API: evaluate resolution (open / in_progress / pending_close)
-    API->>G: compose agent reply (Lakebase metrics authoritative)
-    G-->>API: prose reply (validated against account facts)
+    API->>FM: compose agent reply (Lakebase metrics authoritative)
+    FM-->>API: prose reply
+    API->>G: validate metrics vs governed UC facts (when needed)
+    G-->>API: validation result
     alt pending close and reply available
         API->>LB: persist billing_adjustments
         API->>WH: MERGE billing_adjustments + UPDATE invoices
         API->>API: finalize closed status
     end
     API->>LB: upsert call_state + resolution_events (status transitions only)
-    API-->>UI: live nudge, resolution, agent_reply, billing, validation
+    API-->>UI: live nudge, resolution, agent_reply, billing, validation, pipeline_steps
 ```
 
 **Ordering guarantees**
 
-- Billing writes and `closed` status commit **after** Genie agent reply on
+- Billing writes and `closed` status commit **after** the FM agent reply on
   customer turns, so KPIs and invoice overlays do not change while the UI still
-  shows "Genie is preparing the agent response…".
-- Close is blocked if billing UC/Lakebase writes fail or if Genie cannot produce
-  a validated reply (`agent_reply: null`, `close_block_reason` set).
+  shows interim progress in the resolution journey.
+- Close is blocked if billing UC/Lakebase writes fail or if the reply cannot be
+  validated (`agent_reply: null`, `close_block_reason` set).
 - `GET /calls/{call_id}/alignment` cross-checks resolution, active billing
   adjustments (call-scoped), and account summary.
 
-## Job Flow
+**Token economics (voice-specific)**
+
+- **Do not** send streaming audio or rolling full transcripts to Genie per chunk.
+- **Do** persist authoritative state in Lakebase and read it on UI poll/assist.
+- **Do** bound FM to one call per finalized customer utterance (structured JSON +
+  short prose).
+- **Do** use Genie for governed analytics (`POST /genie/ask`) and metric
+  validation over curated tables — amortize batch gold and UC reference across
+  many calls.
+
+## Job flow
 
 ```mermaid
 flowchart LR
@@ -153,7 +213,7 @@ flowchart LR
     DQ --> GENIE
 ```
 
-## Genie Tables
+## Genie tables
 
 Genie reads:
 
@@ -165,9 +225,10 @@ Genie reads:
 - `gold_call_insights`
 
 Genie does not read raw `lb_*_history`, `call_state`, `resolution_events`, or
-raw transcript events.
+raw transcript events. Live agent-facing prose is produced by the Foundation Model;
+Genie remains the governed analytics and validation layer.
 
-## Data Quality Gate
+## Data quality gate
 
 Before Genie is recreated, `data_quality_check` validates:
 

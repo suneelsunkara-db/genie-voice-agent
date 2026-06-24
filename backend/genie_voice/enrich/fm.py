@@ -255,3 +255,44 @@ def fm_customer_resolution_signal(
         "payment_plan_requested": bool(data.get("payment_plan_requested")),
         "waiver_requested": bool(data.get("waiver_requested")),
     }
+
+
+_AGENT_REPLY_SYSTEM = (
+    "You are a warm, professional billing support agent on a live customer call. "
+    "Write only the words you would speak to the customer in plain English. "
+    "Never mention SQL, databases, schemas, tables, column names, backticks, or internal tools. "
+    "Never refuse the request or say a question is unrelated or out of scope. "
+    "Use only the validated account facts provided in the user message."
+)
+
+
+def fm_compose_agent_reply(prompt: str, settings: Settings | None = None) -> str:
+    """Customer-facing agent prose via the FM serving endpoint (not Genie analytics)."""
+    settings = settings or get_settings()
+    from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+
+    from genie_voice.databricks.client import get_workspace_client
+
+    client = get_workspace_client(settings)
+    kwargs: dict[str, Any] = {
+        "name": settings.enrichment.model_endpoint,
+        "messages": [
+            ChatMessage(role=ChatMessageRole.SYSTEM, content=_AGENT_REPLY_SYSTEM),
+            ChatMessage(role=ChatMessageRole.USER, content=prompt),
+        ],
+        "max_tokens": settings.enrichment.max_tokens,
+    }
+    if settings.enrichment.temperature is not None:
+        kwargs["temperature"] = settings.enrichment.temperature
+    try:
+        resp = client.serving_endpoints.query(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        if "temperature" in kwargs and "temperature" in str(exc).lower():
+            kwargs.pop("temperature")
+            resp = client.serving_endpoints.query(**kwargs)
+        else:
+            raise
+    content = (resp.choices[0].message.content or "").strip()
+    if not content:
+        raise ValueError("empty agent reply from FM")
+    return content

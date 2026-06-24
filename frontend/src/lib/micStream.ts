@@ -1,7 +1,10 @@
 export type VoiceUiPhase = "idle" | "speaking" | "transcribing" | "agent_reply";
 
+export type VoiceInputSource = "mic" | "text";
+
 export interface VoiceUiState {
   phase: VoiceUiPhase;
+  source?: VoiceInputSource;
   interimText?: string;
   processingLabel?: string;
   micLevel?: number;

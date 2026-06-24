@@ -99,3 +99,14 @@ def test_validate_close_allows_waiver_when_late_fee_exists():
     }
     ok, _ = validate_close_eligible({"waiver_requested": True}, account)
     assert ok is True
+
+
+def test_bad_agent_reply_markers_reject_genie_scope_text():
+    from api.app.routers.agent_assist import _looks_like_bad_agent_reply
+
+    bad = (
+        "This request is unrelated to the database schema and data analysis. "
+        "I am only able to answer questions about the data in the provided tables."
+    )
+    assert _looks_like_bad_agent_reply(bad) is True
+    assert _looks_like_bad_agent_reply("Thanks for confirming — your waiver is applied.") is False

@@ -34,6 +34,30 @@ export interface CallState {
   };
 }
 
+export interface CustomerWithIssue {
+  customer_id: string;
+  full_name?: string;
+  customer_status?: string;
+  call_id?: string | null;
+  issue_status?: string;
+  overdue_invoice_count?: number;
+  overdue_amount?: number;
+  autopay_enabled?: boolean | null;
+  recent_declined_payments?: number;
+  rationale?: string;
+  primary_intent?: string;
+  sentiment_label?: string;
+  next_best_action?: string;
+}
+
+export interface AssistPipelineStep {
+  key: string;
+  label: string;
+  status: "pending" | "active" | "done" | "error" | "skipped";
+  detail?: string;
+  elapsed_ms?: number;
+}
+
 export interface StatusResponse {
   mode: string;
   deployment?: string;
@@ -77,6 +101,8 @@ export interface LiveNudge {
     actions?: Record<string, unknown>;
     resolved_at?: string;
   };
+  pipeline_steps?: AssistPipelineStep[];
+  total_elapsed_ms?: number;
 }
 
 export interface AccountFacts {
@@ -124,6 +150,8 @@ async function getJSON<T>(path: string): Promise<T> {
 export const api = {
   status: () => getJSON<StatusResponse>("/status"),
   health: () => getJSON<Record<string, unknown>>("/health"),
+  customersWithIssues: () =>
+    getJSON<{ customers: CustomerWithIssue[]; count: number }>("/accounts/with-issues"),
   callAccount: (callId: string) =>
     getJSON<AccountFacts>(`/calls/${callId}/account`),
   resolutionEvents: (callId: string) =>
