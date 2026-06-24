@@ -12,6 +12,7 @@ dist/
 # Env / secrets
 .env
 .env.local
+config/config.local.yaml
 
 # Local runtime
 .run/

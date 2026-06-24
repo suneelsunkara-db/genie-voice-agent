@@ -1,0 +1,12 @@
+# Copy to config.local.yaml (gitignored) and fill in your workspace values.
+# Loaded after config.yaml and deep-merged — only override what you need.
+
+databricks:
+  host: "https://<your-workspace>.cloud.databricks.com"
+  profile: "<your-databricks-profile>"
+  run_as: "user@example.com"
+  catalog: "<your-catalog>"
+  sql_warehouse_id: "<your-sql-warehouse-id>"
+
+lakebase:
+  instance: "<your-lakebase-instance>"

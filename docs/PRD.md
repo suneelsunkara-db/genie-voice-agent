@@ -3,7 +3,8 @@
 **Status:** Draft v0.1
 **Owner:** TBD
 **Last updated:** 2026-06-14
-**Target Databricks workspace:** `https://fe-vm-vdm-classic-rcn6ip.cloud.databricks.com/`
+**Target Databricks workspace:** configure `databricks.host` in `config/config.yaml`
+(e.g. `https://<your-workspace>.cloud.databricks.com`).
 **Companions:** architecture → `docs/ARCHITECTURE.md` · data model & relationships → `docs/DATA_MODEL.md`
 
 ---

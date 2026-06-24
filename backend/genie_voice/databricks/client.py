@@ -3,7 +3,7 @@
 Auth is config-driven (`databricks.auth_type`):
   - default -> SDK unified-auth credential chain. With OAuth U2M this means the
                token cached by `databricks auth login --host <host>` (run AS the
-               user, e.g. suneel.sunkara@databricks.com). No secrets in .env.
+               user via OAuth U2M). No secrets in .env.
                An optional `databricks.profile` selects a ~/.databrickscfg profile.
   - pat     -> DATABRICKS_TOKEN (personal access token).
   - oauth   -> DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET (service principal M2M).

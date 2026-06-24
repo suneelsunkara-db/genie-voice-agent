@@ -1,7 +1,7 @@
 """Configuration loader.
 
-Loads non-secret config from `config/config.yaml`, overlays secrets from the
-environment (.env), and exposes a single cached `Settings` object. Every tunable
+Loads non-secret config from `config/config.yaml`, optionally overlaid by
+gitignored `config/config.local.yaml`, then secrets from the environment (.env), and exposes a single cached `Settings` object. Every tunable
 in the system is config-driven - no hardcoded hosts, table names, or vendor
 options anywhere else in the codebase.
 """
@@ -27,6 +27,21 @@ def _config_path() -> Path:
     if override:
         return Path(override)
     return _repo_root() / "config" / "config.yaml"
+
+
+def _local_config_path() -> Path:
+    return _repo_root() / "config" / "config.local.yaml"
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge overlay into base (overlay wins)."""
+    out = dict(base)
+    for key, value in overlay.items():
+        if key in out and isinstance(out[key], dict) and isinstance(value, dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -270,11 +285,26 @@ class Settings(BaseModel):
 
 
 def _load_yaml() -> dict[str, Any]:
-    path = _config_path()
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
-    with path.open() as fh:
-        return yaml.safe_load(fh) or {}
+    if os.environ.get("GENIE_CONFIG"):
+        path = _config_path()
+        if not path.exists():
+            raise FileNotFoundError(f"Config file not found: {path}")
+        with path.open() as fh:
+            return yaml.safe_load(fh) or {}
+
+    base_path = _config_path()
+    if not base_path.exists():
+        raise FileNotFoundError(f"Config file not found: {base_path}")
+    with base_path.open() as fh:
+        raw = yaml.safe_load(fh) or {}
+
+    local_path = _local_config_path()
+    if local_path.exists():
+        with local_path.open() as fh:
+            local = yaml.safe_load(fh) or {}
+        if local:
+            raw = _deep_merge(raw, local)
+    return raw
 
 
 def _apply_env_overrides(raw: dict[str, Any]) -> None:

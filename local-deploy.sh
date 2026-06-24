@@ -2,7 +2,7 @@
 # =============================================================================
 # Genie Voice Agent - local end-to-end deploy.
 #
-# Auth model: OAuth U2M (runs AS you, e.g. suneel.sunkara@databricks.com). No
+# Auth model: OAuth U2M (runs AS your Databricks user). No
 # PAT, no secrets in .env. Lakebase is the low-latency serving path; UC is the
 # asynchronous analytics path. Steps:
 #   1. install backend + api (venv) and frontend (npm)
@@ -28,7 +28,6 @@ mkdir -p "$RUN_DIR"
 
 log() { printf "\033[36m[deploy]\033[0m %s\n" "$*"; }
 
-HOST="${DATABRICKS_HOST:-https://fe-vm-vdm-classic-rcn6ip.cloud.databricks.com}"
 RESET="${GENIE_RESET:-0}"
 
 usage() {
@@ -84,6 +83,12 @@ else
   pip install -q -r api/requirements.txt || log "api deps install failed (no PyPI?)"
   python -c "import genie_voice" >/dev/null 2>&1 \
     || { log "FATAL: genie_voice not importable and cannot install (no PyPI access)"; exit 1; }
+fi
+
+HOST="${DATABRICKS_HOST:-$(python -c "import sys;sys.path.insert(0,'backend');from genie_voice.config import get_settings;print(get_settings().databricks.host)" 2>/dev/null || true)}"
+if [[ -z "$HOST" ]] || [[ "$HOST" == *"<your-workspace>"* ]]; then
+  log "Set databricks.host in config/config.yaml or export DATABRICKS_HOST before deploy."
+  exit 1
 fi
 
 # ---- 2. Databricks CLI + U2M login -----------------------------------------

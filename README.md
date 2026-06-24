@@ -64,16 +64,22 @@ The app runs **as your Databricks user** via OAuth U2M — no tokens or secrets 
 `.env`. `local-deploy.sh` runs `databricks auth login --host <host>` for you
 (opens a browser) and everything thereafter runs under that identity.
 
-Set these in `config/config.yaml` before the first online run:
+Set these in `config/config.yaml` before the first online run, or copy
+`config/config.local.yaml.example` to `config/config.local.yaml` (gitignored)
+for workspace-specific values:
 
 ```yaml
 databricks:
+  host: "https://<your-workspace>.cloud.databricks.com"
+  profile: "<your-databricks-profile>"
   auth_type: default                       # OAuth U2M
-  run_as: "suneel.sunkara@databricks.com"  # identity the app runs as
-  catalog: partner_demo_catalog            # EXISTING catalog (not created by us)
+  run_as: "user@example.com"               # identity the app runs as
+  catalog: "<your-catalog>"                # EXISTING catalog (not created by us)
   create_catalog: false
   schema: genie_voice_contact_center
-  sql_warehouse_id: "<your-warehouse-id>"  # REQUIRED for bootstrap/load/Genie
+  sql_warehouse_id: "<your-sql-warehouse-id>"  # REQUIRED for bootstrap/load/Genie
+lakebase:
+  instance: "<your-lakebase-instance>"
 ```
 
 `bootstrap` then creates the schema + Volume in the existing catalog and applies

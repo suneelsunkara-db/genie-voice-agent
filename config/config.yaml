@@ -3,6 +3,10 @@
 # Secrets live in .env (see config/.env.example). Anything here can be
 # overridden by an environment variable of the same dotted path uppercased
 # with GENIE_ prefix, e.g. GENIE_DATABRICKS__CATALOG=my_catalog
+#
+# Replace all <placeholder> values below with your workspace settings before
+# running online, or put them in gitignored config/config.local.yaml (see
+# config/config.local.yaml.example). Keep API keys in .env only.
 # =============================================================================
 
 # Deployment target - the ONLY run switch. It selects who PRODUCES live/mock data
@@ -16,15 +20,15 @@ deployment: local
 
 databricks:
   # Host can also be set via DATABRICKS_HOST in .env (env wins).
-  host: "https://fe-vm-vdm-classic-rcn6ip.cloud.databricks.com"
+  host: "https://<your-workspace>.cloud.databricks.com"
   # default = OAuth U2M (run AS the user via `databricks auth login`). No secrets.
   auth_type: default        # default | pat | oauth
-  profile: "fe-vm-vdm-classic-rcn6ip"   # ~/.databrickscfg profile (disambiguates when several match the host)
-  run_as: "suneel.sunkara@databricks.com"   # identity the app runs as (GRANTs/Lakebase role)
-  catalog: partner_demo_catalog             # existing catalog (not created by us)
+  profile: "<your-databricks-profile>"   # ~/.databrickscfg profile (disambiguates when several match the host)
+  run_as: "user@example.com"   # identity the app runs as (GRANTs/Lakebase role)
+  catalog: "<your-catalog>"             # existing catalog (not created by us)
   create_catalog: false     # never CREATE CATALOG; we use an existing one
   schema: genie_voice_contact_center        # our schema inside the catalog
-  sql_warehouse_id: d0a0a25efd015c58      # REQUIRED: set for bootstrap / table load / Genie
+  sql_warehouse_id: "<your-sql-warehouse-id>"      # REQUIRED: set for bootstrap / table load / Genie
   # Genie space is created/resolved dynamically by NAME (no hardcoded id).
   genie_space_name: "Genie Voice - Contact Center"
 
@@ -49,7 +53,7 @@ medallion:
 # Lakebase autoscaling project (low-latency serving for agent assist).
 lakebase:
   enabled: true                     # use real Lakebase (offline deploy overrides to false)
-  instance: genie_voice_lakebase    # Lakebase database instance name
+  instance: "<your-lakebase-instance>"    # Lakebase database instance name
   database: databricks_postgres     # Postgres database inside the instance
   schema: genie_voice_contact_center # Postgres schema for low-latency serving tables
   capacity: CU_1                    # autoscaling capacity unit
