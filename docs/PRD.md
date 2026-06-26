@@ -5,7 +5,7 @@
 **Last updated:** 2026-06-14
 **Target Databricks workspace:** configure `databricks.host` in `config/config.yaml`
 (e.g. `https://<your-workspace>.cloud.databricks.com`).
-**Companions:** architecture → `docs/ARCHITECTURE.md` · data model & relationships → `docs/DATA_MODEL.md`
+**Companions:** architecture → `docs/ARCHITECTURE.md` · data model & relationships → `docs/DATA_MODEL.md` · revenue use cases → `docs/REVENUE_USE_CASES.md`
 
 ---
 
