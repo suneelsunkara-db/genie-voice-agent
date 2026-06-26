@@ -127,8 +127,13 @@ export interface AccountFacts {
 export interface GenieResponse {
   question: string;
   answer?: string;
+  description?: string;
   sql?: string;
   rows?: unknown[][];
+  columns?: string[];
+  suggested_followups?: string[];
+  conversation_id?: string;
+  message_id?: string;
 }
 
 export interface ResolutionEvent {
@@ -177,11 +182,24 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
-  askGenie: async (question: string): Promise<GenieResponse> => {
+  prefetchGenieInsight: async (
+    callId: string
+  ): Promise<{ call_id: string; genie_insight: { text: string } | null }> => {
+    const res = await fetch(`${API_BASE_URL}/calls/${callId}/genie-insight`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  },
+  askGenie: async (
+    question: string,
+    conversationId?: string
+  ): Promise<GenieResponse> => {
     const res = await fetch(`${API_BASE_URL}/genie/ask`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, conversation_id: conversationId }),
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();

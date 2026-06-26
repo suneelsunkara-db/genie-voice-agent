@@ -65,19 +65,19 @@ const NODES: Node[] = [
     highlight: true,
   },
   {
-    id: "genie_insights",
-    title: "Genie Insights",
-    sub: "understand customer intent",
+    id: "fm_enrich",
+    title: "FM enrich",
+    sub: "intent · sentiment · signals",
     zone: "journey",
     col: 2,
     step: 3,
-    stepColor: "green",
+    stepColor: "blue",
     highlight: true,
   },
   {
     id: "agent_reply",
-    title: "Agent reply",
-    sub: "Genie validated response",
+    title: "FM agent reply",
+    sub: "Genie-grounded · UC-validated",
     zone: "journey",
     col: 3,
     step: 4,
@@ -86,17 +86,17 @@ const NODES: Node[] = [
   },
   {
     id: "close_billing",
-    title: "Issue Closed",
-    sub: "API → Lakebase → UC",
+    title: "Issue closed",
+    sub: "parameterized UC + Lakebase write",
     zone: "journey",
     col: 4,
     step: 5,
     stepColor: "yellow",
   },
 
-  { id: "react_ui", title: "Agent Assist cockpit", sub: "issues queue · journey", zone: "ui", col: 0, highlight: true },
-  { id: "genie_panel", title: "Genie console", sub: "POST /genie/ask", zone: "ui", col: 2 },
-  { id: "account_ctx", title: "Account context", sub: "UI → Lakebase", zone: "ui", col: 4 },
+  { id: "account_ctx", title: "Account context", sub: "customer_id · call_id", zone: "ui", col: 0 },
+  { id: "genie_panel", title: "Genie console", sub: "account-scoped · UC NL→SQL", zone: "ui", col: 2, highlight: true },
+  { id: "next_action", title: "Next best action", sub: "agent applies · FM + state machine", zone: "ui", col: 4, highlight: true },
 
   { id: "call_state", title: "call_state", sub: "nudge + resolution", zone: "lakebase", col: 0, highlight: true },
   { id: "utterances", title: "live_call_utterances", sub: "turn history", zone: "lakebase", col: 1 },
@@ -115,11 +115,14 @@ const NODES: Node[] = [
 const INTRA_ZONE_EDGES: Record<ZoneId, [string, string][]> = {
   journey: [
     ["speaks", "deepgram"],
-    ["deepgram", "genie_insights"],
-    ["genie_insights", "agent_reply"],
+    ["deepgram", "fm_enrich"],
+    ["fm_enrich", "agent_reply"],
     ["agent_reply", "close_billing"],
   ],
-  ui: [],
+  ui: [
+    ["account_ctx", "genie_panel"],
+    ["genie_panel", "next_action"],
+  ],
   lakebase: [],
   setup: [
     ["orchestration", "raw_stream"],
@@ -145,10 +148,10 @@ const USER_STEPS: {
   },
   {
     n: 2,
-    title: "Account context",
-    detail: "Selecting a customer hydrates account facts, invoices, and live call_state from Lakebase — no LLM round-trip.",
+    title: "Account context + Genie insight prefetch",
+    detail: "Selecting a customer hydrates account facts, invoices, and live call_state from Lakebase (no LLM). In parallel, POST /calls/{id}/genie-insight warms a Genie natural-language account snapshot OFF the live reply path and caches it in call_state.",
     color: "cyan",
-    actors: "UI → Lakebase",
+    actors: "UI → Lakebase · API → Genie (async)",
   },
   {
     n: 3,
@@ -159,10 +162,10 @@ const USER_STEPS: {
   },
   {
     n: 4,
-    title: "Genie Insights",
-    detail: "POST /assist invokes Genie to understand customer intent, sentiment, waiver/plan flags, and customer signal.",
-    color: "green",
-    actors: "API → Genie",
+    title: "FM enrich",
+    detail: "POST /assist runs one structured Foundation Model call to detect intent, sentiment, customer_signal, and waiver/plan flags. Intent detection is the FM's job — not Genie's.",
+    color: "blue",
+    actors: "API → Foundation Model",
   },
   {
     n: 5,
@@ -173,18 +176,27 @@ const USER_STEPS: {
   },
   {
     n: 6,
-    title: "Agent reply",
-    detail: "Genie composes customer-facing response from Lakebase-authoritative facts, validated against governed UC metrics.",
+    title: "FM agent reply — Genie-grounded",
+    detail: "The FM composes the prose reply. Numbers come from deterministic authoritative metrics (Lakebase/UC); the cached Genie insight grounds the opener so 'Based on Genie insights' is truthful; the reply is validated against governed UC metrics before it can close.",
     color: "blue",
-    actors: "Genie validated response",
+    actors: "API → FM · validated vs Genie/UC",
   },
   {
     n: 7,
-    title: "Issue Closed",
-    detail: "On confirm_proceed, billing_adjustments commit to Lakebase + UC invoices; issue status → closed.",
+    title: "Issue closed",
+    detail: "On confirm_proceed, billing_adjustments commit to Lakebase + UC invoices via injection-safe parameterized SQL (Statement Execution API); issue status → closed.",
     color: "yellow",
     actors: "API → Lakebase → UC",
   },
+];
+
+/** Account-scoped Genie probe inside the cockpit (decision aid, not the write path). */
+const CONSOLE_CHAIN: { color: Color; title: string; desc: string }[] = [
+  { color: "cyan", title: "Account context", desc: "selected customer_id + call_id" },
+  { color: "pink", title: "Genie console", desc: "seeded NL question · POST /genie/ask" },
+  { color: "green", title: "Genie space", desc: "NL → SQL over curated UC" },
+  { color: "purple", title: "Curated UC tables", desc: "customers · invoices · payments · gold" },
+  { color: "blue", title: "Facts → next action", desc: "informs agent; FM + state machine execute" },
 ];
 
 const PAD = 20;
@@ -405,10 +417,10 @@ export default function GenieVoiceArchitectureCanvas() {
           </div>
 
           <Grid columns={4} gap={12}>
-            <Stat value="Lakebase" label="Hot path serving" tone="info" />
-            <Stat value="Genie" label="Customer insights" tone="success" />
+            <Stat value="Lakebase" label="Hot-path serving" tone="info" />
+            <Stat value="Foundation Model" label="Intent + prose reply" tone="info" />
+            <Stat value="Genie" label="Insight + validation" tone="success" />
             <Stat value="Deepgram" label="STT per utterance" tone="info" />
-            <Stat value="Batch setup" label="Customer data + Genie" tone="info" />
           </Grid>
         </Stack>
       ) : (
@@ -465,25 +477,25 @@ export default function GenieVoiceArchitectureCanvas() {
 
           <H2>Token economics vs. naive agentic voice</H2>
           <Text tone="secondary" size="small">
-            Source: architecture design · per-call budget model · Genie once per finalized utterance
+            Source: architecture design · per-call budget model · FM once per finalized utterance · Genie insight once per call open
           </Text>
           <UsageBar
             total={100}
             topLeftLabel="Cost / complexity budget per call"
-            topRightLabel="Lakebase + rules = 0 LLM tokens"
+            topRightLabel="Lakebase reads = 0 LLM tokens"
             segments={[
-              { id: "lakebase", value: 35, color: "cyan" },
+              { id: "lakebase", value: 30, color: "cyan" },
               { id: "stt", value: 15, color: "orange" },
-              { id: "genie", value: 30, color: "green" },
-              { id: "uc_batch", value: 10, color: "purple" },
+              { id: "fm", value: 40, color: "blue" },
+              { id: "genie", value: 15, color: "green" },
             ]}
           />
           <Grid columns={4} gap={10}>
             {[
-              ["cyan", "Lakebase reads", "State, account overlay, timeline — no tokens"],
+              ["cyan", "Lakebase reads", "State, account overlay, timeline — 0 tokens"],
               ["orange", "Deepgram STT", "Audio → final utterance only"],
-              ["green", "Genie per turn", "Insights + validated agent response"],
-              ["purple", "UC batch", "Gold + Genie space amortized offline"],
+              ["blue", "Foundation Model", "One structured + prose call per turn (main token cost)"],
+              ["green", "Genie", "Account insight off-path (per call) + fact validation"],
             ].map(([color, title, desc]) => (
               <div key={title as string} style={{ borderLeft: `3px solid ${theme.category[color as Color]}` }}>
                 <Card variant="borderless">
@@ -505,6 +517,36 @@ export default function GenieVoiceArchitectureCanvas() {
 
           <Divider />
 
+          <H2>Genie console — account-scoped UC probe</H2>
+          <Text tone="secondary" size="small">
+            In the cockpit, the Genie console is seeded with the selected customer's account context and
+            answers from curated UC tables via the Genie space. It informs the agent's resolution decision —
+            it does not perform the billing write itself.
+          </Text>
+          <Row gap={8} align="center" wrap>
+            {CONSOLE_CHAIN.map((c, i) => (
+              <div key={c.title} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {i > 0 && <Text tone="tertiary">→</Text>}
+                <div
+                  style={{
+                    borderLeft: `3px solid ${theme.category[c.color]}`,
+                    paddingLeft: 10,
+                    minWidth: 150,
+                  }}
+                >
+                  <Text weight="medium" size="small">
+                    {c.title}
+                  </Text>
+                  <Text tone="tertiary" size="small">
+                    {c.desc}
+                  </Text>
+                </div>
+              </div>
+            ))}
+          </Row>
+
+          <Divider />
+
           <H2>Consumption surfaces</H2>
           <Grid columns={2} gap={14}>
             <Card>
@@ -516,7 +558,7 @@ export default function GenieVoiceArchitectureCanvas() {
                   <Text size="small">Customers-with-issues sidebar (GET /accounts/with-issues)</Text>
                   <Text size="small">Chat + mic stream (WS /mic-stream)</Text>
                   <Text size="small">Resolution journey strip (pipeline_steps)</Text>
-                  <Text size="small">Account panel + alignment check</Text>
+                  <Text size="small">Genie console: NL answer + follow-up chips (SQL hidden)</Text>
                 </Stack>
               </CardBody>
             </Card>
@@ -526,10 +568,10 @@ export default function GenieVoiceArchitectureCanvas() {
               </CardHeader>
               <CardBody>
                 <Stack gap={6}>
-                  <Text size="small">Genie space over curated UC tables</Text>
-                  <Text size="small">POST /genie/ask for portfolio questions</Text>
-                  <Text size="small">gold_call_insights from orchestration job</Text>
-                  <Text size="small">billing_adjustments mirrored for audit</Text>
+                  <Text size="small">Account insight prefetch grounds the reply (off critical path)</Text>
+                  <Text size="small">/genie/ask: NL answer + follow-ups + conversation context</Text>
+                  <Text size="small">Fact validation vs governed UC metrics</Text>
+                  <Text size="small">Single-customer snapshot in space instructions</Text>
                 </Stack>
               </CardBody>
             </Card>

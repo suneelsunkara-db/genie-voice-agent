@@ -5,6 +5,7 @@ import {
   AssistPipelineStep,
   CallState,
   CustomerWithIssue,
+  GenieResponse,
   LiveNudge,
   ResolutionEvent,
 } from "../api/client";
@@ -212,8 +213,8 @@ function Cockpit({
   const [factErr, setFactErr] = useState<string | null>(null);
   const [live, setLive] = useState<Record<string, any> | null>(null);
   const [genieQuestion, setGenieQuestion] = useState("");
-  const [genieAnswer, setGenieAnswer] = useState<string | null>(null);
-  const [genieSql, setGenieSql] = useState<string | null>(null);
+  const [genieResp, setGenieResp] = useState<GenieResponse | null>(null);
+  const [genieShowSql, setGenieShowSql] = useState(false);
   const [genieLoading, setGenieLoading] = useState(false);
   const [genieErr, setGenieErr] = useState<string | null>(null);
   const [resolutionEvents, setResolutionEvents] = useState<ResolutionEvent[]>([]);
@@ -227,8 +228,8 @@ function Cockpit({
     setFactErr(null);
     setLive(null);
     setGenieQuestion("");
-    setGenieAnswer(null);
-    setGenieSql(null);
+    setGenieResp(null);
+    setGenieShowSql(false);
     setGenieErr(null);
     setResolutionEvents([]);
     setAssistMeta(null);
@@ -240,6 +241,9 @@ function Cockpit({
       .resolutionEvents(call.call_id)
       .then((r) => active && setResolutionEvents(r.events ?? []))
       .catch(() => {});
+    // Fire-and-forget: warm a Genie account insight off the live reply path so the
+    // per-utterance agent reply can ground on it without paying Genie latency inline.
+    api.prefetchGenieInsight(call.call_id).catch(() => {});
     return () => {
       active = false;
     };
@@ -300,14 +304,18 @@ function Cockpit({
       .catch(() => {});
   };
 
-  const askGenie = async (question: string) => {
+  const askGenie = async (question: string, asFollowup = false) => {
     if (!question.trim()) return;
     setGenieLoading(true);
     setGenieErr(null);
     try {
-      const resp = await api.askGenie(question);
-      setGenieAnswer(resp.answer ?? "No answer returned.");
-      setGenieSql(resp.sql ?? null);
+      // Continue the same conversation for follow-ups so Genie retains context.
+      const resp = await api.askGenie(
+        question,
+        asFollowup ? genieResp?.conversation_id : undefined
+      );
+      setGenieResp(resp);
+      setGenieShowSql(false);
     } catch (e) {
       setGenieErr(e instanceof Error ? e.message : "Failed to query Genie");
     } finally {
@@ -325,8 +333,8 @@ function Cockpit({
       onResetLocalTurns();
       setLive(null);
       setVoiceUi({ phase: "idle" });
-      setGenieAnswer(null);
-      setGenieSql(null);
+      setGenieResp(null);
+      setGenieShowSql(false);
       const [f, r] = await Promise.all([api.callAccount(call.call_id), api.resolutionEvents(call.call_id)]);
       setFacts(f);
       setResolutionEvents(r.events ?? []);
@@ -530,14 +538,44 @@ function Cockpit({
               </button>
             </div>
             {genieErr && <div className="account-error">{genieErr}</div>}
-            {genieAnswer && <div className="genie-answer">{genieAnswer}</div>}
-            {!genieAnswer && (
+            {genieResp && (genieResp.answer || genieResp.description) && (
+              <div className="genie-answer">
+                {genieResp.answer ?? genieResp.description}
+              </div>
+            )}
+            {genieResp?.description &&
+              genieResp.answer &&
+              genieResp.description !== genieResp.answer && (
+                <div className="genie-hint">{genieResp.description}</div>
+              )}
+            {genieResp?.suggested_followups && genieResp.suggested_followups.length > 0 && (
+              <div className="genie-followups">
+                {genieResp.suggested_followups.map((f, i) => (
+                  <button
+                    key={i}
+                    className="followup-chip"
+                    disabled={genieLoading}
+                    onClick={() => askGenie(f, true)}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!genieResp && (
               <div className="genie-hint">
                 Designed around {customer?.full_name ?? "spotlight customers"}: ask for payment
                 arrangement + late fee relief.
               </div>
             )}
-            {genieSql && <pre className="sql">{genieSql}</pre>}
+            {genieResp?.sql && (
+              <div className="genie-sql">
+                <button className="sql-toggle" onClick={() => setGenieShowSql((v) => !v)}>
+                  {genieShowSql ? "Hide query" : "Show query"}
+                </button>
+                {genieShowSql && <pre className="sql">{genieResp.sql}</pre>}
+              </div>
+            )}
           </div>
         </div>
       </div>

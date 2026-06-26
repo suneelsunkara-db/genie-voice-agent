@@ -19,7 +19,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from genie_voice.assist.billing import prepare_billing_adjustment
-from genie_voice.assist.genie_facts import fetch_validated_account_metrics
+from genie_voice.assist.genie_facts import (
+    fetch_validated_account_metrics,
+    genie_account_insight,
+)
 from genie_voice.assist.resolution import (
     evaluate_resolution,
     finalize_resolution_after_billing,
@@ -162,10 +165,18 @@ def _compose_agent_reply(
     customer_message: str,
     resolution: dict,
     account: dict[str, object] | None,
+    genie_insight: str | None = None,
 ) -> tuple[str | None, dict[str, object]]:
-    """Phrase a customer-facing reply via Genie, grounded in validated Lakebase facts."""
+    """Phrase a customer-facing reply with the FM, grounded in validated Lakebase
+    facts and (when available) a pre-fetched Genie account insight.
+
+    `genie_insight` is a short NL summary fetched OFF the critical path and cached
+    in call state. When present, the reply legitimately opens with "Based on Genie
+    insights"; when absent, it uses a neutral account-grounded opener so the claim
+    is never false."""
     status = str(resolution.get("status") or "open")
     issue_closed = status == "closed"
+    opener = "Based on Genie insights, " if genie_insight else "Based on your account, "
 
     metrics_result = fetch_validated_account_metrics(
         genie(),
@@ -196,12 +207,18 @@ def _compose_agent_reply(
     context = _account_context_snippet(account, validation_meta)
     cust_label = customer_id or "this customer"
     metrics_block = "\n".join(metrics.as_context_lines())
+    genie_block = (
+        f"GENIE ACCOUNT INSIGHT (pre-fetched, authoritative narrative):\n{genie_insight}\n\n"
+        if genie_insight
+        else ""
+    )
+    validation_meta["genie_insight_used"] = bool(genie_insight)
 
     if issue_closed:
         genie_question = f"""You are a customer-facing billing support agent on call {call_id}.
 The customer ({cust_label}) just confirmed: "{customer_message}"
 
-VALIDATED ACCOUNT FACTS (Lakebase authoritative; Genie cross-checked):
+{genie_block}VALIDATED ACCOUNT FACTS (Lakebase authoritative; Genie cross-checked):
 {metrics_block}
 
 {context}
@@ -213,14 +230,14 @@ Write a warm 3-4 sentence reply that:
 3) confirms the issue is closed and when they'll see the update,
 4) offers brief help if needed.
 
-Use plain spoken English. Start with: "Based on Genie insights, ..."
+Use plain spoken English. Start with: "{opener}..."
 Do NOT mention SQL, field names, backticks, or ask them to proceed again.
 Do NOT cite overdue balances that contradict the validated facts above."""
     else:
         genie_question = f"""You are a customer-facing billing support agent on call {call_id}.
 Customer ({cust_label}) said: "{customer_message}"
 
-VALIDATED ACCOUNT FACTS for THIS customer only (use ONLY these numbers):
+{genie_block}VALIDATED ACCOUNT FACTS for THIS customer only (use ONLY these numbers):
 {metrics_block}
 
 {context}
@@ -231,7 +248,7 @@ Write a 3-4 sentence reply:
 3) one concrete action you can take now,
 4) a confirmation question.
 
-Start with: "Based on Genie insights, ..."
+Start with: "{opener}..."
 Do NOT use SQL, table/column names, backticks, or portfolio-wide aggregates."""
 
     try:
@@ -342,6 +359,7 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
                 _apply_billing_adjustments(copy.deepcopy(account_source), [pending_adjustment]),
                 reply_resolution,
             )
+        cached_insight = (inner.get("genie_insight") or {}).get("text")
         t_genie = time.perf_counter()
         agent_reply, agent_validation = _compose_agent_reply(
             call_id,
@@ -349,6 +367,7 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
             body.text,
             reply_resolution,
             reply_account,
+            genie_insight=cached_insight,
         )
         genie_detail = "reply ready" if agent_reply else str((agent_validation or {}).get("genie_error") or "unavailable")
         if agent_validation:
@@ -445,6 +464,28 @@ def post_mic_transcribe(call_id: str, body: MicAudioIn) -> dict:
     # Reuse existing assist behavior so the app workflow remains unchanged.
     nudge = post_assist(call_id, UtteranceIn(text=text, speaker=body.speaker))
     return {**nudge, "transcript": text}
+
+
+@router.post("/{call_id}/genie-insight")
+def post_genie_insight(call_id: str) -> dict:
+    """Fetch a Genie NL account insight and cache it in call state.
+
+    Call this OFF the live reply path (e.g. when the agent opens the call) so the
+    per-utterance reply can ground on Genie without paying Genie's latency inline.
+    """
+    from datetime import UTC, datetime
+
+    state = serving().get_call_state(call_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"No state for call {call_id}")
+    customer_id = state.get("customer_id")
+    inner = state.get("state") or {}
+    text = genie_account_insight(genie(), customer_id)
+    inner["genie_insight"] = (
+        {"text": text, "fetched_at": datetime.now(UTC).isoformat()} if text else None
+    )
+    serving().upsert_call_state(call_id, customer_id, inner)
+    return {"call_id": call_id, "genie_insight": inner.get("genie_insight")}
 
 
 @router.get("/{call_id}/account")

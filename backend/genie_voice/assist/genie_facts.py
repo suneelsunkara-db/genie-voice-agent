@@ -59,3 +59,39 @@ def fetch_validated_account_metrics(
         genie_error = str(exc)
 
     return cross_validate_metrics(lakebase, genie_metrics, genie_error=genie_error)
+
+
+def genie_account_insight(genie_client: Any, customer_id: str | None) -> str | None:
+    """Fetch a short natural-language account insight from Genie (no SQL).
+
+    Intended to run OFF the live reply critical path (e.g. when a call is opened)
+    and be cached in call state. The live FM reply then grounds on this cached
+    text, so "Based on Genie insights" is truthful without putting Genie's
+    multi-second latency in the per-utterance path.
+    """
+    if not customer_id:
+        return None
+    try:
+        result = genie_client.ask(
+            f"For customer_id = '{customer_id}' only (never aggregate other "
+            "customers), state in two short sentences: the number of overdue "
+            "invoices and the total overdue amount in USD; the number of declined "
+            "payments in the last 90 days; and the current account status. "
+            "Answer in plain English with the actual numbers. Do NOT ask any "
+            "clarifying questions and do NOT include SQL or column names."
+        )
+    except Exception:  # noqa: BLE001 - insight is best-effort, never fatal
+        return None
+    # Prefer `answer` (the NL response with real numbers) over `description`
+    # (which only paraphrases the question). Both are SQL-free.
+    text = (result.get("answer") or result.get("description") or "").strip()
+    if not text:
+        return None
+    # Genie sometimes returns a clarifying question instead of answering (its space
+    # has a time-range clarification rule). A clarification has no data rows and is
+    # phrased as a question - treat it as "no insight" so the live reply falls back
+    # honestly instead of parroting Genie's question or claiming a false fact.
+    rows = result.get("rows") or []
+    if not rows and text.rstrip().endswith("?"):
+        return None
+    return text

@@ -47,7 +47,8 @@ _TEXT_INSTRUCTIONS = [
     "Joins: gold_call_insights.call_id = lb_call_facts_history.call_id after applying the latest-row filter; gold_call_insights.customer_id = customers.customer_id; gold_call_insights.mentioned_invoice_id = invoices.invoice_id; lb_call_facts_history.agent_id = agents.agent_id; invoices.customer_id = customers.customer_id; payments.invoice_id = invoices.invoice_id; billing_adjustments.customer_id = customers.customer_id; billing_adjustments.invoice_id = invoices.invoice_id; billing_adjustments.call_id links to call history operationally.\n",
     "Semantics: handle time = current lb_call_facts_history.duration_sec (seconds); CSAT = current lb_call_facts_history.csat (1-5). A call is resolved when gold_call_insights.resolution_status = 'resolved'. invoices.status='overdue' = unpaid past due_date; 'disputed' = billing dispute. billing_adjustments rows are written by live agent-assist (waiver/payment plan) and UPDATE the linked invoice; use reverted_at IS NULL for active adjustments. A customer is at cancellation risk when customers.status='at_risk' OR array_contains(gold_call_insights.all_intents,'cancellation_risk').\n",
     "Units: all dollar columns (invoices.amount, invoices.late_fee, gold_call_insights.mentioned_amount, customers.monthly_charge) are USD; round money to 2 decimals.\n",
-    "Clarification: when a question about call volume or trends omits a time range, ask the user to specify the period (e.g. 'Which month or date range?') before answering.\n",
+    "Clarification: ONLY ask the user to specify a period when an AGGREGATE question about call volume or trends across many calls omits any time range. NEVER ask for clarification when the question already states a time window (e.g. 'last 90 days'), or when it is about a single named customer_id or invoice_id - answer those directly from the available columns.\n",
+    "Single-customer account snapshot: when asked for one customer_id's billing situation, return overdue invoice count and total overdue amount (invoices.status='overdue'), declined payments in the stated window (payments.status='declined'), and account status (customers.status). Filter strictly to that customer_id and never aggregate other customers.\n",
     "Instructions you must follow when providing summaries: cite the table/column names used; round money to 2 decimals and percentages to 1 decimal.\n",
 ]
 
@@ -165,6 +166,25 @@ def _example_sqls(fq) -> list[dict[str, Any]]:
                 "WHERE a.team = 'retention'\n",
                 "GROUP BY a.agent_id, a.full_name\n",
                 "ORDER BY avg_csat DESC",
+            ],
+        },
+        {
+            "question": [
+                "Give the billing snapshot for customer CUST-4028: number of overdue "
+                "invoices, total overdue amount, declined payments in the last 90 days, "
+                "and the current account status."
+            ],
+            "sql": [
+                "SELECT c.customer_id, c.status AS account_status,\n",
+                f"  (SELECT count(*) FROM {fq('invoices')} i\n",
+                "     WHERE i.customer_id = c.customer_id AND i.status = 'overdue') AS overdue_invoices,\n",
+                f"  (SELECT round(coalesce(sum(i.amount), 0), 2) FROM {fq('invoices')} i\n",
+                "     WHERE i.customer_id = c.customer_id AND i.status = 'overdue') AS overdue_amount_usd,\n",
+                f"  (SELECT count(*) FROM {fq('payments')} p\n",
+                "     WHERE p.customer_id = c.customer_id AND p.status = 'declined'\n",
+                "       AND p.payment_date >= current_date() - INTERVAL 90 DAYS) AS declined_payments_90d\n",
+                f"FROM {fq('customers')} c\n",
+                "WHERE c.customer_id = 'CUST-4028'",
             ],
         },
         {

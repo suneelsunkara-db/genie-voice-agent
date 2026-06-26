@@ -410,6 +410,32 @@ body {
   line-height: 1.42;
 }
 .genie-hint { margin-top: 8px; color: #9bb0d7; font-size: 12px; }
+.genie-followups {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.followup-chip {
+  border: 1px solid #34507a;
+  background: #0d1830;
+  color: #bcd2f7;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.followup-chip:hover:not(:disabled) { background: #16223d; }
+.followup-chip:disabled { opacity: 0.55; cursor: default; }
+.genie-sql { margin-top: 8px; }
+.sql-toggle {
+  background: none;
+  border: none;
+  color: #89bfff;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
 .sql {
   margin-top: 8px;
   background: #071126;
