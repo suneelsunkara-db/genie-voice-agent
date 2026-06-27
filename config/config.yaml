@@ -88,8 +88,11 @@ providers:
   stt:
     adapters:
       deepgram: "genie_voice.providers.stt.deepgram:DeepgramSTT"
+      databricks: "genie_voice.providers.stt.databricks:DatabricksSTT"
       # assemblyai: "genie_voice.providers.stt.assemblyai:AssemblyAISTT"
       # azure:      "genie_voice.providers.stt.azure:AzureSTT"
+    # Switch STT providers here, or use:
+    #   GENIE_PROVIDERS__STT__ACTIVE=databricks
     active: deepgram
     options:
       deepgram:
@@ -98,8 +101,16 @@ providers:
         diarize: true
         multichannel: true        # dual-channel telephony => channel == speaker
         smart_format: true
+        # Feature flag: normalize invoice-like ASR spans with invoice IDs from
+        # the active account context. Keeps raw_transcript in API responses.
+        postprocess_invoice_ids: false
         redact: [pci, ssn, numbers]
         endpointing_ms: 10
+      databricks:
+        endpoint: voice_finetuned_whisper_model
+        # Fine-tuned Whisper endpoint is utterance-level, not streaming.
+        mode: utterance
+        postprocess_invoice_ids: false
   tts:
     adapters:
       elevenlabs: "genie_voice.providers.tts.elevenlabs:ElevenLabsTTS"

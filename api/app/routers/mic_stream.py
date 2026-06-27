@@ -13,6 +13,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from genie_voice.config import get_settings
 
+from ..asr_postprocess import postprocess_transcript_for_call
+
 router = APIRouter(tags=["mic-stream"])
 
 
@@ -35,6 +37,19 @@ def _deepgram_listen_url(sample_rate: int) -> str:
 async def mic_stream(websocket: WebSocket, call_id: str) -> None:
     await websocket.accept()
     settings = get_settings()
+    if settings.providers.stt.active != "deepgram":
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": (
+                    f"Streaming mic is not available for STT provider "
+                    f"{settings.providers.stt.active!r}; use mic-transcribe."
+                ),
+            }
+        )
+        await websocket.close()
+        return
+
     key = settings.secrets.deepgram_api_key.strip()
     if not key:
         await websocket.send_json({"type": "error", "message": "DEEPGRAM_API_KEY is not configured"})
@@ -86,12 +101,19 @@ async def mic_stream(websocket: WebSocket, call_id: str) -> None:
                     if msg_type == "Results":
                         channel = payload.get("channel") or {}
                         alts = channel.get("alternatives") or []
-                        transcript = ((alts[0] or {}).get("transcript") if alts else "") or ""
+                        raw_transcript = ((alts[0] or {}).get("transcript") if alts else "") or ""
+                        transcript, postprocessing = postprocess_transcript_for_call(
+                            call_id,
+                            raw_transcript.strip(),
+                            settings,
+                        )
                         await websocket.send_json(
                             {
                                 "type": "transcript",
                                 "call_id": call_id,
-                                "transcript": transcript.strip(),
+                                "transcript": transcript,
+                                "raw_transcript": raw_transcript.strip(),
+                                "asr_postprocessing": postprocessing,
                                 "is_final": bool(payload.get("is_final")),
                                 "speech_final": bool(payload.get("speech_final")),
                             }

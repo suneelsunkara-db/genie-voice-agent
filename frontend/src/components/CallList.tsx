@@ -11,7 +11,13 @@ import {
 } from "../api/client";
 import { POLL_INTERVAL_MS, WS_BASE_URL } from "../config";
 import { intentLabel, PRIORITY_RANK, recommend } from "../guidance";
-import { startMicStream, VoiceUiState } from "../lib/micStream";
+import {
+  MicRecordingSession,
+  MicStreamSession,
+  startMicRecording,
+  startMicStream,
+  VoiceUiState,
+} from "../lib/micStream";
 import databricksLogo from "../assets/databricks-logo.png";
 import genieLogo from "../assets/genie-logo.png";
 
@@ -37,7 +43,13 @@ function customerPriority(c: CustomerWithIssue) {
   return "low" as const;
 }
 
-export function CallList({ calls }: { calls: CallState[] }) {
+export function CallList({
+  calls,
+  sttProvider,
+}: {
+  calls: CallState[];
+  sttProvider: string;
+}) {
   const [customers, setCustomers] = useState<CustomerWithIssue[]>([]);
   const [customersLoading, setCustomersLoading] = useState(true);
   const [customersErr, setCustomersErr] = useState<string | null>(null);
@@ -167,6 +179,7 @@ export function CallList({ calls }: { calls: CallState[] }) {
         <Cockpit
           call={selectedCall}
           customer={selectedCustomer}
+          sttProvider={sttProvider}
           localTurns={conversationByCall[selectedCall.call_id] ?? []}
           onAppendLocalTurn={(turn) =>
             setConversationByCall((prev) => ({
@@ -198,12 +211,14 @@ export function CallList({ calls }: { calls: CallState[] }) {
 function Cockpit({
   call,
   customer,
+  sttProvider,
   localTurns,
   onAppendLocalTurn,
   onResetLocalTurns,
 }: {
   call: CallState;
   customer: CustomerWithIssue | null;
+  sttProvider: string;
   localTurns: { text: string; speaker?: number }[];
   onAppendLocalTurn: (turn: { text: string; speaker?: number }) => void;
   onResetLocalTurns: () => void;
@@ -427,6 +442,7 @@ function Cockpit({
           <LiveAssist
             callId={call.call_id}
             customerId={String(facts?.customer_id ?? call.customer_id ?? "")}
+            sttProvider={sttProvider}
             onNudge={(n) => {
               setLive(n.live);
               setAssistMeta(n);
@@ -901,12 +917,14 @@ function AssistStatusPanel({ meta }: { meta: LiveNudge | null }) {
 
 function LiveAssist({
   callId,
+  sttProvider,
   onNudge,
   onLocalTurn,
   onVoiceUiChange,
 }: {
   callId: string;
   customerId: string;
+  sttProvider: string;
   onNudge: (n: LiveNudge) => void;
   onLocalTurn: (turn: { text: string; speaker?: number }) => void;
   onVoiceUiChange: (state: VoiceUiState) => void;
@@ -916,7 +934,7 @@ function LiveAssist({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
-  const micSessionRef = useRef<Awaited<ReturnType<typeof startMicStream>> | null>(null);
+  const micSessionRef = useRef<MicStreamSession | MicRecordingSession | null>(null);
   const voiceRef = useRef({ interim: "", level: 0.15 });
   const voicePhaseRef = useRef<VoiceUiState["phase"]>("idle");
 
@@ -973,6 +991,29 @@ function LiveAssist({
     try {
       voiceRef.current = { interim: "", level: 0.15 };
       voicePhaseRef.current = "speaking";
+      if (sttProvider === "databricks") {
+        const session = await startMicRecording((level) => {
+          voiceRef.current.level = level;
+          if (voicePhaseRef.current !== "speaking") return;
+          onVoiceUiChange({
+            phase: "speaking",
+            source: "mic",
+            interimText: "Recording utterance for fine-tuned Whisper…",
+            micLevel: level,
+          });
+        });
+        micSessionRef.current = session;
+        setRecording(true);
+        onVoiceUiChange({
+          phase: "speaking",
+          source: "mic",
+          interimText: "Recording utterance for fine-tuned Whisper…",
+          processingLabel: "Listening…",
+          micLevel: 0.15,
+        });
+        return;
+      }
+
       const wsUrl = `${WS_BASE_URL}/calls/${callId}/mic-stream`;
       const session = await startMicStream(
         wsUrl,
@@ -1024,10 +1065,38 @@ function LiveAssist({
       phase: "transcribing",
       source: "mic",
       interimText: voiceRef.current.interim,
-      processingLabel: "Processing voice with Deepgram…",
+      processingLabel:
+        sttProvider === "databricks"
+          ? "Processing voice with fine-tuned Whisper…"
+          : "Processing voice with Deepgram…",
     });
     try {
-      const textFromMic = (await session.stop()).trim();
+      if (sttProvider === "databricks") {
+        const recording = await (session as MicRecordingSession).stop();
+        micSessionRef.current = null;
+        const n = await api.transcribeMic(
+          callId,
+          recording.audioBase64,
+          recording.mimeType,
+          1
+        );
+        const textFromMic = String(n.transcript || "").trim();
+        if (!textFromMic) throw new Error("No transcript returned from fine-tuned Whisper");
+        onLocalTurn({ text: textFromMic, speaker: 1 });
+        voicePhaseRef.current = "agent_reply";
+        onVoiceUiChange({
+          phase: "agent_reply",
+          source: "mic",
+          processingLabel: "Genie is preparing the agent response…",
+        });
+        onNudge(n);
+        applyAgentReply(n);
+        voicePhaseRef.current = "idle";
+        onVoiceUiChange({ phase: "idle" });
+        return;
+      }
+
+      const textFromMic = (await (session as MicStreamSession).stop()).trim();
       micSessionRef.current = null;
       if (!textFromMic) throw new Error("No transcript returned from Deepgram");
       onLocalTurn({ text: textFromMic, speaker: 1 });

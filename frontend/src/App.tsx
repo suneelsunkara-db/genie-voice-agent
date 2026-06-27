@@ -54,6 +54,7 @@ export default function App() {
           </div>
           <div className="hero-meta">
             <div className="meta-pill">runtime: {status?.mode ?? "…"}</div>
+            <div className="meta-pill">stt: {status?.stt_provider ?? "…"}</div>
             <div className="meta-pill">
               customers with issues: {issueCount ?? "…"}
             </div>
@@ -64,8 +65,9 @@ export default function App() {
           <div className="eyebrow">Databricks Genie Voice Agent</div>
           <h1>Genie-Powered Voice Agent Experience</h1>
           <p>
-            Voice conversations are transcribed with Deepgram and enriched with Databricks Genie
-            over governed customer and billing context so agents can resolve calls faster.
+            Voice conversations are transcribed by the configured STT provider and enriched with
+            Databricks Genie over governed customer and billing context so agents can resolve calls
+            faster.
           </p>
           <div className="hero-flow">
             <span className="flow-pill">Voice Input</span>
@@ -80,7 +82,7 @@ export default function App() {
       {error && <div className="error">API error: {error} — is the backend running?</div>}
 
       <section className="command-stage">
-        <CallList calls={status?.call_states ?? []} />
+        <CallList calls={status?.call_states ?? []} sttProvider={status?.stt_provider ?? "deepgram"} />
       </section>
     </div>
   );

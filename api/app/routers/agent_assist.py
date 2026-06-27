@@ -30,11 +30,13 @@ from genie_voice.assist.resolution import (
 )
 from genie_voice.assist.validation import validate_reply_against_metrics
 from genie_voice.config import get_settings
+from genie_voice.databricks.client import get_workspace_client
 from genie_voice.serve.lakebase import (
     _apply_billing_adjustments,
     _apply_resolution_status_overlay,
 )
 
+from ..asr_postprocess import postprocess_transcript_for_call
 from ..deps import genie, serving
 
 router = APIRouter(prefix="/calls", tags=["agent-assist"])
@@ -78,6 +80,56 @@ def _transcribe_with_deepgram(audio_bytes: bytes, mime_type: str, settings) -> s
     if not transcript:
         raise HTTPException(status_code=422, detail="No transcript returned from Deepgram")
     return transcript
+
+
+def _prediction_response_dict(response) -> dict:
+    if isinstance(response, dict):
+        return response
+    if hasattr(response, "as_dict"):
+        return response.as_dict()
+    predictions = getattr(response, "predictions", None)
+    if predictions is not None:
+        return {"predictions": predictions}
+    return {}
+
+
+def _transcribe_with_databricks_model(body: MicAudioIn, settings) -> str:
+    options = settings.providers.stt.active_options()
+    endpoint = str(options.get("endpoint") or "").strip()
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="Databricks STT endpoint is not configured")
+
+    client = get_workspace_client(settings)
+    try:
+        response = client.serving_endpoints.query(
+            name=endpoint,
+            dataframe_records=[
+                {
+                    "audio_b64": body.audio_b64,
+                    "mime_type": body.mime_type or "audio/webm",
+                    "speaker": body.speaker,
+                }
+            ],
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Databricks STT call failed: {exc}") from exc
+
+    payload = _prediction_response_dict(response)
+    predictions = payload.get("predictions") or []
+    first = predictions[0] if predictions else {}
+    transcript = str(first.get("raw_transcript") or first.get("transcript") or "").strip()
+    if not transcript:
+        raise HTTPException(status_code=422, detail="No transcript returned from Databricks STT")
+    return transcript
+
+
+def _transcribe_mic_audio(body: MicAudioIn, audio_bytes: bytes, settings) -> str:
+    provider = settings.providers.stt.active
+    if provider == "deepgram":
+        return _transcribe_with_deepgram(audio_bytes, body.mime_type, settings)
+    if provider == "databricks":
+        return _transcribe_with_databricks_model(body, settings)
+    raise HTTPException(status_code=400, detail=f"Unsupported STT provider for mic transcription: {provider}")
 
 
 
@@ -459,11 +511,18 @@ def post_mic_transcribe(call_id: str, body: MicAudioIn) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid audio payload: {exc}") from exc
 
-    text = _transcribe_with_deepgram(audio_bytes, body.mime_type, s)
+    raw_text = _transcribe_mic_audio(body, audio_bytes, s)
+    text, postprocessing = postprocess_transcript_for_call(call_id, raw_text, s)
 
     # Reuse existing assist behavior so the app workflow remains unchanged.
     nudge = post_assist(call_id, UtteranceIn(text=text, speaker=body.speaker))
-    return {**nudge, "transcript": text}
+    return {
+        **nudge,
+        "transcript": text,
+        "raw_transcript": raw_text,
+        "asr_provider": s.providers.stt.active,
+        "asr_postprocessing": postprocessing,
+    }
 
 
 @router.post("/{call_id}/genie-insight")

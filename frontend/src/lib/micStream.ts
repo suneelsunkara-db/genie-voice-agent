@@ -15,6 +15,11 @@ export interface MicStreamSession {
   close: () => void;
 }
 
+export interface MicRecordingSession {
+  stop: () => Promise<{ audioBase64: string; mimeType: string }>;
+  close: () => void;
+}
+
 /** Deepgram streaming returns one segment per is_final; accumulate for long speech. */
 export function mergeStreamingTranscript(
   committed: string,
@@ -173,6 +178,94 @@ export async function startMicStream(
         resolveStop(fullTranscript());
         resolveStop = null;
       }
+    },
+  };
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio blob"));
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+function preferredMimeType(): string {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? "";
+}
+
+export async function startMicRecording(
+  onLevel: (level: number) => void
+): Promise<MicRecordingSession> {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const audioContext = new AudioContext();
+  const source = audioContext.createMediaStreamSource(stream);
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+
+  const mimeType = preferredMimeType();
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  const chunks: BlobPart[] = [];
+  let levelRaf = 0;
+  let stopped = false;
+
+  const levelData = new Uint8Array(analyser.frequencyBinCount);
+  const tickLevel = () => {
+    analyser.getByteFrequencyData(levelData);
+    const avg = levelData.reduce((sum, v) => sum + v, 0) / levelData.length;
+    onLevel(Math.min(1, avg / 128));
+    levelRaf = requestAnimationFrame(tickLevel);
+  };
+
+  const cleanup = () => {
+    cancelAnimationFrame(levelRaf);
+    source.disconnect();
+    analyser.disconnect();
+    stream.getTracks().forEach((t) => t.stop());
+    void audioContext.close();
+  };
+
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) chunks.push(event.data);
+  };
+  recorder.start();
+  levelRaf = requestAnimationFrame(tickLevel);
+
+  return {
+    stop: () =>
+      new Promise<{ audioBase64: string; mimeType: string }>((resolve, reject) => {
+        if (stopped) {
+          reject(new Error("Mic recording already stopped"));
+          return;
+        }
+        stopped = true;
+        recorder.onerror = () => {
+          cleanup();
+          reject(new Error("Mic recording failed"));
+        };
+        recorder.onstop = () => {
+          cleanup();
+          const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+          blobToBase64(blob)
+            .then((audioBase64) =>
+              resolve({ audioBase64, mimeType: blob.type || "audio/webm" })
+            )
+            .catch(reject);
+        };
+        recorder.stop();
+      }),
+    close: () => {
+      if (!stopped && recorder.state !== "inactive") {
+        stopped = true;
+        recorder.stop();
+      }
+      cleanup();
     },
   };
 }

@@ -61,6 +61,7 @@ export interface AssistPipelineStep {
 export interface StatusResponse {
   mode: string;
   deployment?: string;
+  stt_provider?: string;
   enrichment?: { model_endpoint?: string };
   jobs?: { lakeflow?: JobState };
   stages: Stage[];

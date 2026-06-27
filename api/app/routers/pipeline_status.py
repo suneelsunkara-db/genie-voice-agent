@@ -79,6 +79,7 @@ def status() -> dict:
     return {
         "deployment": s.deployment,
         "mode": s.mode,
+        "stt_provider": s.providers.stt.active,
         "enrichment": {"model_endpoint": s.enrichment.model_endpoint},
         "jobs": jobs,
         "stages": stages,
