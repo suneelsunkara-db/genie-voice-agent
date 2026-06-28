@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from genie_voice.config import get_settings
 
 from .deps import serving
-from .routers import accounts, agent_assist, genie, health, mic_stream, pipeline_status
+from .routers import accounts, agent_assist, asr_benchmark, genie, health, mic_stream, pipeline_status
 
 
 def create_app() -> FastAPI:
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(mic_stream.router)
     app.include_router(accounts.router)
     app.include_router(genie.router)
+    app.include_router(asr_benchmark.router)
     app.include_router(pipeline_status.router)
 
     @app.on_event("startup")

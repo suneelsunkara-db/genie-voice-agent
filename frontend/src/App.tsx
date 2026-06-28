@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, StatusResponse } from "./api/client";
 import { POLL_INTERVAL_MS } from "./config";
+import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
 import { CallList } from "./components/CallList";
 import databricksLogo from "./assets/databricks-logo.png";
 import genieLogo from "./assets/genie-logo.png";
@@ -9,6 +10,7 @@ export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [issueCount, setIssueCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(() => window.location.hash || "#/");
 
   useEffect(() => {
     let active = true;
@@ -43,6 +45,14 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const onHashChange = () => setPage(window.location.hash || "#/");
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const showBenchmark = page === "#/asr-benchmark";
+
   return (
     <div className="app">
       <header className="hero-shell">
@@ -53,6 +63,12 @@ export default function App() {
             <span className="brand-chip voice">Voice Use Cases</span>
           </div>
           <div className="hero-meta">
+            <a className="meta-pill nav-pill" href="#/">
+              cockpit
+            </a>
+            <a className="meta-pill nav-pill" href="#/asr-benchmark">
+              ASR benchmark
+            </a>
             <div className="meta-pill">runtime: {status?.mode ?? "…"}</div>
             <div className="meta-pill">stt: {status?.stt_provider ?? "…"}</div>
             <div className="meta-pill">
@@ -81,9 +97,13 @@ export default function App() {
 
       {error && <div className="error">API error: {error} — is the backend running?</div>}
 
-      <section className="command-stage">
-        <CallList calls={status?.call_states ?? []} sttProvider={status?.stt_provider ?? "deepgram"} />
-      </section>
+      {showBenchmark ? (
+        <ASRBenchmarkPage />
+      ) : (
+        <section className="command-stage">
+          <CallList calls={status?.call_states ?? []} sttProvider={status?.stt_provider ?? "deepgram"} />
+        </section>
+      )}
     </div>
   );
 }

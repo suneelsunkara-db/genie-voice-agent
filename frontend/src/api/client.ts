@@ -147,6 +147,69 @@ export interface ResolutionEvent {
   created_at?: string;
 }
 
+export interface ASRProviderSummary {
+  clips: number;
+  avg_wer?: number | null;
+  avg_cer?: number | null;
+  avg_entity_accuracy?: number | null;
+  avg_critical_entity_accuracy?: number | null;
+  empty_transcript_rate?: number | null;
+  unsafe_for_resolution_rate?: number | null;
+  negation_mismatch_rate?: number | null;
+  numeric_recall?: number | null;
+  latency_ms?: {
+    avg?: number | null;
+    p50?: number | null;
+    p90?: number | null;
+    p95?: number | null;
+    p99?: number | null;
+  };
+  entity_groups?: Record<string, { expected: number; matched: number; accuracy?: number | null }>;
+  unsafe_reason_counts?: Record<string, number>;
+}
+
+export interface ASRBenchmarkExample {
+  clip_id: string;
+  scenario?: string | null;
+  reference_transcript?: string;
+  deepgram_transcript?: string;
+  databricks_transcript?: string;
+  deepgram_wer?: number | null;
+  databricks_wer?: number | null;
+  deepgram_critical_entity_accuracy?: number | null;
+  databricks_critical_entity_accuracy?: number | null;
+  deepgram_latency_ms?: number | null;
+  databricks_latency_ms?: number | null;
+  deepgram_unsafe_reasons?: string[];
+  databricks_unsafe_reasons?: string[];
+}
+
+export interface ASRBenchmarkResponse {
+  available: boolean;
+  message?: string;
+  summary_path?: string;
+  deepgram_output?: string;
+  databricks_output?: string;
+  summary?: {
+    providers?: {
+      deepgram?: ASRProviderSummary;
+      databricks?: ASRProviderSummary;
+    };
+    pairwise?: {
+      paired_clips?: number;
+      winner_counts?: Record<string, number>;
+    };
+    promotion_read?: {
+      recommended_headline?: string;
+      databricks_business_delta?: number | null;
+      databricks_wer_delta?: number | null;
+      databricks_p95_latency_delta_ms?: number | null;
+      paired_clips?: number;
+    };
+  };
+  examples?: ASRBenchmarkExample[];
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -156,6 +219,7 @@ async function getJSON<T>(path: string): Promise<T> {
 export const api = {
   status: () => getJSON<StatusResponse>("/status"),
   health: () => getJSON<Record<string, unknown>>("/health"),
+  asrBenchmark: () => getJSON<ASRBenchmarkResponse>("/asr-benchmark"),
   customersWithIssues: () =>
     getJSON<{ customers: CustomerWithIssue[]; count: number }>("/accounts/with-issues"),
   callAccount: (callId: string) =>
