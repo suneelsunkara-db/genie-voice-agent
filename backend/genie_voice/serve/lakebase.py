@@ -194,6 +194,8 @@ class LakebaseServing:
         self.settings = settings or get_settings()
         self.enabled = self.settings.lakebase.enabled
         self._cred: dict[str, Any] | None = None  # cached {host,user,token,exp}
+        self._pool = None  # psycopg_pool.ConnectionPool, built lazily
+        self._pool_token: str | None = None  # token the live pool was built with
 
     # ---- credential resolution -------------------------------------------- #
     def _credentials(self) -> dict[str, Any]:
@@ -272,7 +274,52 @@ class LakebaseServing:
             raise RuntimeError(f"Endpoint for '{pid}' has no host yet (still starting?)")
         return ep["name"], host
 
-    def _conn(self):
+    def _get_pool(self):
+        """Process-wide psycopg connection pool, rebuilt only when the short-lived
+        Postgres OAuth token rotates (~hourly). Returns ``None`` when ``psycopg_pool``
+        is not installed, in which case callers fall back to a direct connection.
+
+        Pooling removes the TLS + auth handshake from every query, which is the
+        dominant per-call cost on the Lakebase serving path. Without it each of
+        the many UI fetches (call states, accounts, account facts, resolution
+        events) opened a brand-new connection, so they resolved at noticeably
+        different times under load.
+        """
+        try:
+            from psycopg_pool import ConnectionPool  # noqa: F401
+        except Exception:  # noqa: BLE001 - dependency optional; degrade gracefully
+            return None
+        cred = self._credentials()  # cheap: cached token, refreshed ~every 50 min
+        if self._pool is None or self._pool_token != cred["password"]:
+            self._build_pool(cred)
+        return self._pool
+
+    def _build_pool(self, cred: dict[str, Any]) -> None:
+        from psycopg_pool import ConnectionPool
+
+        if self._pool is not None:
+            try:
+                self._pool.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._pool = ConnectionPool(
+            kwargs=dict(
+                host=cred["host"], port=cred["port"], dbname=cred["dbname"],
+                user=cred["user"], password=cred["password"],
+                sslmode="require", autocommit=True,
+            ),
+            min_size=1,
+            max_size=8,
+            max_idle=120.0,
+            max_lifetime=3600.0,
+            timeout=15.0,
+            name="lakebase",
+            open=True,
+            check=ConnectionPool.check_connection,
+        )
+        self._pool_token = cred["password"]
+
+    def _direct_conn(self):
         import psycopg
 
         c = self._credentials()
@@ -280,6 +327,19 @@ class LakebaseServing:
             host=c["host"], port=c["port"], dbname=c["dbname"],
             user=c["user"], password=c["password"], sslmode="require", autocommit=True,
         )
+
+    def _conn(self):
+        """Check out a connection as a context manager.
+
+        Uses the pool when ``psycopg_pool`` is available (connection is returned to
+        the pool, not closed, on exit); otherwise opens a direct connection. Either
+        way existing callers keep using ``with self._conn() as conn, conn.cursor()
+        as cur:`` unchanged.
+        """
+        pool = self._get_pool()
+        if pool is not None:
+            return pool.connection()
+        return self._direct_conn()
 
     def _table(self, table: str) -> str:
         return f"{_pg_ident(self.settings.lakebase.schema_name)}.{_pg_ident(table)}"

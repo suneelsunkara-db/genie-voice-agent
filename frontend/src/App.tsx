@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, StatusResponse } from "./api/client";
+import { api, CustomerWithIssue, StatusResponse } from "./api/client";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
 import { CallList } from "./components/CallList";
@@ -8,7 +8,9 @@ import genieLogo from "./assets/genie-logo.png";
 
 export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [issueCount, setIssueCount] = useState<number | null>(null);
+  const [customers, setCustomers] = useState<CustomerWithIssue[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(true);
+  const [customersErr, setCustomersErr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(() => window.location.hash || "#/");
 
@@ -25,12 +27,18 @@ export default function App() {
         if (active) setError(String(e));
       }
     };
+    // Single source of truth for "customers with issues" - both the header pill
+    // and the CallList read this, so we poll it once here instead of twice.
     const loadIssues = async () => {
       try {
         const issues = await api.customersWithIssues();
-        if (active) setIssueCount(issues.count);
-      } catch {
-        if (active) setIssueCount(null);
+        if (!active) return;
+        setCustomers(issues.customers ?? []);
+        setCustomersErr(null);
+      } catch (e) {
+        if (active) setCustomersErr(e instanceof Error ? e.message : "failed");
+      } finally {
+        if (active) setCustomersLoading(false);
       }
     };
     const tick = () => {
@@ -72,7 +80,8 @@ export default function App() {
             <div className="meta-pill">runtime: {status?.mode ?? "…"}</div>
             <div className="meta-pill">stt: {status?.stt_provider ?? "…"}</div>
             <div className="meta-pill">
-              customers with issues: {issueCount ?? "…"}
+              customers with issues:{" "}
+              {customersLoading && !customers.length ? "…" : customers.length}
             </div>
           </div>
         </div>
@@ -101,7 +110,13 @@ export default function App() {
         <ASRBenchmarkPage />
       ) : (
         <section className="command-stage">
-          <CallList calls={status?.call_states ?? []} sttProvider={status?.stt_provider ?? "deepgram"} />
+          <CallList
+            calls={status?.call_states ?? []}
+            sttProvider={status?.stt_provider ?? "deepgram"}
+            customers={customers}
+            customersLoading={customersLoading}
+            customersErr={customersErr}
+          />
         </section>
       )}
     </div>

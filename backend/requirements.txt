@@ -5,3 +5,4 @@ python-dotenv>=1
 databricks-sdk>=0.30
 httpx>=0.27
 psycopg[binary]>=3.1
+psycopg-pool>=3.2

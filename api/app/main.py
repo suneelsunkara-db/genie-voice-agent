@@ -61,6 +61,32 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             print(f"[api-startup] UC billing_adjustments ensure skipped: {exc}")
 
+    @app.on_event("startup")
+    def _warm_databricks_paths() -> None:
+        """Warm slow Databricks dependencies in the background so the first page
+        load doesn't pay cold-start costs: the workspace-client OAuth handshake and
+        the SQL Warehouse + Jobs API lookups behind `/status`. The Lakebase pool is
+        already warmed by `ensure_schema()` above. Runs off-thread so startup (and
+        readiness) is not delayed.
+        """
+        import threading
+
+        def _work() -> None:
+            try:
+                from genie_voice.databricks.client import get_workspace_client
+
+                get_workspace_client(settings)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[api-startup] workspace client warm skipped: {exc}")
+            try:
+                from .routers.pipeline_status import warm_meta
+
+                warm_meta(settings)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[api-startup] status meta warm skipped: {exc}")
+
+        threading.Thread(target=_work, daemon=True, name="api-warm").start()
+
     return app
 
 

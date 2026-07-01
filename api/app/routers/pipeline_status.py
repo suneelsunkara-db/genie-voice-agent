@@ -14,6 +14,7 @@ the warehouse or the Jobs API on every tick.
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 from fastapi import APIRouter
@@ -26,8 +27,12 @@ router = APIRouter(prefix="/status", tags=["status"])
 
 # TTL cache for the heavy bits (counts + job run-state). call_state is cheap and
 # stays live every poll; this only throttles the warehouse / Jobs API lookups.
+# The refresh runs in a background thread so a cold SQL warehouse / slow Jobs API
+# never blocks the `/status` response (and therefore never blocks the live call
+# list that rides in the same payload).
 _META_TTL_S = 8.0
-_meta_cache: dict[str, object] = {"ts": 0.0, "value": None}
+_meta_lock = threading.Lock()
+_meta_cache: dict[str, object] = {"ts": 0.0, "value": None, "refreshing": False}
 
 
 @router.get("")
@@ -96,14 +101,51 @@ def _as_int(v) -> int | None:
 
 
 def _pipeline_meta(s) -> dict:
-    """Cached {counts, jobs}. Recomputed at most every `_META_TTL_S` seconds."""
+    """Non-blocking {counts, jobs}.
+
+    Returns the last cached value immediately and refreshes it in the background
+    when stale. On the very first call (nothing cached yet) it returns a light
+    "warming up" placeholder instead of paying the warehouse/Jobs cold start
+    inline, so `/status` stays fast and the call list renders right away.
+    """
     now = time.monotonic()
-    if _meta_cache["value"] is not None and now - float(_meta_cache["ts"]) < _META_TTL_S:
-        return _meta_cache["value"]  # type: ignore[return-value]
-    value = {"counts": _medallion_counts(s), "jobs": _job_states(s)}
-    _meta_cache["value"] = value
-    _meta_cache["ts"] = now
-    return value
+    value = _meta_cache["value"]
+    is_fresh = value is not None and now - float(_meta_cache["ts"]) < _META_TTL_S
+    if not is_fresh:
+        _kick_meta_refresh(s)
+    if value is not None:
+        return value  # type: ignore[return-value]
+    return {
+        "counts": {"note": "warming up"},
+        "jobs": {"orchestration": {"name": s.pipeline.orchestration_job_name, "available": None}},
+    }
+
+
+def _kick_meta_refresh(s) -> None:
+    """Start one background refresh of the heavy meta if none is already running."""
+    with _meta_lock:
+        if _meta_cache["refreshing"]:
+            return
+        _meta_cache["refreshing"] = True
+    threading.Thread(target=_refresh_meta, args=(s,), daemon=True, name="status-meta").start()
+
+
+def _refresh_meta(s) -> None:
+    """Recompute counts + job run-state (warehouse + Jobs API) and update the cache."""
+    try:
+        value = {"counts": _medallion_counts(s), "jobs": _job_states(s)}
+        _meta_cache["value"] = value
+        _meta_cache["ts"] = time.monotonic()
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        _meta_cache["refreshing"] = False
+
+
+def warm_meta(s) -> None:
+    """Synchronously populate the meta cache. Used by API-startup warming so the
+    first real `/status` poll already has counts + job state available."""
+    _refresh_meta(s)
 
 
 def _medallion_counts(s) -> dict:

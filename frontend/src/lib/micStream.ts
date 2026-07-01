@@ -20,6 +20,100 @@ export interface MicRecordingSession {
   close: () => void;
 }
 
+export interface SpeechCaptionSession {
+  stop: () => void;
+  close: () => void;
+}
+
+/** True when the browser exposes the Web Speech API used for the live caption. */
+export function isSpeechCaptionSupported(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+  );
+}
+
+/**
+ * Best-effort, on-device live caption using the browser's Web Speech API.
+ *
+ * The Databricks Whisper serving endpoint is batch (it transcribes a whole clip
+ * on stop), so it cannot stream words while you speak. To let an audience read
+ * along, we run the browser's built-in recognizer purely for a live preview; the
+ * authoritative transcript still comes from the Databricks model once the clip is
+ * sent. Returns null when the browser has no Web Speech support (caption is then
+ * simply skipped - recording/transcription are unaffected).
+ */
+export function startSpeechCaption(
+  onText: (text: string) => void,
+  onUnavailable?: () => void
+): SpeechCaptionSession | null {
+  const Ctor =
+    (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!Ctor) {
+    onUnavailable?.();
+    return null;
+  }
+  const rec = new Ctor();
+  rec.lang = "en-US";
+  rec.continuous = true;
+  rec.interimResults = true;
+
+  let finalText = "";
+  let stopped = false;
+
+  rec.onresult = (event: any) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const res = event.results[i];
+      const chunk = String(res[0]?.transcript ?? "");
+      if (res.isFinal) finalText = (finalText ? `${finalText} ` : "") + chunk.trim();
+      else interim += chunk;
+    }
+    const display = `${finalText} ${interim}`.trim();
+    if (display) onText(display);
+  };
+  // The recognizer ends itself on a pause; restart so the caption keeps flowing
+  // for the whole utterance until we explicitly stop it.
+  rec.onend = () => {
+    if (!stopped) {
+      try {
+        rec.start();
+      } catch {
+        /* already starting */
+      }
+    }
+  };
+  rec.onerror = () => {
+    /* caption is best-effort; ignore (e.g. no-speech / network) */
+  };
+
+  try {
+    rec.start();
+  } catch {
+    onUnavailable?.();
+    return null;
+  }
+
+  return {
+    stop: () => {
+      stopped = true;
+      try {
+        rec.stop();
+      } catch {
+        /* noop */
+      }
+    },
+    close: () => {
+      stopped = true;
+      try {
+        rec.abort();
+      } catch {
+        /* noop */
+      }
+    },
+  };
+}
+
 /** Deepgram streaming returns one segment per is_final; accumulate for long speech. */
 export function mergeStreamingTranscript(
   committed: string,

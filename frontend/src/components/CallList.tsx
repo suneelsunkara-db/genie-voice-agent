@@ -9,13 +9,16 @@ import {
   LiveNudge,
   ResolutionEvent,
 } from "../api/client";
-import { POLL_INTERVAL_MS, WS_BASE_URL } from "../config";
+import { WS_BASE_URL } from "../config";
 import { intentLabel, PRIORITY_RANK, recommend } from "../guidance";
 import {
+  isSpeechCaptionSupported,
   MicRecordingSession,
   MicStreamSession,
+  SpeechCaptionSession,
   startMicRecording,
   startMicStream,
+  startSpeechCaption,
   VoiceUiState,
 } from "../lib/micStream";
 import databricksLogo from "../assets/databricks-logo.png";
@@ -46,35 +49,16 @@ function customerPriority(c: CustomerWithIssue) {
 export function CallList({
   calls,
   sttProvider,
+  customers,
+  customersLoading,
+  customersErr,
 }: {
   calls: CallState[];
   sttProvider: string;
+  customers: CustomerWithIssue[];
+  customersLoading: boolean;
+  customersErr: string | null;
 }) {
-  const [customers, setCustomers] = useState<CustomerWithIssue[]>([]);
-  const [customersLoading, setCustomersLoading] = useState(true);
-  const [customersErr, setCustomersErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const load = () => {
-      api
-        .customersWithIssues()
-        .then((r) => {
-          if (!active) return;
-          setCustomers(r.customers ?? []);
-          setCustomersErr(null);
-        })
-        .catch((e) => active && setCustomersErr(e instanceof Error ? e.message : "failed"))
-        .finally(() => active && setCustomersLoading(false));
-    };
-    load();
-    const id = setInterval(load, POLL_INTERVAL_MS);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, []);
-
   const sortedCustomers = useMemo(() => {
     const base = [...customers].sort((a, b) => {
       const pa = PRIORITY_RANK[customerPriority(a)];
@@ -935,8 +919,10 @@ function LiveAssist({
   const [err, setErr] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const micSessionRef = useRef<MicStreamSession | MicRecordingSession | null>(null);
+  const captionRef = useRef<SpeechCaptionSession | null>(null);
   const voiceRef = useRef({ interim: "", level: 0.15 });
   const voicePhaseRef = useRef<VoiceUiState["phase"]>("idle");
+  const captionSupported = useMemo(() => isSpeechCaptionSupported(), []);
 
   const applyAgentReply = (nudge: LiveNudge) => {
     const reply = nudge.agent_reply?.trim();
@@ -978,6 +964,8 @@ function LiveAssist({
 
   useEffect(() => {
     return () => {
+      captionRef.current?.close();
+      captionRef.current = null;
       micSessionRef.current?.close();
       micSessionRef.current = null;
       voicePhaseRef.current = "idle";
@@ -998,16 +986,28 @@ function LiveAssist({
           onVoiceUiChange({
             phase: "speaking",
             source: "mic",
-            interimText: "Recording utterance for fine-tuned Whisper…",
+            interimText: voiceRef.current.interim,
             micLevel: level,
           });
         });
         micSessionRef.current = session;
+        // Best-effort on-device live caption so the audience can read along while
+        // the Databricks model produces the authoritative transcript on stop.
+        captionRef.current = startSpeechCaption((caption) => {
+          voiceRef.current.interim = caption;
+          if (voicePhaseRef.current !== "speaking") return;
+          onVoiceUiChange({
+            phase: "speaking",
+            source: "mic",
+            interimText: caption,
+            micLevel: voiceRef.current.level,
+          });
+        });
         setRecording(true);
         onVoiceUiChange({
           phase: "speaking",
           source: "mic",
-          interimText: "Recording utterance for fine-tuned Whisper…",
+          interimText: "",
           processingLabel: "Listening…",
           micLevel: 0.15,
         });
@@ -1067,11 +1067,13 @@ function LiveAssist({
       interimText: voiceRef.current.interim,
       processingLabel:
         sttProvider === "databricks"
-          ? "Processing voice with fine-tuned Whisper…"
+          ? "Processing voice with Databricks model…"
           : "Processing voice with Deepgram…",
     });
     try {
       if (sttProvider === "databricks") {
+        captionRef.current?.stop();
+        captionRef.current = null;
         const recording = await (session as MicRecordingSession).stop();
         micSessionRef.current = null;
         const n = await api.transcribeMic(
@@ -1081,7 +1083,7 @@ function LiveAssist({
           1
         );
         const textFromMic = String(n.transcript || "").trim();
-        if (!textFromMic) throw new Error("No transcript returned from fine-tuned Whisper");
+        if (!textFromMic) throw new Error("No transcript returned from Databricks model");
         onLocalTurn({ text: textFromMic, speaker: 1 });
         voicePhaseRef.current = "agent_reply";
         onVoiceUiChange({
@@ -1112,6 +1114,8 @@ function LiveAssist({
       voicePhaseRef.current = "idle";
       onVoiceUiChange({ phase: "idle" });
     } catch (e) {
+      captionRef.current?.close();
+      captionRef.current = null;
       voicePhaseRef.current = "idle";
       onVoiceUiChange({ phase: "idle" });
       setErr(e instanceof Error ? e.message : "mic transcription failed");
@@ -1144,6 +1148,21 @@ function LiveAssist({
           {recording ? "Stop Mic" : "Mic"}
         </button>
       </div>
+      {sttProvider === "databricks" && (
+        <div
+          className={`caption-status ${captionSupported ? "ok" : "off"}`}
+          title={
+            captionSupported
+              ? "Your browser supports a live on-screen caption while you speak. The Databricks model still produces the final transcript on stop."
+              : "This browser has no Web Speech API, so the live caption is skipped. Recording and the Databricks transcript are unaffected. Try Chrome, Edge, or Safari."
+          }
+        >
+          <span className="caption-dot" />
+          {captionSupported
+            ? "Live caption available · final transcript by Databricks model"
+            : "Live caption unavailable in this browser · Databricks transcript on stop"}
+        </div>
+      )}
       {err && <div className="account-error">{err}</div>}
     </div>
   );

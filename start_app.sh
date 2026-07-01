@@ -22,10 +22,13 @@ if [[ ! -d .venv ]]; then
   python3 -m venv .venv
 fi
 source .venv/bin/activate
-if python -c "import genie_voice, fastapi, uvicorn" >/dev/null 2>&1; then
+# Public PyPI is not reachable from this network; install from the internal
+# Databricks PyPI proxy. Override by exporting PIP_INDEX_URL before running.
+export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi-proxy.cloud.databricks.com/simple}"
+if python -c "import genie_voice, fastapi, uvicorn, psycopg_pool" >/dev/null 2>&1; then
   :
 else
-  log "installing backend + api deps"
+  log "installing backend + api deps (index: $PIP_INDEX_URL)"
   pip install -q --upgrade pip || true
   pip install -q -e backend
   pip install -q -r api/requirements.txt
@@ -58,6 +61,68 @@ if [[ -n "${DEEPGRAM_API_KEY:-}" ]]; then
 else
   warn "DEEPGRAM_API_KEY not found; mic transcription will fail."
 fi
+
+# --- Databricks auth (re-auth if the cached OAuth U2M token is invalid) ------
+# The cockpit's data comes from Databricks (Lakebase / UC / Genie). A stale OAuth
+# token makes those calls 500, which the browser surfaces as "Failed to fetch".
+# Probe the same credential chain the app uses and, for U2M (auth_type=default),
+# launch an interactive 'databricks auth login' when the token is expired.
+probe_databricks_auth() {
+  PYTHONPATH="$ROOT/backend" python - <<'PY' >/dev/null 2>&1
+from genie_voice.config import get_settings
+from genie_voice.databricks.client import get_workspace_client
+get_settings.cache_clear()
+get_workspace_client(get_settings()).current_user.me()
+PY
+}
+
+ensure_databricks_auth() {
+  local cfg auth_type profile host
+  cfg="$(PYTHONPATH="$ROOT/backend" python - <<'PY' 2>/dev/null || true
+from genie_voice.config import get_settings
+get_settings.cache_clear()
+s = get_settings()
+print(s.databricks.auth_type or "default")
+print(s.databricks.profile or "")
+print(s.databricks_host or "")
+PY
+)"
+  auth_type="$(printf '%s\n' "$cfg" | sed -n 1p)"
+  profile="$(printf '%s\n' "$cfg" | sed -n 2p)"
+  host="$(printf '%s\n' "$cfg" | sed -n 3p)"
+
+  # Only U2M OAuth ("default") uses an interactive browser login; pat / M2M oauth
+  # carry their own credentials and need no login step here.
+  if [[ "$auth_type" != "default" ]]; then
+    return 0
+  fi
+
+  if probe_databricks_auth; then
+    log "Databricks auth check passed."
+    return 0
+  fi
+
+  warn "Databricks auth invalid/expired - launching 'databricks auth login'."
+  if ! command -v databricks >/dev/null 2>&1; then
+    warn "databricks CLI not found; run 'databricks auth login' manually, then re-run."
+    return 0
+  fi
+  if [[ -n "$profile" ]]; then
+    databricks auth login --profile "$profile" || true
+  elif [[ -n "$host" ]]; then
+    databricks auth login --host "$host" || true
+  else
+    databricks auth login || true
+  fi
+
+  if probe_databricks_auth; then
+    log "Databricks auth re-established."
+  else
+    warn "Databricks auth still failing; Databricks-backed views may error until fixed."
+  fi
+  return 0
+}
+ensure_databricks_auth
 
 # Stop previous API/UI if our pid files exist.
 stop_pid_file() {
