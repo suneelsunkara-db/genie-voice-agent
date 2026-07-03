@@ -24,7 +24,11 @@ databricks:
   # default = OAuth U2M (run AS the user via `databricks auth login`). No secrets.
   auth_type: default        # default | pat | oauth
   profile: "<your-databricks-profile>"   # ~/.databrickscfg profile (disambiguates when several match the host)
-  run_as: "user@example.com"   # identity the app runs as (GRANTs/Lakebase role)
+  # Identity used for GRANTs/Lakebase role. Empty -> fall back to the caller's
+  # OAuth identity (current_user): the logged-in user locally, or the app's
+  # service principal on Databricks Apps. Local dev sets a real email in
+  # config.local.yaml; keep this empty so Apps uses its service principal.
+  run_as: ""
   catalog: "<your-catalog>"             # existing catalog (not created by us)
   create_catalog: false     # never CREATE CATALOG; we use an existing one
   schema: genie_voice_contact_center        # our schema inside the catalog

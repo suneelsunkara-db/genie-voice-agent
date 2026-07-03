@@ -1,0 +1,47 @@
+# Databricks Apps runtime config for the Genie Voice Agent.
+#
+# One web process: uvicorn serves the FastAPI API AND the built React SPA
+# (api/app/static, produced by deploy_app.sh). The app authenticates to
+# Databricks as its injected service principal (auth_type=oauth reads the
+# platform-injected DATABRICKS_CLIENT_ID/SECRET/HOST).
+#
+# Notes:
+#   - `command` is an array; env vars are NOT expanded except via a /bin/sh -c
+#     wrapper. We also pin GENIE_CONFIG to an absolute path so the config loader
+#     finds config/config.yaml regardless of the package install location, and
+#     add api/ to PYTHONPATH so `app.main:app` resolves from the source root.
+#   - The app MUST listen on 0.0.0.0:$DATABRICKS_APP_PORT.
+#   - Secret values (DEEPGRAM/ELEVENLABS keys, warehouse id) come from declared
+#     app resources via `valueFrom` - never hardcode secrets here. deploy_app.sh
+#     attaches these resources to the app.
+command:
+  - "/bin/sh"
+  - "-c"
+  - 'export GENIE_CONFIG="$(pwd)/config/config.yaml"; PYTHONPATH="$(pwd)/api" exec uvicorn app.main:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT'
+
+env:
+  # Real vendor capture (Deepgram/ElevenLabs) rather than the synthetic producer.
+  - name: GENIE_DEPLOYMENT
+    value: "live"
+  # Authenticate as the app's service principal (M2M OAuth via injected creds).
+  - name: GENIE_DATABRICKS__AUTH_TYPE
+    value: "oauth"
+  # ---- Non-secret workspace config (override the committed placeholders) ----
+  # NOTE: run_as is intentionally NOT set here. The app acts as its own OAuth
+  # service principal; with run_as empty, the code falls back to the SP identity
+  # (current_user) for GRANTs / Lakebase role / Genie parent path.
+  - name: GENIE_DATABRICKS__CATALOG
+    value: "partner_demo_catalog"
+  - name: GENIE_LAKEBASE__INSTANCE
+    value: "genie_voice_lakebase"
+  # ---- Values injected from declared app resources (see deploy_app.sh) ----
+  - name: GENIE_DATABRICKS__SQL_WAREHOUSE_ID
+    valueFrom: "sql-warehouse"
+  - name: DEEPGRAM_API_KEY
+    valueFrom: "deepgram-api-key"
+  # ElevenLabs TTS is optional and not wired into the live flow; its key is empty
+  # in config, so no secret/resource is created. To enable TTS later: store
+  # elevenlabs_api_key in the secret scope, add an `elevenlabs-api-key` secret
+  # resource to the app, and re-add:
+  #   - name: ELEVENLABS_API_KEY
+  #     valueFrom: "elevenlabs-api-key"

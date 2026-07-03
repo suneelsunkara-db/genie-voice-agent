@@ -147,6 +147,87 @@ flowchart LR
     GOLD --> GENIE
 ```
 
+## Deployment topology
+
+The **same** FastAPI backend + React frontend run in two shapes. Application
+logic, config (`config/config.local.yaml`), and the assist flow are identical;
+only the process model, the identity, and how vendor keys are supplied differ.
+
+| Concern | Local (dev) | Databricks App (hosted) |
+|---|---|---|
+| Processes | Vite dev server (`5173`) + uvicorn (`8000`) | one uvicorn process serving API **and** built SPA on `$DATABRICKS_APP_PORT` |
+| Frontend | Vite dev server, `VITE_API_BASE_URL=http://localhost:8000` | built to `api/app/static`, served same-origin (`VITE_API_BASE_URL=""`) |
+| Identity | U2M OAuth **as your user** | M2M OAuth as the app **service principal** (injected `DATABRICKS_CLIENT_ID/SECRET/HOST`) |
+| Vendor keys | `config.local.yaml` / `.env` | Databricks **secret scope** → env via declared app resources |
+| Entry | `local-deploy.sh` / `start_app.sh` | `deploy_app.sh` → `app.yaml` |
+
+```mermaid
+flowchart TB
+    subgraph LOCAL["Local (dev) — two processes"]
+        VITE["Vite dev server :5173"]
+        UVI1["uvicorn :8000<br/>FastAPI"]
+        VITE -->|"API_BASE_URL=:8000"| UVI1
+    end
+
+    subgraph APP["Databricks App — one process"]
+        UVI2["uvicorn :$DATABRICKS_APP_PORT<br/>FastAPI + StaticFiles SPA"]
+        STATIC["api/app/static<br/>built React (same-origin)"]
+        UVI2 --- STATIC
+    end
+
+    subgraph DBX["Databricks control/serving plane"]
+        SP["App service principal<br/>UC + Lakebase + Genie grants"]
+        SEC["Secret scope genie-voice<br/>deepgram_api_key"]
+        RES["App resources<br/>warehouse · secret · serving endpoints"]
+    end
+
+    UVI2 -->|"M2M OAuth"| SP
+    RES -->|"valueFrom -> env"| UVI2
+    SEC --- RES
+```
+
+`deploy_app.sh` builds the SPA, pushes vendor keys to the secret scope, declares
+the app **resources** (SQL warehouse, Deepgram secret, Claude + Whisper serving
+endpoints) so the service principal is auto-granted, applies UC/Lakebase/Genie
+grants (`infra/apps/grant_app_sp.py`) plus the `workspace-access` entitlement
+(required to mint Lakebase Postgres OAuth tokens at runtime), syncs source
+(`.gitignore`-aware; large non-runtime assets excluded to respect the 10 MB
+per-file Apps limit), and deploys in `SNAPSHOT` mode. Runtime behaviour is set in
+`app.yaml` (`GENIE_DEPLOYMENT=live`, `GENIE_DATABRICKS__AUTH_TYPE=oauth`,
+`run_as` left empty so the SP identity is used).
+
+## Voice capture path (mic → STT)
+
+Two capture endpoints keep the Deepgram key server-side; the browser never sees it.
+
+```mermaid
+flowchart LR
+    MIC["Browser mic<br/>PCM 16k chunks"]
+    subgraph FASTAPI["FastAPI"]
+        WS["WS /calls/{id}/mic-stream<br/>live proxy"]
+        BLOB["POST /calls/{id}/mic-transcribe<br/>blob transcribe"]
+        ASSIST["POST /calls/{id}/assist"]
+    end
+    DG["Deepgram nova-3<br/>api.deepgram.com"]
+
+    MIC -->|"WebSocket audio"| WS
+    WS -->|"proxy audio (server-side key)"| DG
+    DG -->|"interim/final transcripts"| WS
+    WS -->|"final utterance"| ASSIST
+    MIC -->|"recorded blob"| BLOB
+    BLOB --> DG
+    BLOB --> ASSIST
+```
+
+- The **streaming** path (`WS /mic-stream`) proxies mic audio to Deepgram live STT
+  and forwards final utterances into the assist flow. The proxy is
+  `websockets`-version agnostic — it detects `additional_headers` (v13+) vs
+  `extra_headers` (v12) so the identical code runs locally and on the Apps runtime.
+- Egress to `api.deepgram.com` goes directly over the serverless egress plane
+  (validated); no warehouse or proxy round-trip is added to STT.
+- Only **final utterances** enter `POST /assist` — audio frames never reach the FM
+  or Genie (see token economics below).
+
 ## Live agent assist flow
 
 Each customer utterance on `POST /calls/{call_id}/assist` runs this pipeline.

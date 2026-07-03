@@ -1,0 +1,8 @@
+# Databricks Apps installs this at the app source root before running app.yaml's
+# command. It pulls the local backend package (which declares databricks-sdk,
+# httpx, psycopg, pydantic, pyyaml, python-dotenv) plus the API server deps.
+./backend
+fastapi>=0.110
+uvicorn[standard]>=0.29
+websockets>=12
+pydantic>=2

@@ -33,6 +33,25 @@ def _deepgram_listen_url(sample_rate: int) -> str:
     return f"wss://api.deepgram.com/v1/listen?{params}"
 
 
+def _connect_with_headers(url: str, headers: dict[str, str]):
+    """Open a websocket client connection, tolerating the header-kwarg rename.
+
+    websockets >= 13 (new asyncio client) uses ``additional_headers`` while
+    <= 12 (legacy client) uses ``extra_headers``. The Databricks Apps runtime
+    may pin either, so pick the kwarg the installed version actually accepts.
+    """
+    import inspect
+
+    import websockets
+
+    kwarg = (
+        "additional_headers"
+        if "additional_headers" in inspect.signature(websockets.connect).parameters
+        else "extra_headers"
+    )
+    return websockets.connect(url, **{kwarg: headers})
+
+
 @router.websocket("/calls/{call_id}/mic-stream")
 async def mic_stream(websocket: WebSocket, call_id: str) -> None:
     await websocket.accept()
@@ -63,13 +82,11 @@ async def mic_stream(websocket: WebSocket, call_id: str) -> None:
         except ValueError:
             sample_rate = 16000
 
-    import websockets
-
     dg_url = _deepgram_listen_url(sample_rate)
     headers = {"Authorization": f"Token {key}"}
 
     try:
-        async with websockets.connect(dg_url, additional_headers=headers) as dg_ws:
+        async with _connect_with_headers(dg_url, headers) as dg_ws:
 
             async def client_to_deepgram() -> None:
                 try:

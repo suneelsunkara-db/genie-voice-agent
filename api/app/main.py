@@ -5,13 +5,23 @@ All settings (host, port, CORS) come from config. Run:
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from genie_voice.config import get_settings
 
 from .deps import serving
 from .routers import accounts, agent_assist, asr_benchmark, genie, health, mic_stream, pipeline_status
+
+# Built React UI (populated by deploy_app.sh: `frontend build` -> here). When
+# present (e.g. on Databricks Apps, which runs a single web process) the API also
+# serves the SPA so UI and API share one origin. Absent in local dev, where Vite
+# serves the UI on :5173 separately.
+_FRONTEND_DIST = Path(__file__).resolve().parent / "static"
 
 
 def create_app() -> FastAPI:
@@ -87,7 +97,34 @@ def create_app() -> FastAPI:
 
         threading.Thread(target=_work, daemon=True, name="api-warm").start()
 
+    _mount_frontend(app)
     return app
+
+
+def _mount_frontend(app: FastAPI) -> None:
+    """Serve the built React SPA from the same process/origin as the API.
+
+    Registered AFTER all API routers so explicit API routes (and the mic-stream
+    WebSocket) always take precedence; the catch-all only handles UI navigation
+    and static assets. No-op when the build output is absent (local dev).
+    """
+    if not _FRONTEND_DIST.is_dir():
+        return
+
+    assets_dir = _FRONTEND_DIST / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    index_file = _FRONTEND_DIST / "index.html"
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def _spa(full_path: str) -> FileResponse:
+        candidate = (_FRONTEND_DIST / full_path).resolve()
+        # Serve real files (favicon, etc.); otherwise fall back to index.html so
+        # client-side routing works on refresh/deep-link.
+        if full_path and candidate.is_file() and _FRONTEND_DIST in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(index_file)
 
 
 app = create_app()

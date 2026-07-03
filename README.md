@@ -105,16 +105,23 @@ backend/        genie_voice package (core library)
     serve/        Lakebase autoscaling serving (call state, resolution events, billing adjustments)
     genie/        Genie Conversation API client
 api/            FastAPI service (health, agent-assist, accounts, genie, status)
+  app/static/   built React SPA served by FastAPI (populated by deploy_app.sh)
 frontend/       Vite/React agent-assist cockpit (customers with issues, resolution journey, Genie panel)
 infra/lakebase/ Lakebase Autoscaling provisioning
-local-deploy.sh end-to-end local deploy
+infra/apps/     grant_app_sp.py — grants UC + Lakebase + Genie to the app service principal
+local-deploy.sh end-to-end local deploy (U2M, runs as your user)
+start_app.sh    one-command local start (API + UI)
+deploy_app.sh   one-command deploy to Databricks Apps (builds UI, secrets, grants, deploy)
+app.yaml        Databricks Apps runtime config (command + env + resource wiring)
 ```
 
-## Authentication & permissions (U2M, no PAT)
+## Authentication & permissions
 
-The app runs **as your Databricks user** via OAuth U2M — no tokens or secrets in
-`.env`. `local-deploy.sh` runs `databricks auth login --host <host>` for you
-(opens a browser) and everything thereafter runs under that identity.
+- **Local (Setup A):** runs **as your Databricks user** via OAuth U2M — no tokens
+  or secrets in `.env`. `local-deploy.sh` runs `databricks auth login` for you.
+- **Databricks App (Setup B):** runs as the app's **service principal** via M2M
+  OAuth (platform-injected `DATABRICKS_CLIENT_ID/SECRET/HOST`); `deploy_app.sh`
+  grants that SP its UC/Lakebase/Genie access and the `workspace-access` entitlement.
 
 Set workspace values in **`config/config.local.yaml`** (gitignored full config,
 deep-merged over `config/config.yaml`). Copy `config/config.yaml` as a starting
@@ -139,7 +146,31 @@ uses **runtime-minted Postgres tokens** (no stored password); set
 > Prefer PAT or a service principal? Set `auth_type: pat` (then `DATABRICKS_TOKEN`)
 > or `auth_type: oauth` (then `DATABRICKS_CLIENT_ID/SECRET`).
 
-## Quick start
+## Running the app: two setups
+
+There are two ways to run the cockpit. Both use the **same** FastAPI backend and
+React frontend and the same `config/config.local.yaml`; they differ only in where
+the process runs and how it authenticates.
+
+| | Local (dev) | Databricks App (hosted) |
+|---|---|---|
+| Processes | Vite dev server + uvicorn (two processes) | one uvicorn process serving API **and** built SPA |
+| Auth to Databricks | U2M OAuth **as your user** (`databricks auth login`) | M2M OAuth as the app's **service principal** (injected creds) |
+| Vendor keys (Deepgram) | from `config/config.local.yaml` / `.env` | Databricks **secret scope** → injected as env via app resources |
+| Frontend URL | `http://localhost:5173` | `https://<app>.<region>.databricksapps.com` (same origin as API) |
+| Command | `./local-deploy.sh` / `./start_app.sh` | `./deploy_app.sh` |
+
+`config/config.yaml` in git is a placeholder template only. **`config/config.local.yaml`**
+(gitignored) is your full profile and is deep-merged on top at runtime. Both setups
+read defaults from it.
+
+---
+
+## Setup A — Local (dev)
+
+Runs **as your Databricks user** via OAuth U2M — no tokens or secrets in git.
+`local-deploy.sh` runs `databricks auth login --host <host>` for you (opens a
+browser); everything thereafter runs under that identity.
 
 ```bash
 cp config/.env.example .env              # optional for U2M; add vendor keys for live mode
@@ -151,9 +182,6 @@ cp config/config.yaml config/config.local.yaml   # then edit with your workspace
 ./local-undeploy.sh              # stop API + UI
 ```
 
-`config/config.yaml` in git is a placeholder template only. **`config/config.local.yaml`**
-(gitignored) is your full local profile and is deep-merged on top at runtime.
-
 One-command startup with optional Deepgram validation:
 
 ```bash
@@ -164,6 +192,82 @@ One-command startup with optional Deepgram validation:
 
 If you skip the Databricks login the script runs in **offline mode** (local
 volume dir + in-process serving) so you can see the full flow immediately.
+
+---
+
+## Setup B — Databricks App (hosted)
+
+One command turns the local two-process app into a single Databricks App web
+process: the React SPA is **built and served by FastAPI** from `api/app/static`,
+and the app authenticates as its own **service principal** (no personal tokens
+at runtime).
+
+```bash
+./deploy_app.sh                  # zero-arg: reads defaults from config.local.yaml
+```
+
+### Prerequisites
+
+- Databricks CLI (`brew install databricks`) authenticated to the target profile:
+  `databricks auth login --profile <profile>`.
+- `npm` (builds the frontend) and the repo virtualenv at `.venv/` (the script
+  uses `.venv/bin/python` so backend deps are available when reading config).
+- `deepgram_api_key` present in `config/config.local.yaml` (or `DEEPGRAM_API_KEY`
+  in the env) — required for mic STT.
+- The `partner_demo_catalog`, Lakebase instance, SQL warehouse, and the Claude /
+  Whisper serving endpoints already exist and are owned by (or grantable by) you.
+
+### What `deploy_app.sh` does (idempotent)
+
+1. **Builds the frontend** for same-origin (`VITE_API_BASE_URL=""`) and copies
+   `frontend/dist` → `api/app/static`.
+2. **Pushes vendor keys** from `config.local.yaml` into the `genie-voice` secret
+   scope (`deepgram_api_key`; `elevenlabs_api_key` only if set).
+3. **Creates/updates the app** with declared **resources** (SQL warehouse,
+   Deepgram secret, Claude + Whisper serving endpoints) so the app's service
+   principal is auto-granted access. ElevenLabs is included only when its key exists.
+4. **Grants the service principal** its runtime access:
+   - `workspace-access` **entitlement** via SCIM (needed to mint Lakebase Postgres
+     OAuth tokens at runtime).
+   - **UC + Lakebase + Genie** grants via `infra/apps/grant_app_sp.py`
+     (catalog/schema/volume `SELECT`/`MODIFY`/`READ VOLUME`, Lakebase role +
+     table/sequence grants, Genie `CAN_RUN`).
+5. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
+   `.gitignore`) and **deploys** in `SNAPSHOT` mode, printing the app URL.
+
+### Configuration
+
+Defaults live at the top of `deploy_app.sh` (sourced from `config.local.yaml`);
+override any of them via env vars before running:
+
+```bash
+APP_NAME=genie-voice-agent \
+DATABRICKS_PROFILE=<profile> \
+SECRET_SCOPE=genie-voice \
+SQL_WAREHOUSE_ID=<warehouse-id> \
+CLAUDE_ENDPOINT=databricks-claude-opus-4-8 \
+WHISPER_ENDPOINT=voice_finetuned_whisper_model \
+./deploy_app.sh
+```
+
+Runtime behaviour is defined in **`app.yaml`**: it runs `uvicorn app.main:app` on
+`0.0.0.0:$DATABRICKS_APP_PORT`, sets `GENIE_DEPLOYMENT=live` and
+`GENIE_DATABRICKS__AUTH_TYPE=oauth`, and injects secrets via `valueFrom` against
+the declared app resources. `run_as` is intentionally left empty so the app uses
+its **service principal** identity (`config/config.yaml` ships `run_as: ""`; local
+dev sets a real email in `config.local.yaml`).
+
+### Notes / gotchas
+
+- **File-size limit:** Databricks Apps reject any single synced file > 10 MB.
+  Large non-runtime assets are `.gitignore`d (e.g. `deck-framework/`, `.run/`) so
+  `databricks sync` skips them.
+- **`websockets` version:** the mic→Deepgram proxy detects whether the installed
+  `websockets` uses `additional_headers` (v13+) or `extra_headers` (v12), so the
+  same code works locally and on the Apps runtime.
+- **Logs:** Compute → Apps → `genie-voice-agent` → Logs.
+- **Egress:** the app calls `api.deepgram.com` directly over the serverless egress
+  plane (validated); no proxy/warehouse round-trip for STT.
 
 ## API endpoints
 
@@ -226,9 +330,10 @@ providers:
 Drop in `backend/genie_voice/providers/stt/assemblyai.py` implementing
 `STTProvider` (a `normalize()` + optional `mock_events()`), and you're done.
 
-## Deployment: local → live
+## Capture mode: local vs live (data producer)
 
-One flag, `deployment` (top of `config/config.yaml`), selects the producer:
+Independent of *where* the app runs (Setup A/B above), one flag — `deployment`
+(top of `config/config.yaml`) — selects the capture producer:
 
 - `deployment: local` (default): the synthetic `datagen` generator produces
   vendor-shaped Deepgram/ElevenLabs payloads + reference records. No vendor calls.
