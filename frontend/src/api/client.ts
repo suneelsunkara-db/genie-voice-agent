@@ -228,6 +228,8 @@ export interface ASRBenchmarkExample {
 
 export interface ASRBenchmarkResponse {
   available: boolean;
+  language?: InteractionLanguage;
+  available_languages?: (InteractionLanguageOption & { available?: boolean })[];
   message?: string;
   summary_path?: string;
   deepgram_output?: string;
@@ -261,7 +263,10 @@ async function getJSON<T>(path: string): Promise<T> {
 export const api = {
   status: () => getJSON<StatusResponse>("/status"),
   health: () => getJSON<Record<string, unknown>>("/health"),
-  asrBenchmark: () => getJSON<ASRBenchmarkResponse>("/asr-benchmark"),
+  asrBenchmark: (language?: InteractionLanguage) =>
+    getJSON<ASRBenchmarkResponse>(
+      `/asr-benchmark${language ? `?language=${encodeURIComponent(language)}` : ""}`
+    ),
   customersWithIssues: () =>
     getJSON<{ customers: CustomerWithIssue[]; count: number }>("/accounts/with-issues"),
   callAccount: (callId: string) =>

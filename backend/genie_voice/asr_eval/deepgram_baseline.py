@@ -154,11 +154,7 @@ def _read_volume_audio(path: str) -> bytes:
         profile = os.environ.get("ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
         if profile:
             cmd = ["databricks", "--profile", profile, "fs", "cp", uri, str(tmp_path), "--overwrite"]
-        env = {
-            **os.environ,
-            "DATABRICKS_AUTH_STORAGE": os.environ.get("DATABRICKS_AUTH_STORAGE", "plaintext"),
-        }
-        subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=120, env=env)
+        subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=120, env=os.environ.copy())
         return tmp_path.read_bytes()
     except FileNotFoundError as exc:
         raise RuntimeError("Databricks CLI is required to read /Volumes audio paths locally") from exc

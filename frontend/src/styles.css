@@ -607,6 +607,32 @@ body {
 }
 .benchmark-page-head h1 { margin: 4px 0 8px; font-size: 30px; }
 .benchmark-page-head p { margin: 0; max-width: 900px; color: #c2cde5; line-height: 1.5; }
+.benchmark-head-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+}
+.benchmark-language-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.benchmark-language-control select {
+  min-width: 190px;
+  background: #091121;
+  border: 1px solid #2a3c61;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+}
 .benchmark-back-link {
   align-self: flex-start;
   color: #ffd5c8;
@@ -656,6 +682,20 @@ body {
   margin: 0;
   color: #c2cde5;
   line-height: 1.5;
+}
+.benchmark-result-identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.benchmark-result-identity span {
+  border: 1px solid #34517f;
+  border-radius: 999px;
+  background: #0a1426;
+  color: #dce8ff;
+  font-size: 12px;
+  padding: 5px 8px;
 }
 .benchmark-verdict-numbers {
   display: grid;
@@ -961,4 +1001,5 @@ body {
   }
   .benchmark-provider-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .benchmark-page-head { flex-direction: column; }
+  .benchmark-head-actions { align-items: flex-start; }
 }

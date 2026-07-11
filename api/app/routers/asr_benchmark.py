@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
+from genie_voice.i18n import LANGUAGE_SPECS, SUPPORTED_LANGUAGES, normalize_language
 
 router = APIRouter(prefix="/asr-benchmark", tags=["asr-benchmark"])
 
@@ -16,6 +17,24 @@ def _repo_root() -> Path:
 
 def _default_eval_dir() -> Path:
     return _repo_root() / ".run" / "asr_model_training" / "evaluations" / "voice_model_deep_eval"
+
+
+def _packaged_eval_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "data" / "asr_benchmarks"
+
+
+def _summary_candidates(language: str) -> list[Path]:
+    code = normalize_language(language)
+    local_base = _default_eval_dir()
+    packaged_base = _packaged_eval_dir()
+    names = [code, code.split("-")[0]]
+    candidates = [local_base / name / "deepgram_vs_databricks_summary.json" for name in names]
+    candidates += [packaged_base / name / "deepgram_vs_databricks_summary.json" for name in names]
+    if code == "en-US":
+        candidates.insert(0, local_base / "deepgram_vs_databricks_summary.json")
+        candidates.append(packaged_base / "deepgram_vs_databricks_summary.json")
+        candidates.append(packaged_base / "en" / "deepgram_vs_databricks_summary.json")
+    return candidates
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -41,6 +60,15 @@ def _provider_paths(summary: dict[str, Any], base: Path) -> tuple[Path, Path]:
     deepgram = Path(str(summary.get("deepgram_output") or base / "deepgram_nova-3_deep_eval.jsonl"))
     databricks = Path(str(summary.get("databricks_output") or base / "databricks_finetuned_whisper_deep_eval.jsonl"))
     return deepgram, databricks
+
+
+def _resolve_provider_paths(summary: dict[str, Any], summary_path: Path) -> tuple[Path, Path]:
+    deepgram_path, databricks_path = _provider_paths(summary, summary_path.parent)
+    if not deepgram_path.exists():
+        deepgram_path = summary_path.parent / deepgram_path.name
+    if not databricks_path.exists():
+        databricks_path = summary_path.parent / databricks_path.name
+    return deepgram_path, databricks_path
 
 
 def _paired_examples(deepgram_rows: list[dict[str, Any]], databricks_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -87,25 +115,47 @@ def _paired_examples(deepgram_rows: list[dict[str, Any]], databricks_rows: list[
 
 
 @router.get("")
-def latest_asr_benchmark() -> dict[str, Any]:
-    base = _default_eval_dir()
-    summary_path = base / "deepgram_vs_databricks_summary.json"
-    summary = _read_json(summary_path)
+def latest_asr_benchmark(language: str = "en-US") -> dict[str, Any]:
+    language_code = normalize_language(language)
+    summary_path = next((path for path in _summary_candidates(language_code) if path.exists()), None)
+    summary = _read_json(summary_path) if summary_path else None
     if not summary:
         return {
             "available": False,
-            "summary_path": str(summary_path),
-            "message": "No ASR benchmark summary found. Run scripts/asr/07_deep_voice_model_eval.sh run first.",
+            "language": language_code,
+            "available_languages": _available_languages(),
+            "summary_path": str(_summary_candidates(language_code)[0]),
+            "message": (
+                "No ASR benchmark summary found for this language. "
+                "Run scripts/asr/07_deep_voice_model_eval.sh run with ASR_EVAL_LANGUAGE set first."
+            ),
         }
 
-    deepgram_path, databricks_path = _provider_paths(summary, base)
+    deepgram_path, databricks_path = _resolve_provider_paths(summary, summary_path)
     deepgram_rows = _read_jsonl(deepgram_path)
     databricks_rows = _read_jsonl(databricks_path)
     return {
         "available": True,
+        "language": language_code,
+        "available_languages": _available_languages(),
         "summary_path": str(summary_path),
         "deepgram_output": str(deepgram_path),
         "databricks_output": str(databricks_path),
         "summary": summary,
         "examples": _paired_examples(deepgram_rows, databricks_rows),
     }
+
+
+def _available_languages() -> list[dict[str, str | bool]]:
+    out = []
+    for code in SUPPORTED_LANGUAGES:
+        spec = LANGUAGE_SPECS[code]
+        out.append(
+            {
+                "code": code,
+                "label": spec.label,
+                "english_name": spec.english_name,
+                "available": any(path.exists() for path in _summary_candidates(code)),
+            }
+        )
+    return out

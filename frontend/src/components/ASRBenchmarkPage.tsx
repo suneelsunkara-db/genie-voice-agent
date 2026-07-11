@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { api, ASRBenchmarkExample, ASRBenchmarkResponse, ASRProviderSummary } from "../api/client";
+import {
+  api,
+  ASRBenchmarkExample,
+  ASRBenchmarkResponse,
+  ASRProviderSummary,
+  InteractionLanguage,
+  INTERACTION_LANGUAGES,
+} from "../api/client";
 
 function pct(value?: number | null) {
   if (value === null || value === undefined) return "n/a";
@@ -37,6 +44,12 @@ function deltaMs(databricks?: number | null, deepgram?: number | null) {
   if (databricks === null || databricks === undefined || deepgram === null || deepgram === undefined) return "n/a";
   const delta = Math.round(databricks - deepgram);
   return `${delta > 0 ? "+" : ""}${delta}ms`;
+}
+
+function shortPath(path?: string) {
+  if (!path) return "n/a";
+  const parts = path.split("/");
+  return parts.slice(-3).join("/");
 }
 
 function MetricCard({
@@ -212,13 +225,16 @@ function ExampleCard({ example }: { example: ASRBenchmarkExample }) {
 }
 
 export function ASRBenchmarkPage() {
+  const [language, setLanguage] = useState<InteractionLanguage>("en-US");
   const [data, setData] = useState<ASRBenchmarkResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
+    setData(null);
+    setErr(null);
     api
-      .asrBenchmark()
+      .asrBenchmark(language)
       .then((result) => {
         if (active) {
           setData(result);
@@ -231,26 +247,56 @@ export function ASRBenchmarkPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [language]);
 
   const deepgram = data?.summary?.providers?.deepgram;
   const databricks = data?.summary?.providers?.databricks;
   const promotion = data?.summary?.promotion_read;
   const clipCount = databricks?.clips ?? deepgram?.clips ?? promotion?.paired_clips;
   const latencyPenalty = deltaMs(databricks?.latency_ms?.p95, deepgram?.latency_ms?.p95);
+  const responseLanguage = data?.language ?? language;
+  const transcriptWinner = winnerFor({ deepgram: deepgram?.avg_wer, databricks: databricks?.avg_wer, lowerIsBetter: true });
+  const entityWinner = winnerFor({
+    deepgram: deepgram?.avg_critical_entity_accuracy,
+    databricks: databricks?.avg_critical_entity_accuracy,
+  });
+  const latencyWinner = winnerFor({
+    deepgram: deepgram?.latency_ms?.p95,
+    databricks: databricks?.latency_ms?.p95,
+    lowerIsBetter: true,
+  });
+  const languageOptions =
+    data?.available_languages && data.available_languages.length > 0
+      ? data.available_languages
+      : INTERACTION_LANGUAGES.map((item) => ({ ...item, available: undefined }));
+  const selectedLanguageLabel =
+    languageOptions.find((item) => item.code === language)?.label ??
+    language;
 
   return (
     <section className="benchmark-page">
       <div className="benchmark-page-head">
         <div>
           <div className="eyebrow">ASR Model Evaluation</div>
-          <h1>Deepgram vs Fine-Tuned Databricks Whisper</h1>
+          <h1>Deepgram vs Databricks ASR endpoint</h1>
           <p>
-            Offline 403-clip voice-model benchmark focused on what this app needs: accurate final
+            Offline 420-clip voice-model benchmark focused on what this app needs: accurate final
             utterances, billing entity preservation, safe resolution signals, and latency after mic stop.
           </p>
         </div>
-        <a className="benchmark-back-link" href="#/">Back to cockpit</a>
+        <div className="benchmark-head-actions">
+          <label className="benchmark-language-control">
+            <span>Benchmark language</span>
+            <select value={language} onChange={(e) => setLanguage(e.target.value as InteractionLanguage)}>
+              {languageOptions.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}{item.available === false ? " (not run yet)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <a className="benchmark-back-link" href="#/">Back to cockpit</a>
+        </div>
       </div>
 
       {err && <div className="error">ASR benchmark API error: {err}</div>}
@@ -267,12 +313,17 @@ export function ASRBenchmarkPage() {
           <div className="benchmark-verdict">
             <div>
               <div className="eyebrow">Executive Readout</div>
-              <h2>Mixed result: Databricks is stronger on accuracy, Deepgram is stronger on latency.</h2>
+              <h2>{selectedLanguageLabel}: Databricks vs Deepgram ASR benchmark.</h2>
               <p>
-                The full eval does not produce a single universal winner. Databricks has lower transcript error
-                and better business entity accuracy, while Deepgram is materially faster and remains the better
-                real-time streaming experience.
+                Use this per-language result to compare final transcript accuracy, business entity preservation,
+                unsafe resolution rate, and post-stop latency. Deepgram remains the streaming caption path; the
+                Databricks model is evaluated as the final utterance transcription path.
               </p>
+              <div className="benchmark-result-identity">
+                <span>requested: {language}</span>
+                <span>served: {responseLanguage}</span>
+                <span>summary: {shortPath(data.summary_path)}</span>
+              </div>
             </div>
             <div className="benchmark-verdict-numbers">
               <div>
@@ -375,24 +426,26 @@ export function ASRBenchmarkPage() {
 
           <div className="benchmark-tradeoff-grid">
             <div className="benchmark-tradeoff-card good">
-              <h2>Where Databricks is stronger</h2>
+              <h2>Transcript Readout</h2>
               <p>
-                Lower WER, higher entity accuracy, no empty transcripts in this run, and better preservation
-                for amounts, dates, billing actions, confirmations, and refusals.
+                WER winner for {selectedLanguageLabel}: {transcriptWinner}. Deepgram is {pct(deepgram?.avg_wer)};
+                Databricks is {pct(databricks?.avg_wer)}.
               </p>
             </div>
             <div className="benchmark-tradeoff-card caution">
-              <h2>Where Deepgram is still stronger</h2>
+              <h2>Business Entity Readout</h2>
               <p>
-                Much lower latency and mature streaming UX. The Databricks model is currently best treated as
-                push-to-talk or stop-to-transcribe.
+                Critical entity winner for {selectedLanguageLabel}: {entityWinner}. Deepgram is{" "}
+                {pct(deepgram?.avg_critical_entity_accuracy)}; Databricks is{" "}
+                {pct(databricks?.avg_critical_entity_accuracy)}.
               </p>
             </div>
             <div className="benchmark-tradeoff-card risk">
-              <h2>Main remaining risk</h2>
+              <h2>Latency / Stability Readout</h2>
               <p>
-                Invoice IDs remain hard for both models. Databricks improved the aggregate result, but invoice
-                ID misses still drive unsafe-resolution flags.
+                P95 latency winner for {selectedLanguageLabel}: {latencyWinner}. Deepgram is{" "}
+                {num(deepgram?.latency_ms?.p95, "ms")}; Databricks is{" "}
+                {num(databricks?.latency_ms?.p95, "ms")}.
               </p>
             </div>
           </div>

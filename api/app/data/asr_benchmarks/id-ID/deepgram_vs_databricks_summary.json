@@ -1,0 +1,152 @@
+{
+  "manifest": "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/datasets/multilingual_gold/manifests/id_business_holdout.built.jsonl",
+  "language": "id-ID",
+  "deepgram_output": "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/evaluations/voice_model_deep_eval/id-ID/deepgram_nova-3_deep_eval.jsonl",
+  "databricks_output": "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/evaluations/voice_model_deep_eval/id-ID/databricks_asr_deep_eval.jsonl",
+  "providers": {
+    "deepgram": {
+      "clips": 420,
+      "provider": [
+        "deepgram"
+      ],
+      "models": [
+        "nova-3"
+      ],
+      "avg_wer": 0.2520051707551718,
+      "avg_cer": 0.023277671166425935,
+      "avg_entity_accuracy": 0.6932142857142861,
+      "avg_critical_entity_accuracy": 0.5702380952380937,
+      "empty_transcript_rate": 0.0,
+      "unsafe_for_resolution_rate": 0.11666666666666667,
+      "negation_mismatch_rate": 0.0,
+      "numeric_recall": 1.0,
+      "latency_ms": {
+        "p50": 759.5,
+        "p90": 1013.2,
+        "p95": 1099.0,
+        "p99": 1555.8700000000001,
+        "avg": 774.9238095238095
+      },
+      "entity_groups": {
+        "account_terms": {
+          "expected": 420,
+          "matched": 420,
+          "accuracy": 1.0
+        },
+        "amounts": {
+          "expected": 211,
+          "matched": 211,
+          "accuracy": 1.0
+        },
+        "billing_actions": {
+          "expected": 420,
+          "matched": 0,
+          "accuracy": 0.0
+        },
+        "confirmations": {
+          "expected": 53,
+          "matched": 53,
+          "accuracy": 1.0
+        },
+        "dates": {
+          "expected": 0,
+          "matched": 0,
+          "accuracy": null
+        },
+        "invoice_ids": {
+          "expected": 420,
+          "matched": 371,
+          "accuracy": 0.8833333333333333
+        },
+        "refusals": {
+          "expected": 53,
+          "matched": 53,
+          "accuracy": 1.0
+        }
+      },
+      "unsafe_reason_counts": {
+        "missing_invoice_id": 49
+      }
+    },
+    "databricks": {
+      "clips": 420,
+      "provider": [
+        "databricks"
+      ],
+      "models": [
+        "id_oss_qwen3_asr_0_6b",
+        "voice_asr_id_oss_qwen3_asr_0_6b"
+      ],
+      "avg_wer": 1.040429808286951,
+      "avg_cer": 0.9525963887502907,
+      "avg_entity_accuracy": 0.06595238095238092,
+      "avg_critical_entity_accuracy": 0.01567460317460317,
+      "empty_transcript_rate": 0.8047619047619048,
+      "unsafe_for_resolution_rate": 1.0,
+      "negation_mismatch_rate": 0.0,
+      "numeric_recall": 0.0,
+      "latency_ms": {
+        "p50": 120000.0,
+        "p90": 120000.0,
+        "p95": 120000.0,
+        "p99": 120000.0,
+        "avg": 104048.90952380952
+      },
+      "entity_groups": {
+        "account_terms": {
+          "expected": 420,
+          "matched": 82,
+          "accuracy": 0.19523809523809524
+        },
+        "amounts": {
+          "expected": 211,
+          "matched": 0,
+          "accuracy": 0.0
+        },
+        "billing_actions": {
+          "expected": 420,
+          "matched": 0,
+          "accuracy": 0.0
+        },
+        "confirmations": {
+          "expected": 53,
+          "matched": 10,
+          "accuracy": 0.18867924528301888
+        },
+        "dates": {
+          "expected": 0,
+          "matched": 0,
+          "accuracy": null
+        },
+        "invoice_ids": {
+          "expected": 420,
+          "matched": 0,
+          "accuracy": 0.0
+        },
+        "refusals": {
+          "expected": 53,
+          "matched": 13,
+          "accuracy": 0.24528301886792453
+        }
+      },
+      "unsafe_reason_counts": {
+        "empty_transcript": 338,
+        "missing_amount": 211,
+        "missing_customer_decision_phrase": 83,
+        "missing_invoice_id": 420,
+        "missing_numeric_token": 211
+      }
+    }
+  },
+  "pairwise": {
+    "paired_clips": 420,
+    "winner_counts": {}
+  },
+  "promotion_read": {
+    "recommended_headline": "Use this per-language benchmark to choose between Deepgram streaming and Databricks final ASR.",
+    "databricks_business_delta": -0.5545634920634905,
+    "databricks_wer_delta": 0.7884246375317792,
+    "databricks_p95_latency_delta_ms": 118901.0,
+    "paired_clips": 420
+  }
+}
