@@ -14,11 +14,12 @@ class AskRequest(BaseModel):
     # Pass the conversation_id returned by a previous /ask to send a follow-up in
     # the same thread (Genie keeps context). Omit to start a new conversation.
     conversation_id: str | None = None
+    language: str | None = None
 
 
 @router.post("/ask")
 def ask(req: AskRequest) -> dict:
     try:
-        return genie().ask(req.question, conversation_id=req.conversation_id)
+        return genie().ask(req.question, conversation_id=req.conversation_id, language=req.language)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=str(exc)) from exc

@@ -10,6 +10,13 @@ from typing import Any
 
 from genie_voice.config import Settings, get_settings
 from genie_voice.genie.space import find_space_ids
+from genie_voice.i18n import (
+    DEFAULT_LANGUAGE,
+    canonical_business_context_instruction,
+    generated_text_language_check,
+    language_spec,
+    normalize_language,
+)
 
 
 class GenieClient:
@@ -124,13 +131,68 @@ class GenieClient:
             "message_id": msg.id,
         }
 
-    def ask(self, question: str, conversation_id: str | None = None) -> dict[str, Any]:
+    def _localize_generated_fields(self, out: dict[str, Any], language_code: str) -> dict[str, Any]:
+        """Repair Genie-generated prose into the selected language.
+
+        Genie is prompted in-language, but this makes the contract stronger: the
+        API returns localized prose when possible, not just a best-effort prompt.
+        SQL and rows remain canonical and untouched.
+        """
+        validation = generated_text_language_check(out.get("answer") or out.get("description"), language_code)
+        should_repair = language_code != DEFAULT_LANGUAGE or (
+            validation.get("checked") and not validation.get("matches")
+        )
+        repaired = False
+        if should_repair:
+            try:
+                from genie_voice.enrich.fm import fm_rewrite_in_language
+
+                for key in ("answer", "description"):
+                    value = out.get(key)
+                    if value:
+                        out[key] = fm_rewrite_in_language(
+                            str(value),
+                            language_code,
+                            self.settings,
+                            purpose=f"Genie {key}",
+                        )
+                        repaired = True
+                followups = out.get("suggested_followups") or []
+                if followups:
+                    out["suggested_followups"] = [
+                        fm_rewrite_in_language(
+                            str(item),
+                            language_code,
+                            self.settings,
+                            purpose="Genie suggested follow-up question",
+                        )
+                        for item in followups
+                    ]
+                    repaired = True
+            except Exception as exc:  # noqa: BLE001
+                out["language_repair_error"] = str(exc)
+        out["language_repaired"] = repaired
+        out["language_validation"] = generated_text_language_check(
+            out.get("answer") or out.get("description"),
+            language_code,
+        )
+        return out
+
+    def ask(
+        self,
+        question: str,
+        conversation_id: str | None = None,
+        *,
+        language: str | None = None,
+    ) -> dict[str, Any]:
         """Ask Genie a question.
 
         When `conversation_id` is provided, the question is sent as a follow-up in
         that existing conversation (Genie retains context); otherwise a new
         conversation is started. Scope a conversation to a single session.
         """
+        language_code = normalize_language(language)
+        genie_question = self._canonical_question(question, language_code)
         space_id = self._resolve_space_id(force_refresh=False)
         if not space_id:
             raise RuntimeError(
@@ -143,10 +205,14 @@ class GenieClient:
 
             client = get_workspace_client(self.settings)
             if conversation_id:
-                msg = client.genie.create_message_and_wait(space_id, conversation_id, question)
+                msg = client.genie.create_message_and_wait(space_id, conversation_id, genie_question)
             else:
-                msg = client.genie.start_conversation_and_wait(space_id, question)
-            return self._extract_message(client, space_id, msg, question)
+                msg = client.genie.start_conversation_and_wait(space_id, genie_question)
+            out = self._extract_message(client, space_id, msg, question)
+            out["language"] = language_code
+            out["canonical_question"] = genie_question
+            out = self._localize_generated_fields(out, language_code)
+            return out
         except Exception as exc:  # noqa: BLE001
             # Core resilience: deployments recreate spaces by name, so a cached id
             # can become stale. Re-resolve by name once and retry (new conversation
@@ -158,8 +224,26 @@ class GenieClient:
                         from genie_voice.databricks.client import get_workspace_client
 
                         client = get_workspace_client(self.settings)
-                        msg = client.genie.start_conversation_and_wait(retry_space, question)
-                        return self._extract_message(client, retry_space, msg, question)
+                        msg = client.genie.start_conversation_and_wait(retry_space, genie_question)
+                        out = self._extract_message(client, retry_space, msg, question)
+                        out["language"] = language_code
+                        out["canonical_question"] = genie_question
+                        out = self._localize_generated_fields(out, language_code)
+                        return out
                     except Exception as retry_exc:  # noqa: BLE001
                         raise RuntimeError(f"Genie query failed after space refresh: {retry_exc}") from retry_exc
             raise RuntimeError(f"Genie query failed: {exc}") from exc
+
+    @staticmethod
+    def _canonical_question(question: str, language: str | None = None) -> str:
+        language_code = normalize_language(language)
+        if language_code == DEFAULT_LANGUAGE:
+            return question
+        spec = language_spec(language_code)
+        return (
+            f"{canonical_business_context_instruction(language_code)} "
+            "Interpret the user's question in the selected interaction language, "
+            "but generate SQL only against the canonical English/US schema. "
+            f"Provide the natural-language answer in {spec.english_name}. "
+            f"USER QUESTION:\n{question}"
+        )

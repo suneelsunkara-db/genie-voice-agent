@@ -19,7 +19,7 @@ ASR_EVAL_LIMIT="${ASR_EVAL_LIMIT:-}"
 ASR_EVAL_SPLIT="${ASR_EVAL_SPLIT:-}"
 ASR_EVAL_DEEPGRAM_MODEL="${ASR_EVAL_DEEPGRAM_MODEL:-nova-3}"
 ASR_EVAL_DEEPGRAM_OUTPUT="${ASR_EVAL_DEEPGRAM_OUTPUT:-$ASR_EVAL_OUTPUT_DIR/deepgram_${ASR_EVAL_DEEPGRAM_MODEL}_deep_eval.jsonl}"
-ASR_EVAL_DATABRICKS_ENDPOINT="${ASR_EVAL_DATABRICKS_ENDPOINT:-voice_finetuned_whisper_model}"
+ASR_EVAL_DATABRICKS_ENDPOINT="${ASR_EVAL_DATABRICKS_ENDPOINT:-voice_asr_en_finetuned_whisper_lora}"
 ASR_EVAL_DATABRICKS_OUTPUT="${ASR_EVAL_DATABRICKS_OUTPUT:-$ASR_EVAL_OUTPUT_DIR/databricks_finetuned_whisper_deep_eval.jsonl}"
 ASR_EVAL_SUMMARY_OUTPUT="${ASR_EVAL_SUMMARY_OUTPUT:-$ASR_EVAL_OUTPUT_DIR/deepgram_vs_databricks_summary.json}"
 ASR_EVAL_DATABRICKS_PROFILE="${ASR_EVAL_DATABRICKS_PROFILE:-${DATABRICKS_CONFIG_PROFILE:-fe-vm-vdm-classic-rcn6ip}}"
@@ -50,7 +50,7 @@ Environment:
   ASR_EVAL_LIMIT                 Optional max clips, useful for smoke tests.
   ASR_EVAL_SPLIT                 Optional manifest split filter, e.g. test.
   ASR_EVAL_DEEPGRAM_MODEL        Deepgram model. Default: nova-3.
-  ASR_EVAL_DATABRICKS_ENDPOINT   Serving endpoint. Default: voice_finetuned_whisper_model.
+  ASR_EVAL_DATABRICKS_ENDPOINT   Serving endpoint. Default: voice_asr_en_finetuned_whisper_lora.
   ASR_EVAL_DATABRICKS_PROFILE    Databricks CLI/profile. Default: fe-vm-vdm-classic-rcn6ip.
 
 Examples:
@@ -133,7 +133,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--databricks-output", required=True)
     parser.add_argument("--summary-output", required=True)
     parser.add_argument("--deepgram-model", default="nova-3")
-    parser.add_argument("--databricks-endpoint", default="voice_finetuned_whisper_model")
+    parser.add_argument("--databricks-endpoint", default="voice_asr_en_finetuned_whisper_lora")
     parser.add_argument("--split", action="append", dest="splits")
     parser.add_argument("--limit", type=int)
     return parser.parse_args()

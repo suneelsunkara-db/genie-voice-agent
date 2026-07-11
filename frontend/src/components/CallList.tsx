@@ -6,11 +6,14 @@ import {
   CallState,
   CustomerWithIssue,
   GenieResponse,
+  InteractionLanguage,
+  InteractionLanguageOption,
+  INTERACTION_LANGUAGES,
   LiveNudge,
   ResolutionEvent,
 } from "../api/client";
 import { WS_BASE_URL } from "../config";
-import { intentLabel, PRIORITY_RANK, recommend } from "../guidance";
+import { PRIORITY_RANK, recommend } from "../guidance";
 import {
   isSpeechCaptionSupported,
   MicRecordingSession,
@@ -21,10 +24,18 @@ import {
   startSpeechCaption,
   VoiceUiState,
 } from "../lib/micStream";
+import {
+  localizedValue,
+  localizeRationale,
+  localizeResolutionNote,
+  uiCopy,
+} from "../i18n";
 import databricksLogo from "../assets/databricks-logo.png";
 import genieLogo from "../assets/genie-logo.png";
 
 const SPOTLIGHT_CUSTOMER_ID = "CUST-4028";
+
+type LocalTurn = { text: string; speaker?: number; language?: InteractionLanguage };
 
 function signalsOf(call: CallState) {
   const gold = (call.state?.gold ?? {}) as Record<string, any>;
@@ -46,19 +57,91 @@ function customerPriority(c: CustomerWithIssue) {
   return "low" as const;
 }
 
+function localizedIntentLabel(language: InteractionLanguage, code?: string | null): string {
+  if (!code) return "—";
+  return localizedValue(language, code, "intent");
+}
+
+function localizedRecommendation(
+  language: InteractionLanguage,
+  nba: string | undefined,
+  sentiment: string | undefined,
+  facts?: AccountFacts | null
+) {
+  const base = recommend(nba, sentiment, facts);
+  if (language !== "th-TH") return base;
+  const overdue = facts?.invoices?.find((i) => i.status === "overdue");
+  const amount = (value: unknown) => {
+    const n = typeof value === "string" ? parseFloat(value) : (value as number);
+    return Number.isFinite(n) ? `$${n.toFixed(2)}` : "$0.00";
+  };
+  switch (nba) {
+    case "offer_fee_waiver":
+      return {
+        ...base,
+        title: overdue
+          ? `เสนอการยกเว้นค่าปรับ ${amount(overdue.late_fee)} สำหรับ ${overdue.invoice_id}`
+          : "เสนอการยกเว้นค่าปรับ",
+        detail: overdue
+          ? `${overdue.invoice_id} (${overdue.period}) ค้างชำระ ${amount(overdue.amount)} + ค่าปรับ ${amount(
+              overdue.late_fee
+            )} ครบกำหนด ${overdue.due_date} การยกเว้นค่าปรับช่วยลดข้อโต้แย้งและรักษาประสบการณ์ลูกค้า`
+          : "รับทราบค่าปรับและเสนอการยกเว้นแบบ goodwill หนึ่งครั้งเพื่อลดความตึงเครียด",
+      };
+    case "set_up_payment_plan":
+      return {
+        ...base,
+        title: "ตั้งแผนชำระเงิน",
+        detail: facts?.summary?.overdue_amount
+          ? `เสนอแบ่งยอดค้างชำระ ${amount(facts.summary.overdue_amount)} เป็นงวด และเปิดชำระอัตโนมัติเพื่อลดค่าปรับในอนาคต`
+          : "เสนอแบ่งยอดค้างชำระเป็นงวดเพื่อให้บัญชีกลับมาปกติ",
+      };
+    case "process_refund":
+      return {
+        ...base,
+        title: "ดำเนินการคืนเงิน",
+        detail: overdue
+          ? `ตรวจสอบรายการที่โต้แย้งใน ${overdue.invoice_id} (${amount(overdue.amount)}) แล้วออกเงินคืนหรือเครดิตเข้าบัญชี`
+          : "ตรวจสอบรายการที่โต้แย้งแล้วออกเงินคืนหรือเครดิตเข้าบัญชี",
+      };
+    case "escalate_retention_offer":
+      return {
+        ...base,
+        title: "ส่งต่อพร้อมข้อเสนอรักษาลูกค้า",
+        detail: "ลูกค้าถูกจัดว่ามีความเสี่ยง ให้ประสานทีม retention และเริ่มด้วยเครดิตหรือส่วนลดแพ็กเกจก่อนลูกค้าขอยกเลิก",
+      };
+    default:
+      return {
+        ...base,
+        title: "ช่วยเหลือต่อได้ - ยังไม่ต้องยกระดับ",
+        detail: "อารมณ์ลูกค้ายังคงที่และไม่พบความเสี่ยงด้านบิล ให้ตอบคำถาม ยืนยันขั้นตอนถัดไป และปิดบทสนทนาอย่างสุภาพ",
+      };
+  }
+}
+
 export function CallList({
   calls,
   sttProvider,
   customers,
   customersLoading,
   customersErr,
+  languages,
+  selectedLanguage,
+  onLanguageChange,
 }: {
   calls: CallState[];
   sttProvider: string;
   customers: CustomerWithIssue[];
   customersLoading: boolean;
   customersErr: string | null;
+  languages?: {
+    default?: InteractionLanguage;
+    supported?: InteractionLanguageOption[];
+  };
+  selectedLanguage: InteractionLanguage;
+  onLanguageChange: (language: InteractionLanguage) => void;
 }) {
+  const copy = uiCopy(selectedLanguage);
   const sortedCustomers = useMemo(() => {
     const base = [...customers].sort((a, b) => {
       const pa = PRIORITY_RANK[customerPriority(a)];
@@ -101,19 +184,19 @@ export function CallList({
     : null;
 
   const [conversationByCall, setConversationByCall] = useState<
-    Record<string, { text: string; speaker?: number }[]>
+    Record<string, LocalTurn[]>
   >({});
 
   if (customersLoading && !customers.length) {
-    return <p className="muted">Loading customers with issues…</p>;
+    return <p className="muted">{copy.loadingCustomers}</p>;
   }
 
   if (!sortedCustomers.length) {
     return (
       <p className="muted">
         {customersErr
-          ? `Unable to load customers: ${customersErr}`
-          : "No customers with open issues found in account data."}
+          ? `${copy.unableToLoadCustomers}: ${customersErr}`
+          : copy.noCustomers}
       </p>
     );
   }
@@ -125,10 +208,8 @@ export function CallList({
           <img className="hero-logo dbx-full side" src={databricksLogo} alt="Databricks" />
           <img className="hero-logo genie-full side" src={genieLogo} alt="Genie" />
         </div>
-        <div className="cc-sidebar-title">Customers with issues</div>
-        <div className="cc-sidebar-sub">
-          Billing risk, overdue exposure, and accounts needing agent assist
-        </div>
+        <div className="cc-sidebar-title">{copy.sidebarTitle}</div>
+        <div className="cc-sidebar-sub">{copy.sidebarSubtitle}</div>
         {sortedCustomers.map((c) => {
           const prio = customerPriority(c);
           const active = selectedCustomer?.customer_id === c.customer_id;
@@ -148,11 +229,15 @@ export function CallList({
               <span className="cc-call-main">
                 <span className="cc-customer-name">{c.full_name ?? c.customer_id}</span>
                 <span className="cc-call-id">{c.customer_id}</span>
-                <span className="cc-call-intent">{c.rationale ?? intentLabel(c.primary_intent)}</span>
-                {c.call_id && <span className="cc-customer-call">Call {c.call_id}</span>}
+                <span className="cc-call-intent">
+                  {c.rationale
+                    ? localizeRationale(selectedLanguage, c.rationale)
+                    : localizedIntentLabel(selectedLanguage, c.primary_intent)}
+                </span>
+                {c.call_id && <span className="cc-customer-call">{copy.call} {c.call_id}</span>}
               </span>
               <span className={`badge sentiment cc-sentiment ${c.sentiment_label ?? "neutral"}`}>
-                {c.sentiment_label ?? c.issue_status ?? "—"}
+                {localizedValue(selectedLanguage, c.sentiment_label ?? c.issue_status)}
               </span>
             </button>
           );
@@ -164,6 +249,10 @@ export function CallList({
           call={selectedCall}
           customer={selectedCustomer}
           sttProvider={sttProvider}
+          languageOptions={languages?.supported}
+          defaultLanguage={languages?.default}
+          selectedLanguage={selectedLanguage}
+          onLanguageChange={onLanguageChange}
           localTurns={conversationByCall[selectedCall.call_id] ?? []}
           onAppendLocalTurn={(turn) =>
             setConversationByCall((prev) => ({
@@ -180,12 +269,10 @@ export function CallList({
         />
       ) : (
         <div className="cc-main cc-empty-call">
-          <div className="eyebrow">No live call</div>
+          <div className="eyebrow">{copy.noLiveCall}</div>
           <h2>{selectedCustomer?.full_name ?? selectedCustomer?.customer_id}</h2>
-          <p className="muted">
-            This customer has an open account issue but is not in the active assist queue yet.
-          </p>
-          {selectedCustomer?.rationale && <p>{selectedCustomer.rationale}</p>}
+          <p className="muted">{copy.noLiveCallDetail}</p>
+          {selectedCustomer?.rationale && <p>{localizeRationale(selectedLanguage, selectedCustomer.rationale)}</p>}
         </div>
       )}
     </div>
@@ -196,6 +283,10 @@ function Cockpit({
   call,
   customer,
   sttProvider,
+  languageOptions,
+  defaultLanguage,
+  selectedLanguage,
+  onLanguageChange,
   localTurns,
   onAppendLocalTurn,
   onResetLocalTurns,
@@ -203,8 +294,12 @@ function Cockpit({
   call: CallState;
   customer: CustomerWithIssue | null;
   sttProvider: string;
-  localTurns: { text: string; speaker?: number }[];
-  onAppendLocalTurn: (turn: { text: string; speaker?: number }) => void;
+  languageOptions?: InteractionLanguageOption[];
+  defaultLanguage?: InteractionLanguage;
+  selectedLanguage: InteractionLanguage;
+  onLanguageChange: (language: InteractionLanguage) => void;
+  localTurns: LocalTurn[];
+  onAppendLocalTurn: (turn: LocalTurn) => void;
   onResetLocalTurns: () => void;
 }) {
   const base = signalsOf(call);
@@ -220,6 +315,10 @@ function Cockpit({
   const [assistMeta, setAssistMeta] = useState<LiveNudge | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>({ phase: "idle" });
+  const availableLanguages =
+    languageOptions && languageOptions.length > 0 ? languageOptions : INTERACTION_LANGUAGES;
+  const language = selectedLanguage;
+  const copy = uiCopy(language);
 
   useEffect(() => {
     let active = true;
@@ -242,11 +341,18 @@ function Cockpit({
       .catch(() => {});
     // Fire-and-forget: warm a Genie account insight off the live reply path so the
     // per-utterance agent reply can ground on it without paying Genie latency inline.
-    api.prefetchGenieInsight(call.call_id).catch(() => {});
+    api.prefetchGenieInsight(call.call_id, language).catch(() => {});
     return () => {
       active = false;
     };
-  }, [call.call_id]);
+  }, [call.call_id, language]);
+
+  useEffect(() => {
+    const fallback = defaultLanguage ?? availableLanguages[0]?.code ?? "en-US";
+    if (!availableLanguages.some((item) => item.code === language)) {
+      onLanguageChange(fallback);
+    }
+  }, [availableLanguages, defaultLanguage, language, onLanguageChange]);
 
   // Live simulated utterance overrides the call-level signals when present.
   const sentiment = live?.sentiment_label ?? base.sentiment;
@@ -262,18 +368,17 @@ function Cockpit({
   const rec =
     issueStatus === "closed"
       ? {
-          title: "Issue resolved — confirm and close warmly",
+          title: copy.issueResolvedTitle,
           detail:
             sum.resolution_note ??
-            "Payment arrangement and waiver are applied. Confirm closure with the customer and offer brief follow-up help.",
+            copy.issueResolvedDetail,
           priority: "low" as const,
         }
       : hasAgentTurn
-      ? recommend(nba, sentiment, facts)
+      ? localizedRecommendation(language, nba, sentiment, facts)
       : {
-          title: "Listening to customer context",
-          detail:
-            "Collecting customer request first. Recommended next action will appear right after the Genie-assisted agent response.",
+          title: copy.listeningTitle,
+          detail: copy.listeningDetail,
           priority: "low" as const,
         };
   const overdueCount = Number(sum.overdue_invoice_count ?? 0);
@@ -281,10 +386,8 @@ function Cockpit({
   const riskLevel = overdueCount > 0 || !sum.autopay_enabled ? "elevated" : "stable";
   const suggestedQuestion =
     facts?.customer_id || call.customer_id
-      ? `For customer ${facts?.customer_id ?? call.customer_id} on call ${
-          call.call_id
-        }, summarize account risk, overdue/declined payment context, and provide the best retention-safe next action for the agent.`
-      : `Give a live assist summary for call ${call.call_id}, including likely intent and next best action.`;
+      ? copy.suggestedAssistQuestion(String(facts?.customer_id ?? call.customer_id), call.call_id)
+      : copy.suggestedCallQuestion(call.call_id);
 
   useEffect(() => {
     if (!genieQuestion) {
@@ -311,12 +414,13 @@ function Cockpit({
       // Continue the same conversation for follow-ups so Genie retains context.
       const resp = await api.askGenie(
         question,
-        asFollowup ? genieResp?.conversation_id : undefined
+        asFollowup ? genieResp?.conversation_id : undefined,
+        language
       );
       setGenieResp(resp);
       setGenieShowSql(false);
     } catch (e) {
-      setGenieErr(e instanceof Error ? e.message : "Failed to query Genie");
+      setGenieErr(e instanceof Error ? e.message : copy.replyUnavailable);
     } finally {
       setGenieLoading(false);
     }
@@ -338,7 +442,7 @@ function Cockpit({
       setFacts(f);
       setResolutionEvents(r.events ?? []);
     } catch (e) {
-      setFactErr(e instanceof Error ? e.message : "reset failed");
+      setFactErr(e instanceof Error ? e.message : copy.unknown);
     } finally {
       setResetBusy(false);
     }
@@ -348,77 +452,109 @@ function Cockpit({
     <div className="cc-main">
       <div className="cc-top">
         <div>
-          <div className="eyebrow">Active Customer</div>
+          <div className="eyebrow">{copy.activeCustomer}</div>
           <div className="cust-name">{cust.full_name ?? call.customer_id ?? call.call_id}</div>
           <div className="cust-sub">
-            {[cust.segment, cust.plan, cust.region].filter(Boolean).join(" · ") || "Customer profile loading"}
-            {cust.tenure_months != null && <> · {cust.tenure_months} mo tenure</>}
+            {[cust.segment, cust.plan, cust.region]
+              .filter(Boolean)
+              .map((item) => localizedValue(language, item, "profile"))
+              .join(" · ") || copy.customerProfileLoading}
+            {cust.tenure_months != null && <> · {copy.monthsTenure(Number(cust.tenure_months))}</>}
           </div>
         </div>
         <div className="cust-status studio-status">
-          <span className={`status-chip issue issue-${issueStatus}`}>issue: {issueStatus}</span>
+          <label className="language-control">
+            <span>{copy.interactionLanguage}</span>
+            <select
+              value={language}
+              onChange={(e) => {
+                onLanguageChange(e.target.value as InteractionLanguage);
+                setGenieResp(null);
+                setGenieShowSql(false);
+              }}
+              disabled={voiceUi.phase !== "idle"}
+            >
+              {availableLanguages.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className={`status-chip issue issue-${issueStatus}`}>
+            {copy.issue}: {localizedValue(language, issueStatus)}
+          </span>
           <span className={`status-chip ${riskLevel === "elevated" ? "st-at_risk" : "st-active"}`}>
-            risk: {riskLevel}
+            {copy.risk}: {localizedValue(language, riskLevel)}
           </span>
           {cust.status && (
-            <span className={`status-chip st-${cust.status}`}>{cust.status}</span>
+            <span className={`status-chip st-${cust.status}`}>{localizedValue(language, cust.status)}</span>
           )}
           {cust.monthly_charge != null && (
-            <span className="cust-arpu">${cust.monthly_charge}/mo</span>
+            <span className="cust-arpu">${cust.monthly_charge}/{copy.perMonth}</span>
           )}
         </div>
       </div>
       {sum.resolution_note && (
         <div className="resolution-banner">
-          {sum.resolution_note}
+          {localizeResolutionNote(language, String(sum.resolution_note))}
           {sum.resolved_at ? ` (resolved at ${sum.resolved_at})` : ""}
         </div>
       )}
 
       <div className="cc-grid">
         <div className="panel cc-conversation">
-          <RecommendationCard rec={rec} intent={intent} sentiment={sentiment} />
+          <RecommendationCard
+            rec={rec}
+            intent={intent}
+            sentiment={sentiment}
+            label={copy.recommendedNextAction}
+            language={language}
+          />
           <div className="panel-title convo-title-row">
-            <span>Conversation stream (voice to Genie to agent)</span>
+            <span>{copy.conversationStream}</span>
             <button className="ghost mini" onClick={resetScenario} disabled={resetBusy}>
-              {resetBusy ? "Resetting…" : "Reset scenario"}
+              {resetBusy ? copy.resetting : copy.resetScenario}
             </button>
           </div>
           <div className="transcript cc-transcript">
             {utterances.length === 0 && voiceUi.phase === "idle" && (
-              <div className="muted">No transcript captured.</div>
+              <div className="muted">{copy.noTranscript}</div>
             )}
             {utterances.map((u, i) => {
               const isCustomer = (u.speaker ?? 0) === 1;
               return (
                 <div key={i} className={`turn ${isCustomer ? "t-customer" : "t-agent"}`}>
-                  <span className="turn-who">{isCustomer ? "Customer" : "Agent (Genie-assisted)"}</span>
+                  <span className="turn-who">
+                    {isCustomer ? copy.customer : copy.agentGenieAssisted}
+                    {u.language && <span className="turn-language"> · {u.language}</span>}
+                  </span>
                   <span className="turn-text">{u.text}</span>
                 </div>
               );
             })}
             {voiceUi.phase === "speaking" && (
               <div className="turn t-customer turn-live">
-                <span className="turn-who">Customer (speaking)</span>
+                <span className="turn-who">{copy.customerSpeaking}</span>
                 <span className="turn-text turn-placeholder">
-                  {voiceUi.interimText?.trim() || "Listening…"}
+                  {voiceUi.interimText?.trim() || copy.listening}
                 </span>
                 <LiveWaveform level={voiceUi.micLevel ?? 0.2} active />
               </div>
             )}
             {voiceUi.phase === "transcribing" && (
               <div className="turn t-customer turn-live">
-                <span className="turn-who">Customer</span>
+                <span className="turn-who">{copy.customer}</span>
                 <span className="turn-text turn-placeholder transcribing">
-                  {voiceUi.interimText?.trim() || voiceUi.processingLabel || "Transcribing your message…"}
+                  {voiceUi.interimText?.trim() || voiceUi.processingLabel || copy.transcribingMessage}
                 </span>
               </div>
             )}
             {voiceUi.phase === "agent_reply" && (
               <div className="turn t-agent turn-live">
-                <span className="turn-who">Agent (Genie-assisted)</span>
+                <span className="turn-who">{copy.agentGenieAssisted}</span>
                 <span className="turn-text turn-placeholder transcribing">
-                  {voiceUi.processingLabel || "Preparing Genie-assisted response…"}
+                  {voiceUi.processingLabel || copy.preparingGenieResponse}
                 </span>
               </div>
             )}
@@ -427,6 +563,7 @@ function Cockpit({
             callId={call.call_id}
             customerId={String(facts?.customer_id ?? call.customer_id ?? "")}
             sttProvider={sttProvider}
+            language={language}
             onNudge={(n) => {
               setLive(n.live);
               setAssistMeta(n);
@@ -435,45 +572,43 @@ function Cockpit({
             onLocalTurn={onAppendLocalTurn}
             onVoiceUiChange={setVoiceUi}
           />
-          <AssistStatusPanel meta={assistMeta} />
+          <AssistStatusPanel meta={assistMeta} language={language} />
         </div>
 
         <div className="panel cc-genie">
-          <div className="panel-title">Databricks Genie live intelligence</div>
-          <div className="genie-brand-note">
-            Genie reads governed customer, invoice, payment, and call context to guide voice agents.
-          </div>
+          <div className="panel-title">{copy.databricksGenieLive}</div>
+          <div className="genie-brand-note">{copy.genieBrandNote}</div>
           <div className="facts-grid cc-kpis">
-            <Fact label="Open invoices" value={sum.open_invoice_count ?? 0} />
+            <Fact label={copy.openInvoices} value={sum.open_invoice_count ?? 0} />
             <Fact
-              label="Overdue"
+              label={copy.overdue}
               value={`${overdueCount} ($${overdueAmount})`}
               warn={overdueCount > 0}
             />
             <Fact
-              label="Autopay"
-              value={sum.autopay_enabled ? "on" : "off"}
+              label={copy.autopay}
+              value={sum.autopay_enabled ? copy.on : copy.off}
               warn={!sum.autopay_enabled}
             />
             <Fact
-              label="Declined pays"
+              label={copy.declinedPays}
               value={sum.recent_declined_payments ?? 0}
               warn={(sum.recent_declined_payments ?? 0) > 0}
             />
           </div>
 
-          {factErr && <div className="account-error">unavailable: {factErr}</div>}
-          {!facts && !factErr && <div className="muted">loading…</div>}
+          {factErr && <div className="account-error">{copy.unavailable}: {factErr}</div>}
+          {!facts && !factErr && <div className="muted">{copy.loading}</div>}
 
           {facts?.invoices && facts.invoices.length > 0 && (
             <table className="inv-table">
               <thead>
                 <tr>
-                  <th>Invoice</th>
-                  <th>Period</th>
-                  <th>Amount</th>
-                  <th>Late fee</th>
-                  <th>Status</th>
+                  <th>{copy.invoice}</th>
+                  <th>{copy.period}</th>
+                  <th>{copy.amount}</th>
+                  <th>{copy.lateFee}</th>
+                  <th>{copy.status}</th>
                 </tr>
               </thead>
               <tbody>
@@ -494,28 +629,28 @@ function Cockpit({
                     <td>{inv.period}</td>
                     <td>${inv.amount}</td>
                     <td>${inv.late_fee}</td>
-                    <td>{inv.status}</td>
+                    <td>{localizedValue(language, inv.status)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
           <div className="resolution-timeline">
-            <div className="panel-title">Resolution timeline</div>
-            {resolutionEvents.length === 0 && <div className="muted">No resolution events yet.</div>}
+            <div className="panel-title">{copy.resolutionTimeline}</div>
+            {resolutionEvents.length === 0 && <div className="muted">{copy.noResolutionEvents}</div>}
             {resolutionEvents.map((ev) => (
               <div className="timeline-item" key={ev.event_id}>
                 <div className="timeline-head">
-                  <span className="timeline-type">{ev.event_type}</span>
-                  <span className="timeline-status">{ev.issue_status ?? "open"}</span>
+                  <span className="timeline-type">{localizedValue(language, ev.event_type)}</span>
+                  <span className="timeline-status">{localizedValue(language, ev.issue_status ?? "open")}</span>
                 </div>
-                {ev.note && <div className="timeline-note">{ev.note}</div>}
+                {ev.note && <div className="timeline-note">{localizeResolutionNote(language, ev.note)}</div>}
               </div>
             ))}
           </div>
 
           <div className="genie-console cc-console">
-            <label className="genie-label">Ask Genie for a real-time assist prompt</label>
+            <label className="genie-label">{copy.askGenieLabel}</label>
             <textarea
               value={genieQuestion}
               onChange={(e) => setGenieQuestion(e.target.value)}
@@ -524,7 +659,7 @@ function Cockpit({
             />
             <div className="genie-actions">
               <button onClick={() => askGenie(genieQuestion)} disabled={genieLoading}>
-                {genieLoading ? "Analyzing…" : "Run Genie Query"}
+                {genieLoading ? copy.analyzing : copy.runGenieQuery}
               </button>
               <button
                 className="ghost"
@@ -534,7 +669,7 @@ function Cockpit({
                 }}
                 disabled={genieLoading}
               >
-                Refresh Assist
+                {copy.refreshAssist}
               </button>
             </div>
             {genieErr && <div className="account-error">{genieErr}</div>}
@@ -564,14 +699,13 @@ function Cockpit({
             )}
             {!genieResp && (
               <div className="genie-hint">
-                Designed around {customer?.full_name ?? "spotlight customers"}: ask for payment
-                arrangement + late fee relief.
+                {copy.designedAround(customer?.full_name ?? copy.spotlightCustomers)}
               </div>
             )}
             {genieResp?.sql && (
               <div className="genie-sql">
                 <button className="sql-toggle" onClick={() => setGenieShowSql((v) => !v)}>
-                  {genieShowSql ? "Hide query" : "Show query"}
+                  {genieShowSql ? copy.hideQuery : copy.showQuery}
                 </button>
                 {genieShowSql && <pre className="sql">{genieResp.sql}</pre>}
               </div>
@@ -588,6 +722,7 @@ function Cockpit({
         live={live}
         facts={facts}
         intent={intent}
+        language={language}
       />
     </div>
   );
@@ -601,22 +736,25 @@ function buildResolutionJourney({
   live,
   facts,
   intent,
+  language,
 }: {
   issueStatus: string;
-  localTurns: { text: string; speaker?: number }[];
+  localTurns: LocalTurn[];
   assistMeta: LiveNudge | null;
   voiceUi: VoiceUiState;
   live: Record<string, any> | null;
   facts: AccountFacts | null;
   intent?: string;
+  language: InteractionLanguage;
 }): AssistPipelineStep[] {
+  const copy = uiCopy(language);
   const stages: { key: string; label: string }[] = [
-    { key: "describe", label: "Customer describes the issue" },
-    { key: "understand", label: "Request understood" },
-    { key: "review", label: "Account reviewed with Genie" },
-    { key: "offer", label: "Resolution offered to customer" },
-    { key: "apply", label: "Agreement applied to billing" },
-    { key: "close", label: "Issue closed" },
+    { key: "describe", label: copy.stageDescribe },
+    { key: "understand", label: copy.stageUnderstand },
+    { key: "review", label: copy.stageReview },
+    { key: "offer", label: copy.stageOffer },
+    { key: "apply", label: copy.stageApply },
+    { key: "close", label: copy.stageClose },
   ];
 
   const hasCustomerTurn = localTurns.some((t) => (t.speaker ?? 0) === 1);
@@ -650,17 +788,16 @@ function buildResolutionJourney({
   if (voiceUi.phase === "speaking") {
     activeKey = "describe";
     inProgressDetail.describe =
-      voiceUi.interimText?.trim() || "Listening — customer is explaining the issue…";
+      voiceUi.interimText?.trim() || copy.describeInProgress;
   } else if (voiceUi.phase === "transcribing") {
     activeKey = "describe";
     inProgressDetail.describe =
-      voiceUi.interimText?.trim() || "Capturing what the customer said…";
+      voiceUi.interimText?.trim() || copy.capturingSpeech;
   } else if (voiceUi.phase === "agent_reply") {
     activeKey = assistMeta ? "offer" : "review";
     if (!assistMeta) {
-      inProgressDetail.understand = "Understanding the customer's billing request…";
-      inProgressDetail.review =
-        "Genie is reviewing account facts and preparing the resolution offer for the agent…";
+      inProgressDetail.understand = copy.understandingRequest;
+      inProgressDetail.review = copy.reviewingFacts;
     }
   } else if (
     !billing?.applied &&
@@ -668,7 +805,7 @@ function buildResolutionJourney({
     (String(nudge.customer_signal) === "confirm_proceed" || actions.pending_close)
   ) {
     activeKey = "apply";
-    inProgressDetail.apply = "Applying the agreed payment arrangement and waiver to billing…";
+    inProgressDetail.apply = copy.applyingAgreement;
   }
 
   const details: Record<string, string> = {};
@@ -676,61 +813,61 @@ function buildResolutionJourney({
     details.describe =
       voiceUi.interimText?.trim() ||
       lastCustomer?.slice(0, 120) ||
-      "Customer explains their billing concern on the call.";
+      copy.customerExplains;
   }
   if (doneThrough >= 1) {
-    const plan = nudge.payment_plan_requested ? "payment plan" : null;
-    const waiver = nudge.waiver_requested ? "late fee relief" : null;
+    const plan = nudge.payment_plan_requested ? copy.paymentPlan : null;
+    const waiver = nudge.waiver_requested ? copy.lateFeeRelief : null;
     const extras = [plan, waiver].filter(Boolean).join(" + ");
     details.understand = extras
-      ? `${intentLabel(intent)} — customer asked for ${extras}`
-      : intentLabel(intent) || "Billing concern identified from the conversation.";
+      ? `${localizedIntentLabel(language, intent)} - ${copy.customerAskedFor(extras)}`
+      : localizedIntentLabel(language, intent) || copy.billingConcernIdentified;
   }
   if (doneThrough >= 2) {
     if (overdueCount > 0) {
-      details.review = `Genie confirmed ${overdueCount} overdue invoice(s) totaling $${overdue.toFixed(2)}.`;
+      details.review = copy.genieConfirmedOverdue(overdueCount, `$${overdue.toFixed(2)}`);
     } else if (assistMeta?.agent_validation?.reply_available) {
-      details.review = "Account facts checked against governed billing records.";
+      details.review = copy.accountFactsChecked;
     } else {
-      details.review = "Account context reviewed before offering next steps.";
+      details.review = copy.accountContextReviewed;
     }
   }
   if (doneThrough >= 3) {
     if (actions.waiver_requested && actions.payment_plan_requested) {
-      details.offer = "Agent proposed a payment arrangement and late fee waiver.";
+      details.offer = copy.proposedPlanAndWaiver;
     } else if (actions.waiver_requested) {
-      details.offer = "Agent proposed late fee relief on the overdue balance.";
+      details.offer = copy.proposedLateFeeRelief;
     } else if (actions.payment_plan_requested) {
-      details.offer = "Agent proposed a payment arrangement.";
+      details.offer = copy.proposedPaymentPlan;
     } else {
-      details.offer = "Agent shared next steps to resolve the billing issue.";
+      details.offer = copy.nextStepsShared;
     }
   }
   if (doneThrough >= 4) {
     if (billing?.applied) {
-      details.apply = `Billing updated (${String(billing.adjustment?.invoice_id ?? "invoice")}).`;
+      details.apply = copy.billingUpdated(String(billing.adjustment?.invoice_id ?? copy.invoice));
     } else if (billing && !billing.applied) {
-      details.apply = `Billing not updated: ${billing.reason ?? "pending customer confirmation"}.`;
+      details.apply = copy.billingNotUpdated(String(billing.reason ?? copy.waitingForConfirmation));
     } else if (status === "closed") {
-      details.apply = "Payment arrangement and waiver recorded on the account.";
+      details.apply = copy.paymentArrangementRecorded;
     }
   } else if (actions.waiver_requested || actions.payment_plan_requested) {
-    details.apply = "Waiting for customer confirmation before updating billing.";
+    details.apply = copy.waitingForConfirmation;
   }
   if (doneThrough >= 5) {
     details.close =
-      resolution?.note ||
-      facts?.summary?.resolution_note ||
-      "Issue closed — customer informed that changes will appear on the next statement.";
+      localizeResolutionNote(language, resolution?.note) ||
+      localizeResolutionNote(language, facts?.summary?.resolution_note) ||
+      copy.issueClosed;
   }
 
   if (doneThrough < 0 && voiceUi.phase === "idle" && !assistMeta) {
     return [
       {
         key: "waiting",
-        label: "Awaiting customer",
+        label: copy.awaitingCustomer,
         status: "pending",
-        detail: "The resolution journey begins when the customer describes their issue.",
+        detail: copy.awaitingCustomerDetail,
       },
     ];
   }
@@ -755,15 +892,18 @@ function ResolutionJourneyStrip({
   live,
   facts,
   intent,
+  language,
 }: {
   issueStatus: string;
-  localTurns: { text: string; speaker?: number }[];
+  localTurns: LocalTurn[];
   assistMeta: LiveNudge | null;
   voiceUi: VoiceUiState;
   live: Record<string, any> | null;
   facts: AccountFacts | null;
   intent?: string;
+  language: InteractionLanguage;
 }) {
+  const copy = uiCopy(language);
   const steps = buildResolutionJourney({
     issueStatus,
     localTurns,
@@ -772,13 +912,14 @@ function ResolutionJourneyStrip({
     live,
     facts,
     intent,
+    language,
   });
 
   return (
     <div className="assist-pipeline-strip resolution-journey">
       <div className="assist-pipeline-head">
-        <span className="panel-title">Issue resolution journey</span>
-        <span className="assist-pipeline-total">Status: {issueStatus}</span>
+        <span className="panel-title">{copy.issueResolutionJourney}</span>
+        <span className="assist-pipeline-total">{copy.status}: {localizedValue(language, issueStatus)}</span>
       </div>
       <div className="assist-pipeline-track">
         {steps.map((step, idx) => (
@@ -802,18 +943,24 @@ function RecommendationCard({
   rec,
   intent,
   sentiment,
+  label,
+  language,
 }: {
   rec: ReturnType<typeof recommend>;
   intent?: string;
   sentiment?: string;
+  label: string;
+  language: InteractionLanguage;
 }) {
   return (
     <div className={`rec-card r-${rec.priority} cc-recommendation`}>
       <div className="rec-top">
-        <span className="rec-kicker">Recommended next action</span>
+        <span className="rec-kicker">{label}</span>
         <span className="rec-tags">
-          <span className="chip">{intentLabel(intent)}</span>
-          <span className={`badge sentiment ${sentiment ?? "neutral"}`}>{sentiment ?? "—"}</span>
+          <span className="chip">{localizedIntentLabel(language, intent)}</span>
+          <span className={`badge sentiment ${sentiment ?? "neutral"}`}>
+            {localizedValue(language, sentiment ?? "neutral")}
+          </span>
         </span>
       </div>
       <div className="rec-title">{rec.title}</div>
@@ -845,7 +992,8 @@ function LiveWaveform({ level, active }: { level: number; active: boolean }) {
   );
 }
 
-function AssistStatusPanel({ meta }: { meta: LiveNudge | null }) {
+function AssistStatusPanel({ meta, language }: { meta: LiveNudge | null; language: InteractionLanguage }) {
+  const copy = uiCopy(language);
   if (!meta) return null;
   const validation = meta.agent_validation;
   const billing = meta.billing;
@@ -859,38 +1007,40 @@ function AssistStatusPanel({ meta }: { meta: LiveNudge | null }) {
     <div className="assist-status-panel">
       {resolutionStatus && (
         <div className="assist-status-row">
-          <span className="assist-status-label">Resolution</span>
-          <span className={`status-chip issue issue-${resolutionStatus}`}>{resolutionStatus}</span>
+          <span className="assist-status-label">{copy.resolution}</span>
+          <span className={`status-chip issue issue-${resolutionStatus}`}>
+            {localizedValue(language, resolutionStatus)}
+          </span>
         </div>
       )}
       {closeBlock && (
         <div className="assist-status-row warn">
-          <span className="assist-status-label">Close blocked</span>
-          <span>{closeBlock}</span>
+          <span className="assist-status-label">{copy.closeBlocked}</span>
+          <span>{localizedValue(language, closeBlock, "reason")}</span>
         </div>
       )}
       {billing && (
         <div className="assist-status-row">
-          <span className="assist-status-label">Billing</span>
+          <span className="assist-status-label">{copy.billing}</span>
           <span>
             {billing.applied
-              ? `applied (${String(billing.adjustment?.invoice_id ?? "invoice")})`
-              : `not applied: ${billing.reason ?? "unknown"}`}
+              ? `${copy.applied} (${String(billing.adjustment?.invoice_id ?? copy.invoice)})`
+              : `${copy.notApplied}: ${localizedValue(language, billing.reason ?? copy.unknown, "reason")}`}
           </span>
         </div>
       )}
       {validation && (
         <div className="assist-status-row">
-          <span className="assist-status-label">Genie validation</span>
+          <span className="assist-status-label">{copy.genieValidation}</span>
           <span>
             {validation.reply_available
-              ? "reply validated"
-              : validation.genie_error ?? "reply unavailable"}
+              ? copy.replyValidated
+              : localizedValue(language, validation.genie_error ?? copy.replyUnavailable, "reason")}
             {validation.mismatches?.length
               ? ` · mismatches: ${validation.mismatches.join("; ")}`
               : ""}
             {validation.output_issues?.length
-              ? ` · output: ${validation.output_issues.join("; ")}`
+              ? ` · output: ${validation.output_issues.map((item) => localizedValue(language, item, "reason")).join("; ")}`
               : ""}
           </span>
         </div>
@@ -902,6 +1052,7 @@ function AssistStatusPanel({ meta }: { meta: LiveNudge | null }) {
 function LiveAssist({
   callId,
   sttProvider,
+  language,
   onNudge,
   onLocalTurn,
   onVoiceUiChange,
@@ -909,10 +1060,12 @@ function LiveAssist({
   callId: string;
   customerId: string;
   sttProvider: string;
+  language: InteractionLanguage;
   onNudge: (n: LiveNudge) => void;
-  onLocalTurn: (turn: { text: string; speaker?: number }) => void;
+  onLocalTurn: (turn: LocalTurn) => void;
   onVoiceUiChange: (state: VoiceUiState) => void;
 }) {
+  const copy = uiCopy(language);
   const [text, setText] = useState("");
   const [speaker, setSpeaker] = useState<number>(1);
   const [busy, setBusy] = useState(false);
@@ -936,16 +1089,16 @@ function LiveAssist({
     setBusy(true);
     setErr(null);
     try {
-      onLocalTurn({ text: msg, speaker });
+      onLocalTurn({ text: msg, speaker, language });
       if (speaker === 1) {
         onVoiceUiChange({
           phase: "agent_reply",
           source: "text",
-          processingLabel: "Genie is preparing the agent response…",
+          processingLabel: copy.geniePreparing,
         });
       }
 
-      const n = await api.sendUtterance(callId, msg, speaker);
+      const n = await api.sendUtterance(callId, msg, speaker, language);
       onNudge(n);
 
       if (speaker === 1) {
@@ -993,22 +1146,26 @@ function LiveAssist({
         micSessionRef.current = session;
         // Best-effort on-device live caption so the audience can read along while
         // the Databricks model produces the authoritative transcript on stop.
-        captionRef.current = startSpeechCaption((caption) => {
-          voiceRef.current.interim = caption;
-          if (voicePhaseRef.current !== "speaking") return;
-          onVoiceUiChange({
-            phase: "speaking",
-            source: "mic",
-            interimText: caption,
-            micLevel: voiceRef.current.level,
-          });
-        });
+        captionRef.current = startSpeechCaption(
+          (caption) => {
+            voiceRef.current.interim = caption;
+            if (voicePhaseRef.current !== "speaking") return;
+            onVoiceUiChange({
+              phase: "speaking",
+              source: "mic",
+              interimText: caption,
+              micLevel: voiceRef.current.level,
+            });
+          },
+          undefined,
+          language
+        );
         setRecording(true);
         onVoiceUiChange({
           phase: "speaking",
           source: "mic",
           interimText: "",
-          processingLabel: "Listening…",
+          processingLabel: copy.listening,
           micLevel: 0.15,
         });
         return;
@@ -1037,7 +1194,8 @@ function LiveAssist({
             micLevel: level,
           });
         },
-        (message) => setErr(message)
+        (message) => setErr(message),
+        language
       );
       micSessionRef.current = session;
       setRecording(true);
@@ -1045,13 +1203,13 @@ function LiveAssist({
         phase: "speaking",
         source: "mic",
         interimText: "",
-        processingLabel: "Listening…",
+          processingLabel: copy.listening,
         micLevel: 0.15,
       });
     } catch (e) {
       voicePhaseRef.current = "idle";
       onVoiceUiChange({ phase: "idle" });
-      setErr(e instanceof Error ? e.message : "Unable to access microphone");
+      setErr(e instanceof Error ? e.message : copy.micAccessError);
     }
   };
 
@@ -1067,8 +1225,8 @@ function LiveAssist({
       interimText: voiceRef.current.interim,
       processingLabel:
         sttProvider === "databricks"
-          ? "Processing voice with Databricks model…"
-          : "Processing voice with Deepgram…",
+          ? copy.processingDatabricks
+          : copy.processingDeepgram,
     });
     try {
       if (sttProvider === "databricks") {
@@ -1080,16 +1238,17 @@ function LiveAssist({
           callId,
           recording.audioBase64,
           recording.mimeType,
-          1
+          1,
+          language
         );
         const textFromMic = String(n.transcript || "").trim();
-        if (!textFromMic) throw new Error("No transcript returned from Databricks model");
-        onLocalTurn({ text: textFromMic, speaker: 1 });
+        if (!textFromMic) throw new Error(copy.noDatabricksTranscript);
+        onLocalTurn({ text: textFromMic, speaker: 1, language });
         voicePhaseRef.current = "agent_reply";
         onVoiceUiChange({
           phase: "agent_reply",
           source: "mic",
-          processingLabel: "Genie is preparing the agent response…",
+          processingLabel: copy.geniePreparing,
         });
         onNudge(n);
         applyAgentReply(n);
@@ -1100,15 +1259,15 @@ function LiveAssist({
 
       const textFromMic = (await (session as MicStreamSession).stop()).trim();
       micSessionRef.current = null;
-      if (!textFromMic) throw new Error("No transcript returned from Deepgram");
-      onLocalTurn({ text: textFromMic, speaker: 1 });
+      if (!textFromMic) throw new Error(copy.noDeepgramTranscript);
+      onLocalTurn({ text: textFromMic, speaker: 1, language });
       voicePhaseRef.current = "agent_reply";
       onVoiceUiChange({
         phase: "agent_reply",
         source: "mic",
-        processingLabel: "Genie is preparing the agent response…",
+        processingLabel: copy.geniePreparing,
       });
-      const n = await api.sendUtterance(callId, textFromMic, 1);
+      const n = await api.sendUtterance(callId, textFromMic, 1, language);
       onNudge(n);
       applyAgentReply(n);
       voicePhaseRef.current = "idle";
@@ -1118,7 +1277,7 @@ function LiveAssist({
       captionRef.current = null;
       voicePhaseRef.current = "idle";
       onVoiceUiChange({ phase: "idle" });
-      setErr(e instanceof Error ? e.message : "mic transcription failed");
+      setErr(e instanceof Error ? e.message : copy.micTranscriptionFailed);
     } finally {
       setBusy(false);
     }
@@ -1132,20 +1291,20 @@ function LiveAssist({
           onChange={(e) => setSpeaker(Number(e.target.value))}
           className="speaker-select"
         >
-          <option value={1}>Customer</option>
-          <option value={0}>Agent</option>
+          <option value={1}>{copy.speakerCustomer}</option>
+          <option value={0}>{copy.speakerAgent}</option>
         </select>
         <input
           value={text}
-          placeholder="Type the next customer/agent utterance..."
+          placeholder={copy.utterancePlaceholder}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />
         <button onClick={send} disabled={busy}>
-          {busy ? "…" : "Send"}
+          {busy ? "…" : copy.send}
         </button>
         <button onClick={recording ? () => void stopMic() : () => void startMic()} disabled={busy}>
-          {recording ? "Stop Mic" : "Mic"}
+          {recording ? copy.stopMic : copy.mic}
         </button>
       </div>
       {sttProvider === "databricks" && (
@@ -1153,14 +1312,14 @@ function LiveAssist({
           className={`caption-status ${captionSupported ? "ok" : "off"}`}
           title={
             captionSupported
-              ? "Your browser supports a live on-screen caption while you speak. The Databricks model still produces the final transcript on stop."
-              : "This browser has no Web Speech API, so the live caption is skipped. Recording and the Databricks transcript are unaffected. Try Chrome, Edge, or Safari."
+              ? copy.captionAvailableTitle
+              : copy.captionUnavailableTitle
           }
         >
           <span className="caption-dot" />
           {captionSupported
-            ? "Live caption available · final transcript by Databricks model"
-            : "Live caption unavailable in this browser · Databricks transcript on stop"}
+            ? copy.captionAvailable
+            : copy.captionUnavailable}
         </div>
       )}
       {err && <div className="account-error">{err}</div>}

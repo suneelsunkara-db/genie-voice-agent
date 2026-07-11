@@ -20,6 +20,7 @@ import time
 from fastapi import APIRouter
 
 from genie_voice.config import get_settings
+from genie_voice.i18n import DEFAULT_LANGUAGE, LANGUAGE_SPECS, SUPPORTED_LANGUAGES
 
 from ..deps import serving
 
@@ -86,6 +87,17 @@ def status() -> dict:
         "mode": s.mode,
         "stt_provider": s.providers.stt.active,
         "enrichment": {"model_endpoint": s.enrichment.model_endpoint},
+        "languages": {
+            "default": DEFAULT_LANGUAGE,
+            "supported": [
+                {
+                    "code": code,
+                    "label": LANGUAGE_SPECS[code].label,
+                    "english_name": LANGUAGE_SPECS[code].english_name,
+                }
+                for code in SUPPORTED_LANGUAGES
+            ],
+        },
         "jobs": jobs,
         "stages": stages,
         "counts": counts,

@@ -111,10 +111,22 @@ providers:
         redact: [pci, ssn, numbers]
         endpointing_ms: 10
       databricks:
-        endpoint: voice_finetuned_whisper_model
+        endpoint: voice_asr_en_finetuned_whisper_lora
         # Fine-tuned Whisper endpoint is utterance-level, not streaming.
         mode: utterance
         postprocess_invoice_ids: false
+        # Optional per-language endpoint routes for the UI interaction-language
+        # dropdown. Keep business facts canonical (USD, INV-900xx) unless the data
+        # model is explicitly localized later.
+        routes:
+          en-US:
+            endpoint: voice_asr_en_finetuned_whisper_lora
+          th-TH:
+            endpoint: voice_asr_th_oss_pathumma_whisper_large_v3
+          id-ID:
+            endpoint: voice_asr_id_oss_qwen3_asr_0_6b
+          zh-CN:
+            endpoint: voice_asr_zh_oss_qwen3_asr_0_6b
   tts:
     adapters:
       elevenlabs: "genie_voice.providers.tts.elevenlabs:ElevenLabsTTS"

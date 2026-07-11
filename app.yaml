@@ -17,12 +17,16 @@
 command:
   - "/bin/sh"
   - "-c"
-  - 'export GENIE_CONFIG="$(pwd)/config/config.yaml"; PYTHONPATH="$(pwd)/api" exec uvicorn app.main:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT'
+  - 'export GENIE_CONFIG="$(pwd)/config/config.yaml"; PYTHONPATH="$(pwd)/api:$(pwd)/backend" exec uvicorn app.main:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT'
 
 env:
   # Real vendor capture (Deepgram/ElevenLabs) rather than the synthetic producer.
   - name: GENIE_DEPLOYMENT
     value: "live"
+  # Use the Databricks ASR endpoints for utterance-level mic transcription. The
+  # WebSocket caption path still uses Deepgram for interim streaming captions.
+  - name: GENIE_PROVIDERS__STT__ACTIVE
+    value: "databricks"
   # Authenticate as the app's service principal (M2M OAuth via injected creds).
   - name: GENIE_DATABRICKS__AUTH_TYPE
     value: "oauth"

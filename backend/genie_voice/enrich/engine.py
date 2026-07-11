@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 from genie_voice.config import Settings, get_settings
+from genie_voice.i18n import normalize_language
 
 log = logging.getLogger(__name__)
 
@@ -40,16 +41,21 @@ def _unavailable(keys: list[str], **extra: Any) -> dict[str, Any]:
 
 
 def summarize_call(
-    utterances: list[dict[str, Any]], settings: Settings | None = None
+    utterances: list[dict[str, Any]], settings: Settings | None = None, *, language: str | None = None
 ) -> dict[str, Any]:
     settings = settings or get_settings()
+    language_code = normalize_language(language)
     try:
         from genie_voice.enrich.fm import fm_summarize_call
 
-        return {**fm_summarize_call(utterances, settings), "available": True}
+        return {
+            **fm_summarize_call(utterances, settings, language=language_code),
+            "available": True,
+            "language": language_code,
+        }
     except Exception as exc:  # noqa: BLE001 - never break the caller; report unavailable
         log.warning("FM summarize_call unavailable (%s)", exc)
-        return _unavailable(_CALL_KEYS)
+        return _unavailable(_CALL_KEYS, language=language_code)
 
 
 def enrich_utterance(
@@ -58,20 +64,27 @@ def enrich_utterance(
     *,
     speaker: int | None = None,
     issue_status: str = "open",
+    language: str | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
+    language_code = normalize_language(language)
     try:
         if speaker == 1:
             from genie_voice.enrich.fm import fm_enrich_customer_utterance
 
             return {
-                **fm_enrich_customer_utterance(text, issue_status, settings),
+                **fm_enrich_customer_utterance(text, issue_status, settings, language=language_code),
                 "available": True,
                 "speaker": speaker,
+                "language": language_code,
             }
         from genie_voice.enrich.fm import fm_enrich_utterance as fm_enrich
 
-        return {**fm_enrich(text, settings, speaker=speaker), "available": True}
+        return {
+            **fm_enrich(text, settings, speaker=speaker, language=language_code),
+            "available": True,
+            "language": language_code,
+        }
     except Exception as exc:  # noqa: BLE001
         log.warning("FM enrich_utterance unavailable (%s)", exc)
         keys = _UTTERANCE_KEYS if speaker != 1 else [
@@ -80,4 +93,4 @@ def enrich_utterance(
             "payment_plan_requested",
             "waiver_requested",
         ]
-        return _unavailable(keys, speaker=speaker)
+        return _unavailable(keys, speaker=speaker, language=language_code)

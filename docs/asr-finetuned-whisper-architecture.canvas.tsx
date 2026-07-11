@@ -93,7 +93,7 @@ const PHASES: Phase[] = [
     title: "Deploy Model Serving endpoint",
     script: "scripts/asr/06_deploy_asr_model_serving_endpoint.sh",
     command: "deploy, status, smoke-test",
-    output: "voice_finetuned_whisper_model endpoint for app STT",
+    output: "voice_asr_en_finetuned_whisper_lora endpoint for English app STT",
     color: "yellow",
   },
 ];
@@ -111,12 +111,12 @@ const ARTIFACTS: Artifact[] = [
   },
   {
     name: "Registered UC model",
-    location: "partner_demo_catalog.genie_voice_contact_center.genie_asr_whisper_lora",
+    location: "partner_demo_catalog.genie_voice_contact_center.genie_asr_en_finetuned_whisper_lora",
     purpose: "Governed candidate model version with alias candidate.",
   },
   {
     name: "Serving endpoint",
-    location: "voice_finetuned_whisper_model",
+    location: "voice_asr_en_finetuned_whisper_lora",
     purpose: "Warm Databricks Model Serving endpoint for app utterance transcription.",
   },
 ];
@@ -124,8 +124,8 @@ const ARTIFACTS: Artifact[] = [
 const DECISIONS: Decision[] = [
   {
     label: "Model identity",
-    value: "voice_finetuned_whisper_model",
-    note: "App-facing endpoint name avoids Genie and LoRA implementation details.",
+    value: "voice_asr_en_finetuned_whisper_lora",
+    note: "App-facing endpoint name makes the English ASR path explicit before adding multilingual winners.",
     color: "green",
   },
   {
@@ -142,8 +142,8 @@ const DECISIONS: Decision[] = [
   },
   {
     label: "Serving compute",
-    value: "GPU_SMALL, Small, scale_to_zero=false",
-    note: "GPU redeploy moves Whisper inference from CPU to CUDA for lower final latency.",
+    value: "CPU, Medium, scale_to_zero=false",
+    note: "English Whisper is already working on CPU; larger multilingual winners can use GPU endpoints after evaluation.",
     color: "purple",
   },
 ];
@@ -153,7 +153,7 @@ const APP_FLOW = [
   "React status poll reads stt_provider from /status",
   "Deepgram mode uses WebSocket /mic-stream for interim text",
   "Databricks mode records an utterance and posts audio_b64 to /mic-transcribe",
-  "API calls voice_finetuned_whisper_model and applies invoice-ID postprocessing",
+  "API calls voice_asr_en_finetuned_whisper_lora and applies invoice-ID postprocessing",
   "Assist flow reuses the returned transcript for Genie-grounded agent guidance",
 ];
 
@@ -271,7 +271,7 @@ export default function ASRFinetunedWhisperArchitectureCanvas() {
         <Grid columns={4} gap={12}>
           <Stat label="ASR scripts" value="06" />
           <Stat label="Registered alias" value="candidate" />
-          <Stat label="Serving endpoint" value="voice_finetuned_whisper_model" />
+          <Stat label="Serving endpoint" value="voice_asr_en_finetuned_whisper_lora" />
           <Stat label="Current app switch" value="providers.stt.active" />
         </Grid>
 

@@ -61,7 +61,7 @@ def fetch_validated_account_metrics(
     return cross_validate_metrics(lakebase, genie_metrics, genie_error=genie_error)
 
 
-def genie_account_insight(genie_client: Any, customer_id: str | None) -> str | None:
+def genie_account_insight(genie_client: Any, customer_id: str | None, *, language: str | None = None) -> str | None:
     """Fetch a short natural-language account insight from Genie (no SQL).
 
     Intended to run OFF the live reply critical path (e.g. when a call is opened)
@@ -77,8 +77,10 @@ def genie_account_insight(genie_client: Any, customer_id: str | None) -> str | N
             "customers), state in two short sentences: the number of overdue "
             "invoices and the total overdue amount in USD; the number of declined "
             "payments in the last 90 days; and the current account status. "
-            "Answer in plain English with the actual numbers. Do NOT ask any "
-            "clarifying questions and do NOT include SQL or column names."
+            "Answer in the selected interaction language with the actual numbers. "
+            "Preserve customer IDs, invoice IDs, and USD amounts exactly. Do NOT ask "
+            "any clarifying questions and do NOT include SQL or column names.",
+            language=language,
         )
     except Exception:  # noqa: BLE001 - insight is best-effort, never fatal
         return None

@@ -246,7 +246,7 @@ DATABRICKS_PROFILE=<profile> \
 SECRET_SCOPE=genie-voice \
 SQL_WAREHOUSE_ID=<warehouse-id> \
 CLAUDE_ENDPOINT=databricks-claude-opus-4-8 \
-WHISPER_ENDPOINT=voice_finetuned_whisper_model \
+WHISPER_ENDPOINT=voice_asr_en_finetuned_whisper_lora \
 ./deploy_app.sh
 ```
 

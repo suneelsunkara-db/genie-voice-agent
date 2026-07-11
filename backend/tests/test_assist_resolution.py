@@ -51,6 +51,68 @@ def test_evaluate_resolution_sets_pending_close_on_confirm():
     assert out["actions"]["pending_close"] is True
 
 
+def test_evaluate_resolution_recovers_multilingual_requested_actions_from_intents():
+    inner = {"resolution": {"status": "open", "actions": {}}}
+    nudge = {
+        "available": True,
+        "customer_signal": "request_help",
+        "payment_plan_requested": False,
+        "waiver_requested": False,
+        "primary_intent": "payment_arrangement",
+        "all_intents": ["payment_arrangement", "late_fee"],
+        "next_best_action": "set_up_payment_plan",
+    }
+    account = {
+        "found": True,
+        "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0},
+        "invoices": [{"status": "overdue", "late_fee": "40.00"}],
+    }
+    out = evaluate_resolution(
+        inner,
+        "您好，我看到滞纳金和逾期余额。可以免除滞纳金并设置付款计划吗？",
+        1,
+        account,
+        nudge,
+    )
+    assert out["status"] == "in_progress"
+    assert out["actions"]["payment_plan_requested"] is True
+    assert out["actions"]["waiver_requested"] is True
+
+
+def test_evaluate_resolution_accepts_chinese_proceed_confirmation():
+    inner = {
+        "resolution": {
+            "status": "in_progress",
+            "actions": {"payment_plan_requested": True, "waiver_requested": True},
+        }
+    }
+    nudge = {"available": True, "customer_signal": "neutral"}
+    account = {
+        "found": True,
+        "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0},
+        "invoices": [{"status": "overdue", "late_fee": "40.00"}],
+    }
+    out = evaluate_resolution(inner, "继续", 1, account, nudge)
+    assert out["actions"]["pending_close"] is True
+
+
+def test_evaluate_resolution_accepts_thai_and_indonesian_proceed_confirmation():
+    account = {
+        "found": True,
+        "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0},
+        "invoices": [{"status": "overdue", "late_fee": "40.00"}],
+    }
+    for text in ("ดำเนินการต่อ", "Lanjutkan"):
+        inner = {
+            "resolution": {
+                "status": "in_progress",
+                "actions": {"payment_plan_requested": True},
+            }
+        }
+        out = evaluate_resolution(inner, text, 1, account, {"available": True, "customer_signal": "neutral"})
+        assert out["actions"]["pending_close"] is True
+
+
 def test_evaluate_resolution_does_not_transition_when_fm_unavailable():
     inner = {"resolution": {"status": "open", "actions": {}}}
     nudge = {"available": False}

@@ -1,7 +1,8 @@
-"""FM-driven issue resolution transitions (no keyword heuristics)."""
+"""FM-driven issue resolution transitions with guarded multilingual normalization."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import re
 from typing import Any
 
 from genie_voice.assist.validation import validate_close_eligible
@@ -11,6 +12,68 @@ _CLOSED_NOTE = (
     "Issue closed: payment arrangement confirmed and waiver flow applied. "
     "Update will reflect on next statement."
 )
+
+_CONFIRM_RE = re.compile(
+    r"\b(yes|yep|yeah|proceed|continue|go ahead|confirm|approved?|sounds good)\b|"
+    r"(ดำเนินการต่อ|ต่อเลย|ตกลง|ยืนยัน|ได้เลย)|"
+    r"\b(lanjutkan|lanjut|setuju|ya|silakan)\b|"
+    r"(继续|確認|确认|可以|好的|同意)",
+    re.IGNORECASE,
+)
+_WAIVER_RE = re.compile(
+    r"\b(waive|remove|reverse|forgive|drop)\b.*\b(late fee|fee)\b|"
+    r"\b(late fee|fee)\b.*\b(waive|remove|reverse|forgive|drop)\b|"
+    r"(ยกเว้น|ยกเลิก|ยกโทษ).*(ค่าธรรมเนียม|ค่าปรับ)|"
+    r"(hapus|menghapus|bebaskan|dibebaskan).*(biaya keterlambatan|denda)|"
+    r"(免除|减免|取消).*(滞纳金|逾期费用|费用)",
+    re.IGNORECASE,
+)
+_PAYMENT_PLAN_RE = re.compile(
+    r"\b(payment plan|payment arrangement|installment|instalment)\b|"
+    r"(แผนการชำระ|ผ่อนชำระ|แบ่งชำระ)|"
+    r"(rencana pembayaran|cicilan|angsuran)|"
+    r"(付款计划|分期付款|还款计划)",
+    re.IGNORECASE,
+)
+
+
+def _nudge_intents(nudge: dict[str, Any]) -> set[str]:
+    values = [nudge.get("primary_intent"), nudge.get("next_best_action")]
+    values.extend(nudge.get("all_intents") or [])
+    return {str(v) for v in values if v}
+
+
+def _requested_actions_from_signal(
+    text: str,
+    nudge: dict[str, Any],
+    existing_actions: dict[str, Any],
+) -> dict[str, bool]:
+    intents = _nudge_intents(nudge)
+    payment_plan = bool(
+        existing_actions.get("payment_plan_requested")
+        or nudge.get("payment_plan_requested")
+        or "payment_arrangement" in intents
+        or "set_up_payment_plan" in intents
+        or _PAYMENT_PLAN_RE.search(text or "")
+    )
+    waiver = bool(
+        existing_actions.get("waiver_requested")
+        or nudge.get("waiver_requested")
+        or "offer_fee_waiver" in intents
+        or _WAIVER_RE.search(text or "")
+    )
+    return {
+        "payment_plan_requested": payment_plan,
+        "waiver_requested": waiver,
+    }
+
+
+def _customer_signal(text: str, status: str, nudge: dict[str, Any], actions: dict[str, Any]) -> str:
+    signal = str(nudge.get("customer_signal") or "neutral")
+    if signal == "neutral" and status == "in_progress" and _CONFIRM_RE.search(text or ""):
+        if actions.get("payment_plan_requested") or actions.get("waiver_requested"):
+            return "confirm_proceed"
+    return signal
 
 
 def resolution_event_for_transition(
@@ -58,12 +121,15 @@ def evaluate_resolution(
         existing["resolution_source"] = "unavailable"
         return existing
 
-    customer_signal = str(nudge.get("customer_signal") or "neutral")
+    requested = _requested_actions_from_signal(msg, nudge, actions)
+    if requested["payment_plan_requested"]:
+        actions["payment_plan_requested"] = True
+    if requested["waiver_requested"]:
+        actions["waiver_requested"] = True
+    customer_signal = _customer_signal(msg, status, nudge, actions)
 
     if status == "open" and customer_signal == "request_help":
         status = "in_progress"
-        actions["payment_plan_requested"] = bool(nudge.get("payment_plan_requested"))
-        actions["waiver_requested"] = bool(nudge.get("waiver_requested"))
 
     if status == "in_progress" and customer_signal == "confirm_proceed":
         can_close, block_reason = validate_close_eligible(actions, account)

@@ -12,17 +12,30 @@ def postprocess_transcript_for_call(
     call_id: str,
     transcript: str,
     settings: Any,
+    *,
+    language: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Apply configured ASR post-processing using active call account context."""
     options = settings.providers.stt.active_options()
     if not options.get("postprocess_invoice_ids"):
-        return transcript, {"enabled": False, "invoice_id_corrections": []}
+        return transcript, {
+            "enabled": False,
+            "language": language,
+            "canonical_transcript": transcript,
+            "invoice_id_corrections": [],
+            "normalized_entities": {},
+        }
 
     candidate_invoice_ids = _candidate_invoice_ids(call_id)
     processed, corrections = normalize_invoice_ids(transcript, candidate_invoice_ids)
     return processed, {
         "enabled": True,
+        "language": language,
+        "canonical_transcript": processed,
         "invoice_id_corrections": [correction.to_dict() for correction in corrections],
+        "normalized_entities": {
+            "invoice_ids": [correction.invoice_id for correction in corrections],
+        },
     }
 
 

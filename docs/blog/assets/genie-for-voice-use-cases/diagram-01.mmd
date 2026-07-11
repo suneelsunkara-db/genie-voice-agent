@@ -1,0 +1,9 @@
+flowchart LR
+    A[Customer utterance] --> B[STT]
+    B --> C[FM enrich]
+    C --> D[Lakebase read/write]
+    C --> E[Validate facts]
+    E --> F[Agent reply]
+    F --> G[Billing commit]
+    D --> H[UC gold tables]
+    H --> I[Genie portfolio Q&A]

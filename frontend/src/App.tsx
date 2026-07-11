@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { api, CustomerWithIssue, StatusResponse } from "./api/client";
+import { api, CustomerWithIssue, InteractionLanguage, StatusResponse } from "./api/client";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
 import { CallList } from "./components/CallList";
+import { uiCopy } from "./i18n";
 import databricksLogo from "./assets/databricks-logo.png";
 import genieLogo from "./assets/genie-logo.png";
 
@@ -13,6 +14,7 @@ export default function App() {
   const [customersErr, setCustomersErr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(() => window.location.hash || "#/");
+  const [interactionLanguage, setInteractionLanguage] = useState<InteractionLanguage>("en-US");
 
   useEffect(() => {
     let active = true;
@@ -60,6 +62,19 @@ export default function App() {
   }, []);
 
   const showBenchmark = page === "#/asr-benchmark";
+  const copy = uiCopy(interactionLanguage);
+
+  useEffect(() => {
+    const supported = status?.languages?.supported ?? [];
+    const defaultLanguage = status?.languages?.default;
+    if (defaultLanguage && interactionLanguage === "en-US" && defaultLanguage !== "en-US") {
+      setInteractionLanguage(defaultLanguage);
+      return;
+    }
+    if (supported.length > 0 && !supported.some((item) => item.code === interactionLanguage)) {
+      setInteractionLanguage(defaultLanguage ?? supported[0].code);
+    }
+  }, [status?.languages, interactionLanguage]);
 
   return (
     <div className="app">
@@ -68,38 +83,34 @@ export default function App() {
           <div className="hero-brand-row">
             <img className="hero-logo dbx-full" src={databricksLogo} alt="Databricks" />
             <img className="hero-logo genie-full" src={genieLogo} alt="Genie" />
-            <span className="brand-chip voice">Voice Use Cases</span>
+            <span className="brand-chip voice">{copy.flowVoice}</span>
           </div>
           <div className="hero-meta">
             <a className="meta-pill nav-pill" href="#/">
-              cockpit
+              {copy.navCockpit}
             </a>
             <a className="meta-pill nav-pill" href="#/asr-benchmark">
-              ASR benchmark
+              {copy.navBenchmark}
             </a>
-            <div className="meta-pill">runtime: {status?.mode ?? "…"}</div>
-            <div className="meta-pill">stt: {status?.stt_provider ?? "…"}</div>
+            <div className="meta-pill">{copy.runtime}: {status?.mode ?? "…"}</div>
+            <div className="meta-pill">{copy.stt}: {status?.stt_provider ?? "…"}</div>
             <div className="meta-pill">
-              customers with issues:{" "}
+              {copy.customersWithIssues}:{" "}
               {customersLoading && !customers.length ? "…" : customers.length}
             </div>
           </div>
         </div>
 
         <div className="hero-content">
-          <div className="eyebrow">Databricks Genie Voice Agent</div>
-          <h1>Genie-Powered Voice Agent Experience</h1>
-          <p>
-            Voice conversations are transcribed by the configured STT provider and enriched with
-            Databricks Genie over governed customer and billing context so agents can resolve calls
-            faster.
-          </p>
+          <div className="eyebrow">{copy.heroEyebrow}</div>
+          <h1>{copy.heroTitle}</h1>
+          <p>{copy.heroDescription}</p>
           <div className="hero-flow">
-            <span className="flow-pill">Voice Input</span>
+            <span className="flow-pill">{copy.flowVoice}</span>
             <span className="flow-arrow">→</span>
-            <span className="flow-pill">Genie Reasoning</span>
+            <span className="flow-pill">{copy.flowGenie}</span>
             <span className="flow-arrow">→</span>
-            <span className="flow-pill">Agent Resolution</span>
+            <span className="flow-pill">{copy.flowResolution}</span>
           </div>
         </div>
       </header>
@@ -113,6 +124,9 @@ export default function App() {
           <CallList
             calls={status?.call_states ?? []}
             sttProvider={status?.stt_provider ?? "deepgram"}
+            languages={status?.languages}
+            selectedLanguage={interactionLanguage}
+            onLanguageChange={setInteractionLanguage}
             customers={customers}
             customersLoading={customersLoading}
             customersErr={customersErr}

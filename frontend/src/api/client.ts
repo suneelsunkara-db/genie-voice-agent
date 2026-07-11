@@ -1,5 +1,20 @@
 import { API_BASE_URL } from "../config";
 
+export type InteractionLanguage = "en-US" | "th-TH" | "id-ID" | "zh-CN";
+
+export const INTERACTION_LANGUAGES: { code: InteractionLanguage; label: string }[] = [
+  { code: "en-US", label: "English" },
+  { code: "th-TH", label: "Thai" },
+  { code: "id-ID", label: "Indonesian" },
+  { code: "zh-CN", label: "Chinese" },
+];
+
+export interface InteractionLanguageOption {
+  code: InteractionLanguage;
+  label: string;
+  english_name?: string;
+}
+
 export interface Stage {
   key: string;
   label: string;
@@ -30,7 +45,7 @@ export interface CallState {
   state?: {
     gold?: Record<string, unknown>;
     live?: Record<string, unknown>;
-    utterances?: { text: string; speaker?: number }[];
+    utterances?: { text: string; speaker?: number; language?: InteractionLanguage }[];
   };
 }
 
@@ -63,6 +78,10 @@ export interface StatusResponse {
   deployment?: string;
   stt_provider?: string;
   enrichment?: { model_endpoint?: string };
+  languages?: {
+    default?: InteractionLanguage;
+    supported?: InteractionLanguageOption[];
+  };
   jobs?: { lakeflow?: JobState };
   stages: Stage[];
   counts: Record<string, unknown>;
@@ -72,8 +91,11 @@ export interface StatusResponse {
 export interface LiveNudge {
   call_id: string;
   model?: string;
+  language?: InteractionLanguage;
   live: Record<string, any>;
   transcript?: string;
+  raw_transcript?: string;
+  canonical_transcript?: string;
   agent_reply?: string | null;
   agent_validation?: {
     genie_validated?: boolean;
@@ -82,6 +104,15 @@ export interface LiveNudge {
     genie_skipped?: boolean;
     output_validated?: boolean;
     output_issues?: string[];
+    language_validation?: {
+      checked?: boolean;
+      expected_language?: InteractionLanguage;
+      matches?: boolean;
+      reason?: string;
+      script_ratio?: number;
+    };
+    language_repaired?: boolean;
+    language_repair_error?: string;
     reply_available?: boolean;
     authoritative_metrics?: {
       overdue_invoice_count?: number;
@@ -127,12 +158,23 @@ export interface AccountFacts {
 
 export interface GenieResponse {
   question: string;
+  language?: InteractionLanguage;
+  canonical_question?: string;
   answer?: string;
   description?: string;
   sql?: string;
   rows?: unknown[][];
   columns?: string[];
   suggested_followups?: string[];
+  language_validation?: {
+    checked?: boolean;
+    expected_language?: InteractionLanguage;
+    matches?: boolean;
+    reason?: string;
+    script_ratio?: number;
+  };
+  language_repaired?: boolean;
+  language_repair_error?: string;
   conversation_id?: string;
   message_id?: string;
 }
@@ -237,34 +279,38 @@ export const api = {
   sendUtterance: async (
     callId: string,
     text: string,
-    speaker?: number
+    speaker?: number,
+    language?: InteractionLanguage
   ): Promise<LiveNudge> => {
     const res = await fetch(`${API_BASE_URL}/calls/${callId}/assist`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, speaker }),
+      body: JSON.stringify({ text, speaker, language }),
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
   prefetchGenieInsight: async (
-    callId: string
-  ): Promise<{ call_id: string; genie_insight: { text: string } | null }> => {
+    callId: string,
+    language?: InteractionLanguage
+  ): Promise<{ call_id: string; genie_insight: { text: string; language?: InteractionLanguage } | null }> => {
     const res = await fetch(`${API_BASE_URL}/calls/${callId}/genie-insight`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      body: JSON.stringify({ language }),
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
   askGenie: async (
     question: string,
-    conversationId?: string
+    conversationId?: string,
+    language?: InteractionLanguage
   ): Promise<GenieResponse> => {
     const res = await fetch(`${API_BASE_URL}/genie/ask`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ question, conversation_id: conversationId }),
+      body: JSON.stringify({ question, conversation_id: conversationId, language }),
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -273,12 +319,13 @@ export const api = {
     callId: string,
     audioBase64: string,
     mimeType: string,
-    speaker = 1
+    speaker = 1,
+    language?: InteractionLanguage
   ): Promise<LiveNudge> => {
     const res = await fetch(`${API_BASE_URL}/calls/${callId}/mic-transcribe`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ audio_b64: audioBase64, mime_type: mimeType, speaker }),
+      body: JSON.stringify({ audio_b64: audioBase64, mime_type: mimeType, speaker, language }),
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();

@@ -12,13 +12,14 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from genie_voice.config import get_settings
+from genie_voice.i18n import language_spec, normalize_language
 
 from ..asr_postprocess import postprocess_transcript_for_call
 
 router = APIRouter(tags=["mic-stream"])
 
 
-def _deepgram_listen_url(sample_rate: int) -> str:
+def _deepgram_listen_url(sample_rate: int, language: str | None = None) -> str:
     params = urlencode(
         {
             "model": "nova-3",
@@ -28,6 +29,7 @@ def _deepgram_listen_url(sample_rate: int) -> str:
             "encoding": "linear16",
             "sample_rate": str(sample_rate),
             "channels": "1",
+            "language": language_spec(language).deepgram_language,
         }
     )
     return f"wss://api.deepgram.com/v1/listen?{params}"
@@ -56,6 +58,7 @@ def _connect_with_headers(url: str, headers: dict[str, str]):
 async def mic_stream(websocket: WebSocket, call_id: str) -> None:
     await websocket.accept()
     settings = get_settings()
+    language = normalize_language(websocket.query_params.get("language"))
     if settings.providers.stt.active != "deepgram":
         await websocket.send_json(
             {
@@ -82,7 +85,7 @@ async def mic_stream(websocket: WebSocket, call_id: str) -> None:
         except ValueError:
             sample_rate = 16000
 
-    dg_url = _deepgram_listen_url(sample_rate)
+    dg_url = _deepgram_listen_url(sample_rate, language)
     headers = {"Authorization": f"Token {key}"}
 
     try:
@@ -123,6 +126,7 @@ async def mic_stream(websocket: WebSocket, call_id: str) -> None:
                             call_id,
                             raw_transcript.strip(),
                             settings,
+                            language=language,
                         )
                         await websocket.send_json(
                             {
@@ -130,6 +134,8 @@ async def mic_stream(websocket: WebSocket, call_id: str) -> None:
                                 "call_id": call_id,
                                 "transcript": transcript,
                                 "raw_transcript": raw_transcript.strip(),
+                                "canonical_transcript": transcript,
+                                "language": language,
                                 "asr_postprocessing": postprocessing,
                                 "is_final": bool(payload.get("is_final")),
                                 "speech_final": bool(payload.get("speech_final")),

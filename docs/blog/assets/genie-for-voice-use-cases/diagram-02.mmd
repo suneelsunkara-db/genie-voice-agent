@@ -1,0 +1,11 @@
+flowchart LR
+    A[Two-sided transcript]
+    B[FM extracts customer signals]
+    C[FM extracts agent commitments]
+    D[Persist live state in Lakebase]
+    E[Verify commitments post-call]
+    F[Genie analyzes portfolio patterns]
+
+    A --> B --> D
+    A --> C --> D
+    D --> E --> F

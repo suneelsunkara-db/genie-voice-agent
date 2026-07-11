@@ -1,6 +1,7 @@
 export type VoiceUiPhase = "idle" | "speaking" | "transcribing" | "agent_reply";
 
 export type VoiceInputSource = "mic" | "text";
+export type SpeechRecognitionLanguage = "en-US" | "th-TH" | "id-ID" | "zh-CN";
 
 export interface VoiceUiState {
   phase: VoiceUiPhase;
@@ -45,7 +46,8 @@ export function isSpeechCaptionSupported(): boolean {
  */
 export function startSpeechCaption(
   onText: (text: string) => void,
-  onUnavailable?: () => void
+  onUnavailable?: () => void,
+  language: SpeechRecognitionLanguage = "en-US"
 ): SpeechCaptionSession | null {
   const Ctor =
     (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -54,7 +56,7 @@ export function startSpeechCaption(
     return null;
   }
   const rec = new Ctor();
-  rec.lang = "en-US";
+  rec.lang = language;
   rec.continuous = true;
   rec.interimResults = true;
 
@@ -150,7 +152,8 @@ export async function startMicStream(
   wsUrl: string,
   onTranscript: (text: string) => void,
   onLevel: (level: number) => void,
-  onError: (message: string) => void
+  onError: (message: string) => void,
+  language: SpeechRecognitionLanguage = "en-US"
 ): Promise<MicStreamSession> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const audioContext = new AudioContext();
@@ -167,7 +170,10 @@ export async function startMicStream(
   processor.connect(silentGain);
   silentGain.connect(audioContext.destination);
 
-  const ws = new WebSocket(`${wsUrl}?sample_rate=${Math.round(sampleRate)}`);
+  const url = new URL(wsUrl, window.location.href);
+  url.searchParams.set("sample_rate", String(Math.round(sampleRate)));
+  url.searchParams.set("language", language);
+  const ws = new WebSocket(url.toString());
   ws.binaryType = "arraybuffer";
 
   let committed = "";

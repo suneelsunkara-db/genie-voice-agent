@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOCAL_REGISTRY_DIR="$ROOT/.run/asr_model_training/registry_package"
 ASR_BASE_MODEL="${ASR_LORA_BASE_MODEL:-openai/whisper-small.en}"
-ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_whisper_lora}"
+ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_en_finetuned_whisper_lora}"
 ASR_LORA_RUN_NAME="${ASR_LORA_RUN_NAME:-}"
 ASR_SKIP_MLFLOW_REGISTER="${ASR_SKIP_MLFLOW_REGISTER:-false}"
 ASR_REGISTRATION_MODE="${ASR_REGISTRATION_MODE:-databricks-serverless}"
@@ -45,7 +45,7 @@ Commands:
 Environment:
   ASR_DATABRICKS_PROFILE       Databricks CLI profile. Default: fe-vm-vdm-classic-rcn6ip
   ASR_LORA_RUN_NAME            LoRA run name. Default: latest lora_* under Volume.
-  ASR_REGISTERED_MODEL_NAME    UC model leaf name. Default: genie_asr_whisper_lora
+  ASR_REGISTERED_MODEL_NAME    UC model leaf name. Default: genie_asr_en_finetuned_whisper_lora
   ASR_REGISTRATION_MODE        databricks-serverless or local. Default: databricks-serverless.
   ASR_SERVERLESS_PERFORMANCE_TARGET
                                 Serverless job target. Default: PERFORMANCE_OPTIMIZED.

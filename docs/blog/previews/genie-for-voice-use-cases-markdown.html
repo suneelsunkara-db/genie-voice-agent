@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Databricks Genie for Voice Use Cases</title>
+  <meta name="description" content="Databricks Genie brings reasoning and business insight over governed data. Adding a voice model turns that into a live experience, and the Genie Ontology makes it precise." />
+  <meta property="og:title" content="Databricks Genie for Voice Use Cases" />
+  <meta property="og:description" content="Databricks Genie brings reasoning and business insight over governed data. Adding a voice model turns that into a live experience, and the Genie Ontology makes it precise." />
+  <meta property="og:type" content="article" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Databricks Genie for Voice Use Cases" />
+  <meta name="twitter:description" content="Databricks Genie brings reasoning and business insight over governed data. Adding a voice model turns that into a live experience, and the Genie Ontology makes it precise." />
+
+  <style>
+    :root {
+      color-scheme: light;
+      --text: #17202a;
+      --muted: #5f6b7a;
+      --border: #d9dee7;
+      --code-bg: #f6f8fa;
+      --accent: #1f6feb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f8fafc;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.68;
+    }
+    .preview-shell {
+      max-width: 920px;
+      margin: 40px auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 48px;
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+    }
+    .preview-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 32px;
+      color: var(--muted);
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 18px;
+    }
+    article { font-size: 17px; }
+    h1 {
+      font-size: 36px;
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+      margin: 0 0 20px;
+    }
+    h2 {
+      font-size: 26px;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      margin: 48px 0 16px;
+    }
+    h3 { font-size: 22px; line-height: 1.3; margin: 34px 0 12px; }
+    p { margin: 0 0 20px; }
+    ul, ol { padding-left: 1.4em; margin: 0 0 24px; }
+    li { margin: 8px 0; }
+    blockquote {
+      margin: 28px 0;
+      border-left: 4px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    pre {
+      overflow: auto;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+      background: var(--code-bg);
+      border-radius: 5px;
+      padding: 0.15em 0.35em;
+    }
+    pre code { background: transparent; padding: 0; }
+    .mermaid {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      margin: 28px 0;
+      text-align: center;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 0.92em; }
+    th, td { border: 1px solid var(--border); padding: 10px; text-align: left; }
+    img { max-width: 100%; border-radius: 12px; }
+    .preview-hero {
+      width: 100%;
+      aspect-ratio: 1200 / 630;
+      object-fit: cover;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      margin: 0 0 32px;
+      display: block;
+    }
+    .publish-panel {
+      background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin: 0 0 32px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .publish-panel h2 { font-size: 22px; margin: 0 0 10px; letter-spacing: -0.01em; }
+    .publish-panel p { margin: 0 0 12px; color: var(--muted); }
+    .publish-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+    .publish-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+    .publish-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .copy-status { min-height: 18px; color: var(--accent); font-size: 13px; margin-top: 8px; }
+    .publish-note { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    @media (max-width: 820px) {
+      .preview-shell { margin: 0; border-radius: 0; padding: 28px; }
+      h1 { font-size: 34px; }
+      h2 { font-size: 25px; }
+    }
+    </style>
+</head>
+<body>
+  <main class="preview-shell">
+    <div class="preview-meta">
+      <span>Preview mode: <strong>markdown</strong></span>
+      <span>docs/blog/genie-for-voice-use-cases.md</span>
+    </div>
+    <section class="publish-panel" aria-label="Publish controls">
+      <h2>Publish</h2>
+      <p>Review this page, then copy the rich blog draft and open the platform editor in one click. Paste into the editor; Medium or LinkedIn creates the public URL after you publish there.</p>
+      <div class="publish-actions">
+        <button type="button" class="publish-open" data-publish-url="https://medium.com/new-story">Copy and Open Medium</button>
+<button type="button" class="publish-open" data-publish-url="https://www.linkedin.com/feed/">Copy and Open LinkedIn</button>
+      </div>
+      <p class="publish-note">Images are copied using public URLs when <code>--public-base-url</code> is provided.</p>
+      <div class="copy-status" id="copy-status"></div>
+    </section>
+
+    <article id="blog-preview">
+<h1>Databricks Genie for Voice Use Cases</h1>
+<p>Databricks Genie is known for reasoning and business insight over governed data. You ask a question in plain language, and Genie plans the query, runs it against curated Unity Catalog tables, and returns an answer it can explain. For most teams that value shows up in dashboards and analyst workflows.</p>
+<p>Voice is where it becomes immediate. When a voice model is connected to Genie, the same reasoning happens live — during a customer call, a field conversation, or a spoken request — instead of after the fact in a report. The Genie Ontology then makes that experience precise, mapping the words people actually say to the entities and metrics in the data.</p>
+<p>This post explains that progression: what Genie&#x27;s reasoning provides, what a voice model adds on top of it, and how the Ontology enhances the result.</p>
+<h2>Genie: Reasoning and Business Insight Over Governed Data</h2>
+<p>Genie is a reasoning layer, not a lookup service. A business question is rarely a single row; it is a set of joins, filters, and definitions that have to be assembled correctly. Genie decomposes the question, plans the query across governed Unity Catalog tables, and returns an answer with a trail back to the data it used.</p>
+<p>Two properties make this valuable. The first is reasoning: Genie interprets an ambiguous business question and works out how to answer it, rather than requiring a pre-built report for every variation. The second is grounding: the answer comes from governed tables with real keys and definitions, so it can be trusted and audited, not paraphrased from a model&#x27;s memory.</p>
+<p>Together, reasoning and grounding are what let Genie deliver business insight that a general-purpose language model cannot. The model can sound fluent about a balance or a policy; only a grounded reasoning layer can be correct about it.</p>
+<h2>Adding a Voice Model to Genie</h2>
+<p>Connecting a voice model to Genie changes when that insight is available. Instead of a question typed into an analytics surface, the customer or the user simply speaks, and Genie&#x27;s reasoning is applied to the conversation as it happens.</p>
+<p>The division of labor is clean. The voice model handles the channel — converting speech to text and, where needed, text back to speech. Genie handles the meaning, answering the business question behind what was said, grounded in governed data. The result reaches the user as a spoken or on-screen answer that is both natural and correct.</p>
+<p>This combination is more than either part alone. A voice interface without grounded reasoning is a faster way to state wrong figures. Grounded reasoning without a live channel is insight that arrives too late to act on. Put together, they deliver business insight at conversational speed — the reasoning of Genie with the immediacy of voice. In a contact center, that means an agent hears an accurate, grounded answer while the customer is still on the line; in the field, it means a spoken question returns a verified figure rather than a guess.</p>
+<h2>How the Genie Ontology Enhances the Experience</h2>
+<p>Spoken language is imprecise, and that is where the Genie Ontology matters most. A customer says &quot;the fee,&quot; an employee says &quot;late charge,&quot; a table column reads <code>late_fee</code>, and a finance report calls it &quot;penalty.&quot; These are one concept under several names, and a spoken question that lands on the wrong one produces a confident, wrong answer.</p>
+<p>The Genie Ontology is the shared business vocabulary that keeps these aligned. It maps the terms people use to the specific entities and metrics that exist in the governed data, so a loosely worded spoken request resolves to the correct column, the correct definition, and the correct record.</p>
+<p>This enhancement is especially important for voice. Typed analytics allows a pause to clarify or rephrase; a live conversation does not. By encoding the business meaning once, the Ontology lets Genie interpret natural speech consistently — across different phrasings, users, and languages — and still return a precise, governed answer. It is what turns a voice-enabled Genie from a helpful assistant into a dependable one.</p>
+<h2>Conclusion</h2>
+<p>The value builds in three steps. Genie provides reasoning and business insight over governed data. A voice model makes that insight immediate, applying it live to a spoken conversation. The Genie Ontology makes it precise, ensuring that natural language resolves to the right business facts. For voice use cases, that progression is the point: reasoning that is grounded, delivered at the speed of speech, and accurate about the terms the business actually uses.</p>
+<h2>Sources and Further Reading</h2>
+<ul>
+<li><a href="https://docs.databricks.com/en/generative-ai/genie.html">Databricks AI/BI Genie</a></li>
+<li><a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Databricks Unity Catalog</a></li>
+</ul>
+    </article>
+  </main>
+
+  <template id="markdown-source"># Databricks Genie for Voice Use Cases
+
+Databricks Genie is known for reasoning and business insight over governed data. You ask a question in plain language, and Genie plans the query, runs it against curated Unity Catalog tables, and returns an answer it can explain. For most teams that value shows up in dashboards and analyst workflows.
+
+Voice is where it becomes immediate. When a voice model is connected to Genie, the same reasoning happens live — during a customer call, a field conversation, or a spoken request — instead of after the fact in a report. The Genie Ontology then makes that experience precise, mapping the words people actually say to the entities and metrics in the data.
+
+This post explains that progression: what Genie&#x27;s reasoning provides, what a voice model adds on top of it, and how the Ontology enhances the result.
+
+## Genie: Reasoning and Business Insight Over Governed Data
+
+Genie is a reasoning layer, not a lookup service. A business question is rarely a single row; it is a set of joins, filters, and definitions that have to be assembled correctly. Genie decomposes the question, plans the query across governed Unity Catalog tables, and returns an answer with a trail back to the data it used.
+
+Two properties make this valuable. The first is reasoning: Genie interprets an ambiguous business question and works out how to answer it, rather than requiring a pre-built report for every variation. The second is grounding: the answer comes from governed tables with real keys and definitions, so it can be trusted and audited, not paraphrased from a model&#x27;s memory.
+
+Together, reasoning and grounding are what let Genie deliver business insight that a general-purpose language model cannot. The model can sound fluent about a balance or a policy; only a grounded reasoning layer can be correct about it.
+
+## Adding a Voice Model to Genie
+
+Connecting a voice model to Genie changes when that insight is available. Instead of a question typed into an analytics surface, the customer or the user simply speaks, and Genie&#x27;s reasoning is applied to the conversation as it happens.
+
+The division of labor is clean. The voice model handles the channel — converting speech to text and, where needed, text back to speech. Genie handles the meaning, answering the business question behind what was said, grounded in governed data. The result reaches the user as a spoken or on-screen answer that is both natural and correct.
+
+This combination is more than either part alone. A voice interface without grounded reasoning is a faster way to state wrong figures. Grounded reasoning without a live channel is insight that arrives too late to act on. Put together, they deliver business insight at conversational speed — the reasoning of Genie with the immediacy of voice. In a contact center, that means an agent hears an accurate, grounded answer while the customer is still on the line; in the field, it means a spoken question returns a verified figure rather than a guess.
+
+## How the Genie Ontology Enhances the Experience
+
+Spoken language is imprecise, and that is where the Genie Ontology matters most. A customer says &quot;the fee,&quot; an employee says &quot;late charge,&quot; a table column reads `late_fee`, and a finance report calls it &quot;penalty.&quot; These are one concept under several names, and a spoken question that lands on the wrong one produces a confident, wrong answer.
+
+The Genie Ontology is the shared business vocabulary that keeps these aligned. It maps the terms people use to the specific entities and metrics that exist in the governed data, so a loosely worded spoken request resolves to the correct column, the correct definition, and the correct record.
+
+This enhancement is especially important for voice. Typed analytics allows a pause to clarify or rephrase; a live conversation does not. By encoding the business meaning once, the Ontology lets Genie interpret natural speech consistently — across different phrasings, users, and languages — and still return a precise, governed answer. It is what turns a voice-enabled Genie from a helpful assistant into a dependable one.
+
+## Conclusion
+
+The value builds in three steps. Genie provides reasoning and business insight over governed data. A voice model makes that insight immediate, applying it live to a spoken conversation. The Genie Ontology makes it precise, ensuring that natural language resolves to the right business facts. For voice use cases, that progression is the point: reasoning that is grounded, delivered at the speed of speech, and accurate about the terms the business actually uses.
+
+## Sources and Further Reading
+
+- [Databricks AI/BI Genie](https://docs.databricks.com/en/generative-ai/genie.html)
+- [Databricks Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html)
+</template>
+  <script>
+    const article = document.getElementById("blog-preview");
+    const status = document.getElementById("copy-status");
+
+    function fallbackCopyRichHtml(htmlValue, textValue) {
+      const container = document.createElement("div");
+      container.contentEditable = "true";
+      container.style.position = "fixed";
+      container.style.left = "-9999px";
+      container.style.top = "0";
+      container.innerHTML = htmlValue;
+      document.body.appendChild(container);
+
+      const range = document.createRange();
+      range.selectNodeContents(container);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const copied = document.execCommand("copy");
+      selection.removeAllRanges();
+      container.remove();
+
+      if (!copied) {
+        const textArea = document.createElement("textarea");
+        textArea.value = textValue;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const textCopied = document.execCommand("copy");
+        textArea.remove();
+        return textCopied;
+      }
+
+      return copied;
+    }
+
+    function cleanMermaidLabel(value) {
+      return value
+        .replace(/<br\s*\/?>/gi, " ")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/[`"']/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function extractMermaidLabels(source) {
+      const labels = [];
+      const seen = new Set();
+      const addLabel = (value) => {
+        const label = cleanMermaidLabel(value);
+        if (label && !seen.has(label)) {
+          seen.add(label);
+          labels.push(label);
+        }
+      };
+
+      source.split(/\n/).forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|subgraph|end|classDef|style|linkStyle)\b/i.test(trimmed)) {
+          return;
+        }
+
+        const bracketMatches = trimmed.matchAll(/[A-Za-z0-9_-]*\s*(?:\[([^\]]+)\]|\(([^)]+)\)|\{([^}]+)\})/g);
+        for (const match of bracketMatches) {
+          addLabel(match[1] || match[2] || match[3] || "");
+        }
+      });
+
+      return labels;
+    }
+
+    function mermaidSourceToSummary(source) {
+      const labels = extractMermaidLabels(source);
+      const figure = document.createElement("figure");
+      const caption = document.createElement("p");
+      caption.innerHTML = "<strong>Diagram summary</strong>";
+      figure.appendChild(caption);
+
+      if (labels.length) {
+        const list = document.createElement("ol");
+        labels.forEach((label) => {
+          const item = document.createElement("li");
+          item.textContent = label;
+          list.appendChild(item);
+        });
+        figure.appendChild(list);
+      } else {
+        const fallback = document.createElement("p");
+        fallback.textContent = "See the local preview for the visual diagram.";
+        figure.appendChild(fallback);
+      }
+
+      return figure;
+    }
+
+    function articleHtmlForPublishing() {
+      const clone = document.createElement("div");
+      const hero = document.querySelector(".preview-hero");
+      if (hero) {
+        clone.appendChild(hero.cloneNode(true));
+      }
+      clone.appendChild(article.cloneNode(true));
+      clone.querySelectorAll("img").forEach((image) => {
+        if (image.dataset.publicSrc) {
+          image.setAttribute("src", image.dataset.publicSrc);
+          image.removeAttribute("data-public-src");
+        }
+      });
+      clone.querySelectorAll(".mermaid, [data-mermaid-source]").forEach((node) => {
+        const source = node.getAttribute("data-mermaid-source") || node.textContent || "";
+        node.replaceWith(mermaidSourceToSummary(source));
+      });
+      return { html: clone.innerHTML, text: clone.innerText };
+    }
+
+    async function copyBlogDraft() {
+      const publishContent = articleHtmlForPublishing();
+      const htmlValue = publishContent.html;
+      const textValue = publishContent.text;
+
+      try {
+        if (navigator.clipboard && window.ClipboardItem) {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              "text/html": new Blob([htmlValue], { type: "text/html" }),
+              "text/plain": new Blob([textValue], { type: "text/plain" }),
+            }),
+          ]);
+          status.textContent = "Blog draft copied with formatting.";
+          return true;
+        }
+      } catch (err) {
+        // Local file previews may not have Clipboard API permission.
+      }
+
+      const copied = fallbackCopyRichHtml(htmlValue, textValue);
+      status.textContent = copied
+        ? "Blog draft copied. Paste it into the platform editor."
+        : "Could not copy automatically. Select the article content manually.";
+      return copied;
+    }
+
+    document.querySelectorAll("[data-publish-url]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await copyBlogDraft();
+        window.open(button.dataset.publishUrl, "_blank", "noopener");
+      });
+    });
+  </script>
+  <script type="module">
+    try {
+      const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+      mermaid.initialize({ startOnLoad: false, theme: "default" });
+      await mermaid.run({ nodes: article.querySelectorAll(".mermaid") });
+    } catch (err) {
+      console.warn("Mermaid rendering skipped.", err);
+    }
+  </script>
+</body>
+</html>

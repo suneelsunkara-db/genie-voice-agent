@@ -1,18 +1,21 @@
 import { useState } from "react";
-import { api, GenieResponse } from "../api/client";
+import { api, GenieResponse, InteractionLanguage, INTERACTION_LANGUAGES } from "../api/client";
+import { uiCopy } from "../i18n";
 
 export function GeniePanel() {
   const [q, setQ] = useState("How many billing_dispute calls were there?");
   const [resp, setResp] = useState<GenieResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSql, setShowSql] = useState(false);
+  const [language, setLanguage] = useState<InteractionLanguage>("en-US");
+  const copy = uiCopy(language);
 
   // Keep the conversation open within this panel session so follow-ups retain
   // context. Reset when the user edits the box and asks a fresh question.
   const run = async (question: string, conversationId?: string) => {
     setLoading(true);
     try {
-      setResp(await api.askGenie(question, conversationId));
+      setResp(await api.askGenie(question, conversationId, language));
     } finally {
       setLoading(false);
     }
@@ -24,13 +27,28 @@ export function GeniePanel() {
   return (
     <div className="genie">
       <div className="genie-input">
+        <select
+          className="speaker-select"
+          value={language}
+          onChange={(e) => {
+            setLanguage(e.target.value as InteractionLanguage);
+            setResp(null);
+          }}
+        >
+          {INTERACTION_LANGUAGES.map((item) => (
+            <option key={item.code} value={item.code}>
+              {item.label}
+            </option>
+          ))}
+        </select>
         <input value={q} onChange={(e) => setQ(e.target.value)} />
         <button onClick={ask} disabled={loading}>
-          {loading ? "Asking…" : "Ask Genie"}
+          {loading ? copy.asking : copy.askGenie}
         </button>
       </div>
       {resp && (
         <div className="genie-resp">
+          {resp.language && <div className="genie-hint">{copy.language}: {resp.language}</div>}
           {/* Lead with Genie's NL answer (real facts); never lead with SQL. */}
           {(resp.answer || resp.description) && (
             <div className="answer">{resp.answer ?? resp.description}</div>
@@ -77,7 +95,7 @@ export function GeniePanel() {
           {resp.sql && (
             <div className="genie-sql">
               <button className="sql-toggle" onClick={() => setShowSql((v) => !v)}>
-                {showSql ? "Hide query" : "Show query"}
+                {showSql ? copy.hideQuery : copy.showQuery}
               </button>
               {showSql && <pre className="sql">{resp.sql}</pre>}
             </div>

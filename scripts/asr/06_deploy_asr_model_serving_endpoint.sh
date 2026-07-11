@@ -9,16 +9,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_whisper_lora}"
+ASR_SERVING_CANDIDATE="${ASR_SERVING_CANDIDATE:-}"
+ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-}"
 ASR_MODEL_ALIAS="${ASR_MODEL_ALIAS:-candidate}"
 ASR_MODEL_VERSION="${ASR_MODEL_VERSION:-}"
-ASR_SERVING_ENDPOINT_NAME="${ASR_SERVING_ENDPOINT_NAME:-voice_finetuned_whisper_model}"
+ASR_SERVING_ENDPOINT_NAME="${ASR_SERVING_ENDPOINT_NAME:-}"
 ASR_SERVING_SERVED_ENTITY_NAME="${ASR_SERVING_SERVED_ENTITY_NAME:-asr_candidate}"
-ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-CPU}"
-ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-Medium}"
+ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-}"
+ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-}"
 ASR_SERVING_SCALE_TO_ZERO="${ASR_SERVING_SCALE_TO_ZERO:-false}"
 ASR_SERVING_ROUTE_OPTIMIZED="${ASR_SERVING_ROUTE_OPTIMIZED:-false}"
 ASR_SERVING_TIMEOUT="${ASR_SERVING_TIMEOUT:-60m}"
+ASR_SMOKE_MANIFEST="${ASR_SMOKE_MANIFEST:-}"
+ASR_SMOKE_LANGUAGE="${ASR_SMOKE_LANGUAGE:-}"
 
 COMMAND="${1:-deploy}"
 if [[ $# -gt 0 ]]; then
@@ -41,18 +44,23 @@ Commands:
 
 Environment:
   ASR_DATABRICKS_PROFILE        Databricks CLI profile. Default: fe-vm-vdm-classic-rcn6ip
-  ASR_REGISTERED_MODEL_NAME     UC model leaf name. Default: genie_asr_whisper_lora
+  ASR_SERVING_CANDIDATE         Optional ASR model profile. Sets sane model/compute defaults.
+  ASR_REGISTERED_MODEL_NAME     UC model leaf name. Default: genie_asr_en_finetuned_whisper_lora, or profile-derived.
   ASR_MODEL_ALIAS               Model alias to deploy. Default: candidate
   ASR_MODEL_VERSION             Explicit version override. Default: resolve alias.
-  ASR_SERVING_ENDPOINT_NAME     Endpoint name. Default: voice_finetuned_whisper_model
-  ASR_SERVING_WORKLOAD_TYPE     GPU_SMALL, GPU_MEDIUM, CPU, etc. Default: CPU.
-  ASR_SERVING_WORKLOAD_SIZE     Small, Medium, or Large. Default: Medium.
+  ASR_SERVING_ENDPOINT_NAME     Endpoint name. Default: voice_asr_en_finetuned_whisper_lora, or profile-derived.
+  ASR_SERVING_WORKLOAD_TYPE     GPU_SMALL, GPU_MEDIUM, CPU, etc. Default: candidate-derived or CPU.
+  ASR_SERVING_WORKLOAD_SIZE     Small, Medium, or Large. Default: candidate-derived or Medium.
   ASR_SERVING_SCALE_TO_ZERO     false keeps endpoint warm. Default: false.
   ASR_SERVING_ROUTE_OPTIMIZED   true optimizes routing on create. Default: false.
+  ASR_SMOKE_MANIFEST            Optional manifest for smoke-test. Default: configured holdout/training.
+  ASR_SMOKE_LANGUAGE            Optional language filter for smoke-test, e.g. th, id, zh.
 
 Compute choice:
   - Uses Databricks Model Serving serverless compute.
-  - Default CPU Medium warm serving keeps cost lower after GPU did not improve latency enough.
+  - en_finetuned_whisper_lora defaults to warm CPU Medium.
+  - *_oss_qwen3_asr_0_6b defaults to warm CPU Medium as the cost/latency baseline.
+  - Thai OSS Whisper large and Qwen 1.7B profiles default to warm GPU_SMALL Medium.
   - scale_to_zero=false avoids cold starts for speaking-input app tests.
   - route_optimized=false matches the app's current SDK/unified-auth path.
     Use true only after adding scoped OAuth authorization_details handling.
@@ -61,7 +69,8 @@ Compute choice:
 Contract:
   input:  dataframe_records with audio_b64, mime_type, speaker
   output: raw_transcript, transcript, confidence, model, base_model,
-          lora_run_name, requires_invoice_postprocessing
+          adaptation_type/fine_tuned_by_us or lora_run_name,
+          requires_invoice_postprocessing
 
 EOF
 }
@@ -97,7 +106,46 @@ setup_databricks_cli() {
   export ASR_DATABRICKS_PROFILE="$profile"
 }
 
+apply_candidate_defaults() {
+  if [[ -n "$ASR_SERVING_CANDIDATE" ]]; then
+    case "$ASR_SERVING_CANDIDATE" in
+      en_finetuned_whisper_lora)
+        ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_en_finetuned_whisper_lora}"
+        ASR_SERVING_ENDPOINT_NAME="${ASR_SERVING_ENDPOINT_NAME:-voice_asr_en_finetuned_whisper_lora}"
+        ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-CPU}"
+        ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-Medium}"
+        ;;
+      id_oss_qwen3_asr_0_6b|zh_oss_qwen3_asr_0_6b)
+        ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_${ASR_SERVING_CANDIDATE}}"
+        ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-CPU}"
+        ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-Medium}"
+        ;;
+      th_oss_qwen3_asr_1_7b|id_oss_qwen3_asr_1_7b|zh_oss_qwen3_asr_1_7b|th_oss_typhoon_whisper_large_v3|th_oss_pathumma_whisper_large_v3)
+        ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_${ASR_SERVING_CANDIDATE}}"
+        ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-GPU_SMALL}"
+        ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-Medium}"
+        ;;
+      qwen3_asr_0_6b_id_lora|qwen3_asr_0_6b_zh_lora|qwen3_asr_1_7b_th_lora|qwen3_asr_1_7b_id_lora|qwen3_asr_1_7b_zh_lora|typhoon_whisper_large_v3_th_lora|pathumma_whisper_large_v3_th_lora)
+        err "Legacy ASR_SERVING_CANDIDATE uses misleading _lora naming: $ASR_SERVING_CANDIDATE"
+        err "Use one of: en_finetuned_whisper_lora, th_oss_pathumma_whisper_large_v3, id_oss_qwen3_asr_0_6b, zh_oss_qwen3_asr_0_6b"
+        exit 2
+        ;;
+      *)
+        err "Unknown ASR_SERVING_CANDIDATE: $ASR_SERVING_CANDIDATE"
+        exit 2
+        ;;
+    esac
+    ASR_SERVING_ENDPOINT_NAME="${ASR_SERVING_ENDPOINT_NAME:-voice_asr_${ASR_SERVING_CANDIDATE}}"
+  fi
+
+  ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_en_finetuned_whisper_lora}"
+  ASR_SERVING_ENDPOINT_NAME="${ASR_SERVING_ENDPOINT_NAME:-voice_asr_en_finetuned_whisper_lora}"
+  ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-CPU}"
+  ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-Medium}"
+}
+
 resolve_paths() {
+  apply_candidate_defaults
   eval "$(python - <<'PY'
 import shlex
 from genie_voice.config import get_settings
@@ -167,6 +215,9 @@ PY
 }
 
 resolve_smoke_manifest() {
+  if [[ -n "$ASR_SMOKE_MANIFEST" ]]; then
+    return
+  fi
   if volume_path_exists "$ASR_HOLDOUT_MANIFEST"; then
     ASR_SMOKE_MANIFEST="$ASR_HOLDOUT_MANIFEST"
   elif volume_path_exists "$ASR_TRAINING_MANIFEST"; then
@@ -235,6 +286,55 @@ endpoint_route_optimized() {
     | python -c 'import json, sys; payload = json.load(sys.stdin); print("true" if payload.get("route_optimized") else "false")'
 }
 
+verify_endpoint_ready() {
+  python - "$ASR_SERVING_ENDPOINT_NAME" <<'PY'
+from __future__ import annotations
+
+import sys
+
+from genie_voice.config import get_settings
+from genie_voice.databricks.client import get_workspace_client
+
+name = sys.argv[1]
+client = get_workspace_client(get_settings())
+endpoint = client.serving_endpoints.get(name)
+state = getattr(endpoint, "state", None)
+ready = str(getattr(state, "ready", ""))
+config_update = str(getattr(state, "config_update", ""))
+config = getattr(endpoint, "config", None)
+served = getattr(config, "served_entities", None) or getattr(config, "served_models", None) or []
+served_states = [
+    str(getattr(getattr(entity, "state", None), "deployment", ""))
+    for entity in served
+]
+is_ready = (
+    ready.endswith("READY")
+    and (not config_update or config_update.endswith("NOT_UPDATING"))
+    and served
+    and all(value.endswith("DEPLOYMENT_READY") for value in served_states)
+)
+print(
+    f"endpoint={name} ready={ready} config_update={config_update} "
+    f"served_states={served_states}"
+)
+raise SystemExit(0 if is_ready else 1)
+PY
+}
+
+run_serving_command_or_verify() {
+  local label="$1"
+  shift
+  if "$@"; then
+    return 0
+  fi
+  err "Databricks CLI $label failed; verifying endpoint state before failing."
+  if verify_endpoint_ready; then
+    log "endpoint verified READY after Databricks CLI $label failure"
+    return 0
+  fi
+  return 1
+}
+
 write_serving_config() {
   local output="$1"
   python - "$output" <<PY
@@ -295,20 +395,23 @@ PY
 
   if endpoint_exists; then
     log "updating existing serving endpoint: $ASR_SERVING_ENDPOINT_NAME"
-    "${DBX[@]}" serving-endpoints update-config "$ASR_SERVING_ENDPOINT_NAME" \
+    run_serving_command_or_verify "update-config" \
+      "${DBX[@]}" serving-endpoints update-config "$ASR_SERVING_ENDPOINT_NAME" \
       --json @"$config_json" \
       --timeout "$ASR_SERVING_TIMEOUT" \
       --output json
   else
     log "creating serving endpoint: $ASR_SERVING_ENDPOINT_NAME"
     if [[ "$ASR_SERVING_ROUTE_OPTIMIZED" == "true" ]]; then
-      "${DBX[@]}" serving-endpoints create \
+      run_serving_command_or_verify "create" \
+        "${DBX[@]}" serving-endpoints create \
         --json @"$create_json" \
         --route-optimized \
         --timeout "$ASR_SERVING_TIMEOUT" \
         --output json
     else
-      "${DBX[@]}" serving-endpoints create \
+      run_serving_command_or_verify "create" \
+        "${DBX[@]}" serving-endpoints create \
         --json @"$create_json" \
         --timeout "$ASR_SERVING_TIMEOUT" \
         --output json
@@ -319,6 +422,7 @@ PY
 status() {
   setup_env
   setup_databricks_cli
+  resolve_paths
   "${DBX[@]}" serving-endpoints get "$ASR_SERVING_ENDPOINT_NAME" --output json
 }
 
@@ -326,7 +430,8 @@ smoke_test() {
   preflight
   resolve_smoke_manifest
 
-  local local_dir="$ROOT/.run/asr_model_training/serving_smoke"
+  local smoke_suffix="${ASR_SERVING_ENDPOINT_NAME}${ASR_SMOKE_LANGUAGE:+_$ASR_SMOKE_LANGUAGE}"
+  local local_dir="$ROOT/.run/asr_model_training/serving_smoke/$smoke_suffix"
   local manifest_local="$local_dir/manifest.jsonl"
   local audio_local="$local_dir/audio"
   local request_json="$local_dir/request.json"
@@ -334,14 +439,20 @@ smoke_test() {
 
   "${DBX[@]}" fs cp "dbfs:$ASR_SMOKE_MANIFEST" "$manifest_local" --overwrite
   local audio_path
-  audio_path="$(python - "$manifest_local" <<'PY'
+  audio_path="$(python - "$manifest_local" "$ASR_SMOKE_LANGUAGE" <<'PY'
 import json
 import sys
 from pathlib import Path
+
+language = sys.argv[2]
 for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     if line.strip() and not line.lstrip().startswith("#"):
-        print(json.loads(line)["audio_path"])
-        break
+        row = json.loads(line)
+        if not language or row.get("language") == language:
+            print(row["audio_path"])
+            break
+else:
+    raise SystemExit(f"No smoke-test row found for language={language or '*'}")
 PY
 )"
   "${DBX[@]}" fs cp "dbfs:$audio_path" "$audio_local/clip$(python - "$audio_path" <<'PY'
@@ -351,7 +462,7 @@ print(Path(sys.argv[1]).suffix or ".wav")
 PY
 )" --overwrite
 
-  python - "$manifest_local" "$audio_local" "$request_json" <<'PY'
+  python - "$manifest_local" "$audio_local" "$request_json" "$ASR_SMOKE_LANGUAGE" <<'PY'
 import base64
 import json
 import sys
@@ -360,13 +471,16 @@ from pathlib import Path
 manifest = Path(sys.argv[1])
 audio_dir = Path(sys.argv[2])
 request = Path(sys.argv[3])
+language = sys.argv[4]
 row = None
 for line in manifest.read_text(encoding="utf-8").splitlines():
     if line.strip() and not line.lstrip().startswith("#"):
-        row = json.loads(line)
-        break
+        candidate = json.loads(line)
+        if not language or candidate.get("language") == language:
+            row = candidate
+            break
 if row is None:
-    raise SystemExit("No smoke-test row found.")
+    raise SystemExit(f"No smoke-test row found for language={language or '*'}")
 audio = next(audio_dir.iterdir())
 mime = "audio/wav" if audio.suffix.lower() == ".wav" else "application/octet-stream"
 payload = {
@@ -375,6 +489,7 @@ payload = {
             "audio_b64": base64.b64encode(audio.read_bytes()).decode("ascii"),
             "mime_type": mime,
             "speaker": 1,
+            "language": row.get("language"),
         }
     ]
 }

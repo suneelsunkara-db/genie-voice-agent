@@ -53,7 +53,11 @@ def normalize_invoice_ids(
         original = match.group(0)
         trailing_space = re.search(r"\s*$", original)
         trailing = trailing_space.group(0) if trailing_space else ""
-        replacement = f"{match.group('lead') or ''}{invoice_id}"
+        core = original[: len(original) - len(trailing)] if trailing else original
+        trailing_punctuation = ""
+        if core.endswith((".", "?", "!")):
+            trailing_punctuation = core[-1]
+        replacement = f"{match.group('lead') or ''}{invoice_id}{trailing_punctuation}"
         corrections.append(
             InvoiceIdCorrection(
                 original=original.rstrip(),

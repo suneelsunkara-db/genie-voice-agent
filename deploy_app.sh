@@ -29,8 +29,11 @@ DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-fe-vm-vdm-classic-rcn6ip}"  # ~/.datab
 SECRET_SCOPE="${SECRET_SCOPE:-genie-voice}"           # scope holding vendor keys
 SQL_WAREHOUSE_ID="${SQL_WAREHOUSE_ID:-d0a0a25efd015c58}"  # serving warehouse
 CLAUDE_ENDPOINT="${CLAUDE_ENDPOINT:-databricks-claude-opus-4-8}"
-WHISPER_ENDPOINT="${WHISPER_ENDPOINT:-voice_finetuned_whisper_model}"
+WHISPER_ENDPOINT="${WHISPER_ENDPOINT:-voice_asr_en_finetuned_whisper_lora}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-}"                    # empty -> /Workspace/Users/<me>/<app>
+# Optional comma-separated override. By default this is derived from the
+# configured Databricks STT endpoint + per-language routes.
+ASR_ENDPOINTS="${ASR_ENDPOINTS:-}"
 
 log()  { printf "\033[36m[app-deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[33m[app-deploy]\033[0m %s\n" "$*"; }
@@ -77,16 +80,49 @@ fi
 # ---- 3. app resource spec (auto-grants the app SP on deploy) ----------------
 APP_JSON="$(mktemp)"
 INCLUDE_EL="$([[ -n "$ELEVENLABS_API_KEY" ]] && echo 1 || echo 0)"
+if [[ -z "$ASR_ENDPOINTS" ]]; then
+  ASR_ENDPOINTS="$(
+    PYTHONPATH=backend "$PYBIN" - <<PY 2>/dev/null || true
+from genie_voice.config import get_settings
+
+s = get_settings()
+opts = s.providers.stt.options.get("databricks", {})
+endpoints = []
+base = opts.get("endpoint") or "$WHISPER_ENDPOINT"
+if base:
+    endpoints.append(base)
+for route in (opts.get("routes") or opts.get("language_routes") or {}).values():
+    if isinstance(route, dict) and route.get("endpoint"):
+        endpoints.append(route["endpoint"])
+seen = []
+for endpoint in endpoints:
+    if endpoint not in seen:
+        seen.append(endpoint)
+print(",".join(seen))
+PY
+  )"
+fi
+ASR_ENDPOINTS="${ASR_ENDPOINTS:-$WHISPER_ENDPOINT}"
+
 APP_NAME="$APP_NAME" SECRET_SCOPE="$SECRET_SCOPE" SQL_WAREHOUSE_ID="$SQL_WAREHOUSE_ID" \
-CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" INCLUDE_EL="$INCLUDE_EL" \
+CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" INCLUDE_EL="$INCLUDE_EL" \
 "$PYBIN" - > "$APP_JSON" <<'PY'
 import json, os
 res = [
     {"name": "sql-warehouse",    "sql_warehouse":    {"id": os.environ["SQL_WAREHOUSE_ID"], "permission": "CAN_USE"}},
     {"name": "deepgram-api-key", "secret":           {"scope": os.environ["SECRET_SCOPE"], "key": "deepgram_api_key", "permission": "READ"}},
     {"name": "claude-endpoint",  "serving_endpoint": {"name": os.environ["CLAUDE_ENDPOINT"], "permission": "CAN_QUERY"}},
-    {"name": "whisper-endpoint", "serving_endpoint": {"name": os.environ["WHISPER_ENDPOINT"], "permission": "CAN_QUERY"}},
 ]
+seen = set()
+for idx, endpoint in enumerate(os.environ["ASR_ENDPOINTS"].split(","), start=1):
+    endpoint = endpoint.strip()
+    if not endpoint or endpoint in seen:
+        continue
+    seen.add(endpoint)
+    res.append({
+        "name": f"asr-endpoint-{idx}",
+        "serving_endpoint": {"name": endpoint, "permission": "CAN_QUERY"},
+    })
 if os.environ.get("INCLUDE_EL") == "1":
     res.append({"name": "elevenlabs-api-key", "secret": {"scope": os.environ["SECRET_SCOPE"], "key": "elevenlabs_api_key", "permission": "READ"}})
 print(json.dumps({
@@ -140,8 +176,8 @@ else
 fi
 
 # ---- 4. sync source to the workspace ---------------------------------------
-log "syncing source -> $WORKSPACE_DIR (respects .gitignore)"
-dbx sync . "$WORKSPACE_DIR"
+log "syncing source -> $WORKSPACE_DIR (respects .gitignore, includes built SPA)"
+dbx sync . "$WORKSPACE_DIR" --include "api/app/static/**"
 
 # ---- 5. deploy --------------------------------------------------------------
 log "deploying app version"

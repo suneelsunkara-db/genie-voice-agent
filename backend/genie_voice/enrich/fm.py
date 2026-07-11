@@ -20,6 +20,13 @@ import re
 from typing import Any
 
 from genie_voice.config import Settings, get_settings
+from genie_voice.i18n import (
+    DEFAULT_LANGUAGE,
+    canonical_business_context_instruction,
+    language_spec,
+    normalize_language,
+    sanitize_generated_display_text,
+)
 
 # The conversation-derived contract. These enums steer the model and are the
 # single source of the allowed intent / next-best-action vocabulary.
@@ -123,7 +130,7 @@ def call_json_schema() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-def _chat(settings: Settings, user: str, *, expect: str) -> dict[str, Any]:
+def _chat(settings: Settings, user: str, *, expect: str, language: str | None = None) -> dict[str, Any]:
     """One chat round-trip to the serving endpoint; returns parsed JSON.
 
     `expect` describes the fields to return, appended to the prompt so the model
@@ -134,11 +141,15 @@ def _chat(settings: Settings, user: str, *, expect: str) -> dict[str, Any]:
     from genie_voice.databricks.client import get_workspace_client
 
     client = get_workspace_client(settings)
+    language_context = canonical_business_context_instruction(language)
     kwargs: dict[str, Any] = {
         "name": settings.enrichment.model_endpoint,
         "messages": [
             ChatMessage(role=ChatMessageRole.SYSTEM, content=_SYSTEM),
-            ChatMessage(role=ChatMessageRole.USER, content=f"{expect}\n\nTRANSCRIPT:\n{user}"),
+            ChatMessage(
+                role=ChatMessageRole.USER,
+                content=f"{language_context}\n\n{expect}\n\nTRANSCRIPT:\n{user}",
+            ),
         ],
         "max_tokens": settings.enrichment.max_tokens,
     }
@@ -200,21 +211,30 @@ def _coerce_customer_signal(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-def fm_summarize_call(utterances: list[dict[str, Any]], settings: Settings | None = None) -> dict[str, Any]:
+def fm_summarize_call(
+    utterances: list[dict[str, Any]],
+    settings: Settings | None = None,
+    *,
+    language: str | None = None,
+) -> dict[str, Any]:
     settings = settings or get_settings()
     transcript = "\n".join(
         f"{(u.get('speaker_role') or u.get('speaker') or 'speaker')}: {u.get('text', '')}"
         for u in utterances
     )
-    data = _chat(settings, transcript, expect=CALL_INSTRUCTION)
+    data = _chat(settings, transcript, expect=CALL_INSTRUCTION, language=language)
     return _coerce(data, list(CALL_PROPERTIES.keys()))
 
 
 def fm_enrich_utterance(
-    text: str, settings: Settings | None = None, *, speaker: int | None = None
+    text: str,
+    settings: Settings | None = None,
+    *,
+    speaker: int | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
-    data = _chat(settings, text, expect=UTTERANCE_INSTRUCTION)
+    data = _chat(settings, text, expect=UTTERANCE_INSTRUCTION, language=language)
     return {**_coerce(data, UTTERANCE_KEYS), "speaker": speaker}
 
 
@@ -222,6 +242,8 @@ def fm_enrich_customer_utterance(
     text: str,
     issue_status: str,
     settings: Settings | None = None,
+    *,
+    language: str | None = None,
 ) -> dict[str, Any]:
     """Single FM call: utterance enrichment + resolution transition signals."""
     settings = settings or get_settings()
@@ -230,7 +252,7 @@ def fm_enrich_customer_utterance(
         f"CURRENT_ISSUE_STATUS: {issue_status}\n"
         f"CUSTOMER_UTTERANCE:\n{text}"
     )
-    data = _chat(settings, prompt, expect=CUSTOMER_UTTERANCE_INSTRUCTION)
+    data = _chat(settings, prompt, expect=CUSTOMER_UTTERANCE_INSTRUCTION, language=language)
     return _coerce_customer_signal(data)
 
 
@@ -238,6 +260,8 @@ def fm_customer_resolution_signal(
     text: str,
     issue_status: str,
     settings: Settings | None = None,
+    *,
+    language: str | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
     prompt = (
@@ -245,7 +269,7 @@ def fm_customer_resolution_signal(
         f"CURRENT_ISSUE_STATUS: {issue_status}\n"
         f"CUSTOMER_UTTERANCE:\n{text}"
     )
-    data = _chat(settings, prompt, expect=RESOLUTION_SIGNAL_INSTRUCTION)
+    data = _chat(settings, prompt, expect=RESOLUTION_SIGNAL_INSTRUCTION, language=language)
     signal = str(data.get("customer_signal") or "neutral")
     allowed = {"request_help", "confirm_proceed", "decline", "escalate", "neutral"}
     if signal not in allowed:
@@ -259,7 +283,7 @@ def fm_customer_resolution_signal(
 
 _AGENT_REPLY_SYSTEM = (
     "You are a warm, professional billing support agent on a live customer call. "
-    "Write only the words you would speak to the customer in plain English. "
+    "Write only the words you would speak to the customer in the interaction language requested by the user. "
     "Never mention SQL, databases, schemas, tables, column names, backticks, or internal tools. "
     "Never refuse the request or say a question is unrelated or out of scope. "
     "Use only the validated account facts provided in the user message."
@@ -296,3 +320,67 @@ def fm_compose_agent_reply(prompt: str, settings: Settings | None = None) -> str
     if not content:
         raise ValueError("empty agent reply from FM")
     return content
+
+
+def fm_rewrite_in_language(
+    text: str,
+    language: str | None,
+    settings: Settings | None = None,
+    *,
+    purpose: str = "customer-facing text",
+) -> str:
+    """Rewrite generated prose into the selected language while preserving facts.
+
+    This is the repair path for Genie/LLM output. It intentionally does not
+    translate SQL or canonical identifiers; it rewrites only display prose.
+    """
+    language_code = normalize_language(language)
+    value = (text or "").strip()
+    if not value:
+        return value
+    if language_code == DEFAULT_LANGUAGE:
+        target = language_spec(language_code).english_name
+    else:
+        target = language_spec(language_code).english_name
+
+    settings = settings or get_settings()
+    from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+
+    from genie_voice.databricks.client import get_workspace_client
+
+    system = (
+        "You rewrite contact-center application text for localization. "
+        "Return only the rewritten text, no explanations. Preserve customer IDs, "
+        "invoice IDs, call IDs, dates, numbers, and USD amounts exactly. Remove any "
+        "references to SQL, databases, schemas, tables, columns, backticks, or internal "
+        "tools from display prose. Do not infer local currencies or localized invoice formats."
+    )
+    user = (
+        f"Target language: {target} ({language_code}).\n"
+        f"Purpose: {purpose}.\n"
+        "Rewrite this text in the target language while preserving canonical business values exactly:\n"
+        f"{value}"
+    )
+    client = get_workspace_client(settings)
+    kwargs: dict[str, Any] = {
+        "name": settings.enrichment.model_endpoint,
+        "messages": [
+            ChatMessage(role=ChatMessageRole.SYSTEM, content=system),
+            ChatMessage(role=ChatMessageRole.USER, content=user),
+        ],
+        "max_tokens": settings.enrichment.max_tokens,
+    }
+    if settings.enrichment.temperature is not None:
+        kwargs["temperature"] = settings.enrichment.temperature
+    try:
+        resp = client.serving_endpoints.query(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        if "temperature" in kwargs and "temperature" in str(exc).lower():
+            kwargs.pop("temperature")
+            resp = client.serving_endpoints.query(**kwargs)
+        else:
+            raise
+    content = (resp.choices[0].message.content or "").strip()
+    if not content:
+        raise ValueError("empty localized rewrite from FM")
+    return sanitize_generated_display_text(content)
