@@ -225,7 +225,7 @@ function ExampleCard({ example }: { example: ASRBenchmarkExample }) {
 }
 
 export function ASRBenchmarkPage() {
-  const [language, setLanguage] = useState<InteractionLanguage>("en-US");
+  const [language, setLanguage] = useState<InteractionLanguage>("th-TH");
   const [data, setData] = useState<ASRBenchmarkResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -289,8 +289,8 @@ export function ASRBenchmarkPage() {
             <span>Benchmark language</span>
             <select value={language} onChange={(e) => setLanguage(e.target.value as InteractionLanguage)}>
               {languageOptions.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.label}{item.available === false ? " (not run yet)" : ""}
+                <option key={item.code} value={item.code} disabled={item.available === false}>
+                  {item.label}{item.available === false ? " (not packaged)" : ""}
                 </option>
               ))}
             </select>
