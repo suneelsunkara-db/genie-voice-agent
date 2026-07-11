@@ -25,12 +25,6 @@ ASR_EVAL_DATABRICKS_OUTPUT="${ASR_EVAL_DATABRICKS_OUTPUT:-$ASR_EVAL_OUTPUT_DIR/d
 ASR_EVAL_DATABRICKS_CONCURRENCY="${ASR_EVAL_DATABRICKS_CONCURRENCY:-1}"
 ASR_EVAL_SUMMARY_OUTPUT="${ASR_EVAL_SUMMARY_OUTPUT:-$ASR_EVAL_OUTPUT_DIR/deepgram_vs_databricks_summary.json}"
 ASR_EVAL_DATABRICKS_PROFILE="${ASR_EVAL_DATABRICKS_PROFILE:-${DATABRICKS_CONFIG_PROFILE:-fe-vm-vdm-classic-rcn6ip}}"
-ASR_EVAL_SERVERLESS_ENVIRONMENT_VERSION="${ASR_EVAL_SERVERLESS_ENVIRONMENT_VERSION:-2}"
-ASR_EVAL_SERVERLESS_REMOTE_ROOT="${ASR_EVAL_SERVERLESS_REMOTE_ROOT:-/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/evaluations/voice_model_deep_eval}"
-ASR_EVAL_SERVERLESS_LANGUAGES="${ASR_EVAL_SERVERLESS_LANGUAGES:-th-TH id-ID zh-CN}"
-ASR_EVAL_SERVERLESS_DATABRICKS_CONCURRENCY="${ASR_EVAL_SERVERLESS_DATABRICKS_CONCURRENCY:-12}"
-ASR_EVAL_SERVERLESS_DATABRICKS_RETRIES="${ASR_EVAL_SERVERLESS_DATABRICKS_RETRIES:-1}"
-ASR_EVAL_SERVERLESS_DATABRICKS_TIMEOUT_SECONDS="${ASR_EVAL_SERVERLESS_DATABRICKS_TIMEOUT_SECONDS:-180}"
 
 COMMAND="${1:-run}"
 if [[ $# -gt 0 ]]; then
@@ -50,8 +44,6 @@ Commands:
   deepgram           Run only the Deepgram offline ASR evaluation.
   databricks         Run only the Databricks endpoint ASR evaluation.
   compare-existing   Compare existing provider JSONL outputs and write summary JSON.
-  databricks-serverless
-                     Run Thai/Indonesian/Chinese evals as Databricks serverless jobs.
   help               Show this help.
 
 Environment:
@@ -64,12 +56,6 @@ Environment:
   ASR_EVAL_DATABRICKS_ENDPOINT   Serving endpoint. Default: voice_asr_en_finetuned_whisper_lora.
   ASR_EVAL_DATABRICKS_CONCURRENCY Concurrent single-clip endpoint requests. Default: 1.
   ASR_EVAL_DATABRICKS_PROFILE    Databricks CLI/profile. Default: fe-vm-vdm-classic-rcn6ip.
-  ASR_EVAL_SERVERLESS_LANGUAGES   Languages for serverless run. Default: th-TH id-ID zh-CN.
-  ASR_EVAL_SERVERLESS_REMOTE_ROOT UC Volume root for serverless eval artifacts.
-  ASR_EVAL_SERVERLESS_DATABRICKS_CONCURRENCY
-                                Per-language endpoint fanout inside serverless. Default: 12.
-  ASR_EVAL_SERVERLESS_DATABRICKS_TIMEOUT_SECONDS
-                                Per endpoint request cap. Default: 180.
 
 Examples:
   ASR_EVAL_LIMIT=10 scripts/asr/07_deep_voice_model_eval.sh run
@@ -767,168 +753,6 @@ compare_existing() {
   run_python compare "${PY_ARGS[@]}"
 }
 
-setup_databricks_cli() {
-  setup_env
-  DBX=(databricks --profile "$ASR_EVAL_DATABRICKS_PROFILE")
-}
-
-serverless_manifest_for_language() {
-  case "$1" in
-    th-TH) printf '%s\n' "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/datasets/multilingual_gold/manifests/th_business_holdout.built.jsonl" ;;
-    id-ID) printf '%s\n' "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/datasets/multilingual_gold/manifests/id_business_holdout.built.jsonl" ;;
-    zh-CN) printf '%s\n' "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/datasets/multilingual_gold/manifests/zh_business_holdout.built.jsonl" ;;
-    *) err "Unsupported serverless language: $1"; return 2 ;;
-  esac
-}
-
-serverless_endpoint_for_language() {
-  case "$1" in
-    th-TH) printf '%s\n' "voice_asr_th_oss_pathumma_whisper_large_v3" ;;
-    id-ID) printf '%s\n' "voice_asr_id_oss_qwen3_asr_0_6b" ;;
-    zh-CN) printf '%s\n' "voice_asr_zh_oss_qwen3_asr_0_6b" ;;
-    *) err "Unsupported serverless language: $1"; return 2 ;;
-  esac
-}
-
-wait_for_serverless_run() {
-  local run_id="$1"
-  local lifecycle=""
-  local result=""
-  local url=""
-  log "waiting for Databricks serverless ASR eval run $run_id"
-  while true; do
-    local payload
-    payload="$("${DBX[@]}" jobs get-run "$run_id" --output json)"
-    lifecycle="$("$PYBIN" - "$payload" <<'PY'
-import json, sys
-print((json.loads(sys.argv[1]).get("state") or {}).get("life_cycle_state") or "")
-PY
-)"
-    result="$("$PYBIN" - "$payload" <<'PY'
-import json, sys
-print((json.loads(sys.argv[1]).get("state") or {}).get("result_state") or "")
-PY
-)"
-    url="$("$PYBIN" - "$payload" <<'PY'
-import json, sys
-print(json.loads(sys.argv[1]).get("run_page_url") or "")
-PY
-)"
-    printf "  lifecycle=%s result=%s url=%s\n" "$lifecycle" "${result:-}" "$url"
-    case "$lifecycle" in
-      TERMINATED|SKIPPED|INTERNAL_ERROR) break ;;
-    esac
-    sleep 30
-  done
-  if [[ "$result" != "SUCCESS" ]]; then
-    err "Databricks serverless ASR eval failed: lifecycle=$lifecycle result=$result url=$url"
-    return 2
-  fi
-}
-
-copy_serverless_results_back() {
-  local language="$1"
-  local remote_dir="$ASR_EVAL_SERVERLESS_REMOTE_ROOT/$language"
-  local local_dir="$ROOT/.run/asr_model_training/evaluations/voice_model_deep_eval/$language"
-  local packaged_dir="$ROOT/api/app/data/asr_benchmarks/$language"
-  mkdir -p "$local_dir" "$packaged_dir"
-  "${DBX[@]}" fs cp "dbfs:$remote_dir/deepgram_nova-3_deep_eval.jsonl" "$local_dir/deepgram_nova-3_deep_eval.jsonl" --overwrite
-  "${DBX[@]}" fs cp "dbfs:$remote_dir/databricks_asr_deep_eval.jsonl" "$local_dir/databricks_asr_deep_eval.jsonl" --overwrite
-  "${DBX[@]}" fs cp "dbfs:$remote_dir/deepgram_vs_databricks_summary.json" "$local_dir/deepgram_vs_databricks_summary.json" --overwrite
-  cp "$local_dir/deepgram_nova-3_deep_eval.jsonl" "$packaged_dir/deepgram_nova-3_deep_eval.jsonl"
-  cp "$local_dir/databricks_asr_deep_eval.jsonl" "$packaged_dir/databricks_asr_deep_eval.jsonl"
-  cp "$local_dir/deepgram_vs_databricks_summary.json" "$packaged_dir/deepgram_vs_databricks_summary.json"
-}
-
-submit_databricks_serverless() {
-  setup_databricks_cli
-  local runner_remote="$ASR_EVAL_SERVERLESS_REMOTE_ROOT/jobs/databricks_deep_voice_model_eval.py"
-  local job_json="$ROOT/.run/asr_model_training/evaluations/voice_model_deep_eval/serverless_job.json"
-  local run_json="$ROOT/.run/asr_model_training/evaluations/voice_model_deep_eval/serverless_run.json"
-  mkdir -p "$(dirname "$job_json")"
-  "${DBX[@]}" fs mkdirs "dbfs:$ASR_EVAL_SERVERLESS_REMOTE_ROOT/jobs"
-  "${DBX[@]}" fs cp "$ROOT/scripts/asr/databricks_deep_voice_model_eval.py" "dbfs:$runner_remote" --overwrite
-
-  "$PYBIN" - "$job_json" "$runner_remote" "$ASR_EVAL_SERVERLESS_REMOTE_ROOT" "$ASR_EVAL_SERVERLESS_ENVIRONMENT_VERSION" "$ASR_EVAL_SERVERLESS_LANGUAGES" "$ASR_EVAL_SERVERLESS_DATABRICKS_CONCURRENCY" "$ASR_EVAL_SERVERLESS_DATABRICKS_RETRIES" "$ASR_EVAL_SERVERLESS_DATABRICKS_TIMEOUT_SECONDS" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-job_json, runner_remote, remote_root, env_version, languages_text, databricks_concurrency, databricks_retries, databricks_timeout = sys.argv[1:9]
-tasks = []
-for language in languages_text.split():
-    endpoint = {
-        "th-TH": "voice_asr_th_oss_pathumma_whisper_large_v3",
-        "id-ID": "voice_asr_id_oss_qwen3_asr_0_6b",
-        "zh-CN": "voice_asr_zh_oss_qwen3_asr_0_6b",
-    }[language]
-    manifest = {
-        "th-TH": "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/datasets/multilingual_gold/manifests/th_business_holdout.built.jsonl",
-        "id-ID": "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/datasets/multilingual_gold/manifests/id_business_holdout.built.jsonl",
-        "zh-CN": "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/asr_model_training/datasets/multilingual_gold/manifests/zh_business_holdout.built.jsonl",
-    }[language]
-    out_dir = f"{remote_root}/{language}"
-    tasks.append(
-        {
-            "task_key": f"asr_eval_{language.replace('-', '_')}",
-            "environment_key": "asr_eval_env",
-            "spark_python_task": {
-                "python_file": f"dbfs:{runner_remote}",
-                "parameters": [
-                    "--manifest", manifest,
-                    "--deepgram-output", f"{out_dir}/deepgram_nova-3_deep_eval.jsonl",
-                    "--databricks-output", f"{out_dir}/databricks_asr_deep_eval.jsonl",
-                    "--summary-output", f"{out_dir}/deepgram_vs_databricks_summary.json",
-                    "--language", language,
-                    "--databricks-endpoint", endpoint,
-                    "--databricks-concurrency", databricks_concurrency,
-                    "--databricks-retries", databricks_retries,
-                    "--databricks-timeout-seconds", databricks_timeout,
-                ],
-            },
-        }
-    )
-job = {
-    "run_name": "genie-asr-multilingual-deepgram-vs-databricks-420",
-    "tasks": tasks,
-    "environments": [
-        {
-            "environment_key": "asr_eval_env",
-            "spec": {
-                "environment_version": env_version,
-                "dependencies": ["databricks-sdk"],
-            },
-        }
-    ],
-}
-Path(job_json).write_text(json.dumps(job, indent=2), encoding="utf-8")
-PY
-
-  log "submitting Databricks serverless multilingual ASR eval"
-  "${DBX[@]}" api post /api/2.1/jobs/runs/submit --json @"$job_json" --output json >"$run_json"
-  local run_id
-  run_id="$("$PYBIN" - "$run_json" <<'PY'
-import json, sys
-from pathlib import Path
-print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["run_id"])
-PY
-)"
-  wait_for_serverless_run "$run_id"
-  for language in $ASR_EVAL_SERVERLESS_LANGUAGES; do
-    copy_serverless_results_back "$language"
-  done
-  cat <<EOF
-Databricks serverless ASR eval completed.
-
-Run JSON:
-  $run_json
-
-Packaged UI results:
-  api/app/data/asr_benchmarks/{th-TH,id-ID,zh-CN}/deepgram_vs_databricks_summary.json
-
-EOF
-}
-
 case "$COMMAND" in
   preflight)
     preflight
@@ -947,9 +771,6 @@ case "$COMMAND" in
     ;;
   compare-existing)
     compare_existing
-    ;;
-  databricks-serverless)
-    submit_databricks_serverless
     ;;
   help|-h|--help)
     usage

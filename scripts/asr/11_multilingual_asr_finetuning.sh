@@ -5,7 +5,7 @@
 # Fine-tune multilingual ASR winners after OSS-baseline validation.
 #
 # This is intentionally separate from 10_register_multilingual_asr_candidates.sh:
-#   - 10_ registers/evaluates OSS baselines.
+#   - 10_ registers production OSS baselines in UC.
 #   - 11_ trains real fine-tuned LoRA candidates and refuses to run without
 #     real train/validation/holdout data.
 # =============================================================================
