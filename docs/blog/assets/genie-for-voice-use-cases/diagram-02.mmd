@@ -1,11 +1,16 @@
 flowchart LR
-    A[Two-sided transcript]
-    B[FM extracts customer signals]
-    C[FM extracts agent commitments]
-    D[Persist live state in Lakebase]
-    E[Verify commitments post-call]
-    F[Genie analyzes portfolio patterns]
+    subgraph problem [One model fantasy]
+        M[Multilingual ASR]
+        M --> TH[Thai]
+        M --> ID[Indonesian]
+        M --> ZH[Chinese]
+    end
 
-    A --> B --> D
-    A --> C --> D
-    D --> E --> F
+    subgraph reality [What the benchmarks pushed us toward]
+        TH2[Thai: Whisper-family specialist]
+        ID2[Indonesian: Whisper-id or commercial STT]
+        ZH2[Chinese: FunASR / Paraformer-8k]
+        EN[English: LoRA Whisper or commercial STT]
+    end
+
+    problem -.->|holdout eval| reality

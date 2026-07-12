@@ -1,0 +1,9 @@
+flowchart LR
+    A[FLEURS per locale] --> B{Tier}
+    B -->|Acoustic| C[Read-speech holdout]
+    B -->|Business| D[Entity mining + labeling]
+    C --> E[Quality gates]
+    D --> E
+    E --> F[Manifest on UC Volume]
+    F --> G[Deepgram + Databricks routes]
+    G --> H[WER + entity + readiness scores]

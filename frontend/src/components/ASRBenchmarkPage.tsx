@@ -1,232 +1,413 @@
 import { useEffect, useState } from "react";
 import {
   api,
-  ASRBenchmarkExample,
-  ASRBenchmarkResponse,
-  ASRProviderSummary,
-  InteractionLanguage,
-  INTERACTION_LANGUAGES,
+  ASRBenchmarkLanguageOverview,
+  ASRBenchmarkMetricWinner,
+  ASRBenchmarkOverviewResponse,
+  ASRBenchmarkTierOverview,
 } from "../api/client";
+
+type BenchmarkTier = "business" | "acoustic";
+type MetricKey = "wer" | "cer" | "critical_entity_accuracy" | "unsafe_for_resolution_rate" | "p95_latency_ms";
+
+const LANGUAGE_ORDER = ["en-US", "th-TH", "id-ID", "zh-CN"];
+
+const METRIC_SPECS: Record<
+  BenchmarkTier,
+  Array<{ key: MetricKey; label: string; lowerIsBetter: boolean }>
+> = {
+  business: [
+    { key: "wer", label: "WER", lowerIsBetter: true },
+    { key: "cer", label: "CER", lowerIsBetter: true },
+    { key: "critical_entity_accuracy", label: "Critical entities", lowerIsBetter: false },
+    { key: "unsafe_for_resolution_rate", label: "Unsafe", lowerIsBetter: true },
+    { key: "p95_latency_ms", label: "P95 latency", lowerIsBetter: true },
+  ],
+  acoustic: [
+    { key: "wer", label: "WER", lowerIsBetter: true },
+    { key: "cer", label: "CER", lowerIsBetter: true },
+    { key: "p95_latency_ms", label: "P95 latency", lowerIsBetter: true },
+  ],
+};
 
 function pct(value?: number | null) {
   if (value === null || value === undefined) return "n/a";
   return `${Math.round(value * 1000) / 10}%`;
 }
 
-function num(value?: number | null, suffix = "") {
+function ms(value?: number | null) {
   if (value === null || value === undefined) return "n/a";
-  return `${Math.round(value * 100) / 100}${suffix}`;
+  if (value >= 60000) return `${Math.round(value / 1000)}s`;
+  return `${Math.round(value)} ms`;
 }
 
-function winnerFor({
-  deepgram,
-  databricks,
-  lowerIsBetter = false,
-}: {
-  deepgram?: number | null;
-  databricks?: number | null;
-  lowerIsBetter?: boolean;
-}) {
-  if (deepgram === null || databricks === null || deepgram === undefined || databricks === undefined) return "Tie";
-  if (Math.abs(deepgram - databricks) < 0.0001) return "Tie";
-  const databricksWins = lowerIsBetter ? databricks < deepgram : databricks > deepgram;
-  return databricksWins ? "Databricks" : "Deepgram";
-}
-
-function deltaPct(databricks?: number | null, deepgram?: number | null) {
-  if (databricks === null || databricks === undefined || deepgram === null || deepgram === undefined) return "n/a";
-  const delta = (databricks - deepgram) * 100;
-  const sign = delta > 0 ? "+" : "";
-  return `${sign}${Math.round(delta * 10) / 10} pts`;
-}
-
-function deltaMs(databricks?: number | null, deepgram?: number | null) {
-  if (databricks === null || databricks === undefined || deepgram === null || deepgram === undefined) return "n/a";
-  const delta = Math.round(databricks - deepgram);
-  return `${delta > 0 ? "+" : ""}${delta}ms`;
+function formatMetric(key: MetricKey, value?: number | null) {
+  if (key === "p95_latency_ms") return ms(value);
+  return pct(value);
 }
 
 function shortPath(path?: string) {
   if (!path) return "n/a";
-  const parts = path.split("/");
-  return parts.slice(-3).join("/");
+  return path.split("/").slice(-3).join("/");
 }
 
-function MetricCard({
-  label,
-  help,
-  deepgram,
-  databricks,
-  winner,
-  delta,
-}: {
-  label: string;
-  help: string;
-  deepgram: string;
-  databricks: string;
-  winner: string;
-  delta: string;
-}) {
-  return (
-    <div className="benchmark-metric-card">
-      <div className="benchmark-metric-topline">
-        <div>
-          <div className="benchmark-metric-label">{label}</div>
-          <p>{help}</p>
-        </div>
-        <span className={`benchmark-winner ${winner.toLowerCase()}`}>{winner}</span>
-      </div>
-      <div className="benchmark-metric-grid">
-        <span>Deepgram</span>
-        <strong>{deepgram}</strong>
-        <span>Databricks</span>
-        <strong>{databricks}</strong>
-        <span>Databricks delta</span>
-        <strong>{delta}</strong>
-      </div>
-    </div>
-  );
+function isWinner(modelId: string, _metric: MetricKey, winner?: ASRBenchmarkMetricWinner) {
+  return Boolean(winner && !winner.tie && winner.model_id === modelId);
 }
 
-function ProviderSummary({
-  name,
-  summary,
-}: {
-  name: string;
-  summary?: ASRProviderSummary;
-}) {
+function WinnerBadge({ winner }: { winner?: ASRBenchmarkMetricWinner }) {
+  if (!winner) return null;
+  if (winner.tie) {
+    return <span className="benchmark-winner tie">Tie</span>;
+  }
   return (
-    <div className="benchmark-provider-card">
-      <div className="benchmark-provider-title">
-        <span>{name}</span>
-        <em>{summary?.clips ?? "n/a"} clips</em>
-      </div>
-      <div className="benchmark-provider-kpis">
-        <div>
-          <span>WER</span>
-          <strong>{pct(summary?.avg_wer)}</strong>
-        </div>
-        <div>
-          <span>critical entities</span>
-          <strong>{pct(summary?.avg_critical_entity_accuracy)}</strong>
-        </div>
-        <div>
-          <span>p95 latency</span>
-          <strong>{num(summary?.latency_ms?.p95, "ms")}</strong>
-        </div>
-        <div>
-          <span>unsafe rate</span>
-          <strong>{pct(summary?.unsafe_for_resolution_rate)}</strong>
-        </div>
-      </div>
-    </div>
+    <span className={`benchmark-winner ${winner.provider ?? "tie"}`}>
+      {winner.model_label}
+    </span>
   );
 }
 
 const entityLabels: Record<string, { label: string; why: string }> = {
-  invoice_ids: { label: "Invoice IDs", why: "wrong invoice can trigger the wrong billing action" },
-  amounts: { label: "Dollar amounts", why: "used in agent explanations and adjustment checks" },
-  dates: { label: "Dates", why: "payment timing and due-date context" },
-  billing_actions: { label: "Billing actions", why: "waiver, payment-plan, refund language" },
-  confirmations: { label: "Confirmations", why: "controls whether the app can safely close" },
-  refusals: { label: "Refusals / negation", why: "prevents acting against customer intent" },
-  account_terms: { label: "Account terms", why: "billing vocabulary preservation" },
+  invoice_ids: { label: "Invoice IDs", why: "Wrong invoice can trigger the wrong billing action" },
+  amounts: { label: "Dollar amounts", why: "Used in agent explanations and adjustment checks" },
+  dates: { label: "Dates", why: "Payment timing and due-date context" },
+  billing_actions: { label: "Billing actions", why: "Waiver, payment-plan, refund language" },
+  confirmations: { label: "Confirmations", why: "Controls whether the app can safely close" },
+  refusals: { label: "Refusals / negation", why: "Prevents acting against customer intent" },
+  account_terms: { label: "Account terms", why: "Billing vocabulary preservation" },
 };
 
-function EntityBreakdown({
-  deepgram,
-  databricks,
-}: {
-  deepgram?: ASRProviderSummary;
-  databricks?: ASRProviderSummary;
-}) {
-  const groups = Array.from(
-    new Set([
-      ...Object.keys(deepgram?.entity_groups ?? {}),
-      ...Object.keys(databricks?.entity_groups ?? {}),
-    ])
+function entityGroupsForLanguages(languages: ASRBenchmarkLanguageOverview[]) {
+  return Array.from(
+    new Set(
+      languages.flatMap((language) =>
+        Object.values(language.models).flatMap((model) =>
+          Object.entries(model.entity_groups ?? {})
+            .filter(([, stats]) => (stats?.expected ?? 0) > 0)
+            .map(([group]) => group),
+        ),
+      ),
+    ),
   ).sort();
+}
+
+function scoreboardColumns(languageCount: number) {
+  return `minmax(160px, 1.4fr) repeat(${languageCount}, minmax(130px, 1fr))`;
+}
+
+function isEntityWinner(modelId: string, winner?: ASRBenchmarkMetricWinner) {
+  return Boolean(winner && !winner.tie && winner.model_id === modelId);
+}
+
+function EntityWinnersByLanguage({ languages }: { languages: ASRBenchmarkLanguageOverview[] }) {
+  const groups = entityGroupsForLanguages(languages);
+  if (!groups.length) return null;
 
   return (
     <div className="benchmark-panel">
       <div className="benchmark-section-head">
         <div>
-          <h2>Business Entity Accuracy</h2>
-          <p>These are the words and values the agent workflow acts on. They matter more than generic WER.</p>
+          <h2>Business entity winners</h2>
+          <p>Best model per entity group within each language. Higher accuracy is better.</p>
         </div>
       </div>
-      <div className="benchmark-entity-table">
+      <div className="benchmark-matrix-scroll">
+        <div
+          className="benchmark-matrix-table scoreboard"
+          style={{ gridTemplateColumns: scoreboardColumns(languages.length) }}
+        >
         <div className="benchmark-table-head">Entity</div>
-        <div className="benchmark-table-head">Why It Matters</div>
-        <div className="benchmark-table-head">Deepgram</div>
-        <div className="benchmark-table-head">Databricks</div>
-        <div className="benchmark-table-head">Winner</div>
-        {groups.map((group) => (
-          <div className="benchmark-table-row" key={group}>
-            <div>{entityLabels[group]?.label ?? group.split("_").join(" ")}</div>
-            <div>{entityLabels[group]?.why ?? "business-critical phrase preservation"}</div>
-            <div>{pct(deepgram?.entity_groups?.[group]?.accuracy)}</div>
-            <div>{pct(databricks?.entity_groups?.[group]?.accuracy)}</div>
-            <div>
-              <span
-                className={`benchmark-winner ${winnerFor({
-                  deepgram: deepgram?.entity_groups?.[group]?.accuracy,
-                  databricks: databricks?.entity_groups?.[group]?.accuracy,
-                }).toLowerCase()}`}
-              >
-                {winnerFor({
-                  deepgram: deepgram?.entity_groups?.[group]?.accuracy,
-                  databricks: databricks?.entity_groups?.[group]?.accuracy,
-                })}
-              </span>
-            </div>
+        {languages.map((language) => (
+          <div className="benchmark-table-head" key={language.code}>
+            {language.label}
           </div>
         ))}
+        {groups.map((group) => (
+          <div className="benchmark-table-row" key={group}>
+            <div className="benchmark-metric-name">
+              {entityLabels[group]?.label ?? group.split("_").join(" ")}
+              <small>{entityLabels[group]?.why ?? "business-critical phrase preservation"}</small>
+            </div>
+            {languages.map((language) => (
+              <div className="benchmark-scoreboard-cell" key={`${language.code}-${group}`}>
+                <WinnerBadge winner={language.entity_winners?.[group]} />
+              </div>
+            ))}
+          </div>
+        ))}
+        </div>
       </div>
     </div>
   );
 }
 
-function ExampleCard({ example }: { example: ASRBenchmarkExample }) {
-  const databricksUnsafe = example.databricks_unsafe_reasons ?? [];
-  const deepgramUnsafe = example.deepgram_unsafe_reasons ?? [];
+function EntityAccuracyMatrix({ languages }: { languages: ASRBenchmarkLanguageOverview[] }) {
+  const groups = entityGroupsForLanguages(languages);
+  if (!groups.length) return null;
+
+  const hasLegacySource = languages.some((language) =>
+    Object.values(language.models).some((model) => model.entity_groups_source === "legacy_holdout")
+  );
+
   return (
-    <div className={`benchmark-example ${databricksUnsafe.length || deepgramUnsafe.length ? "unsafe" : ""}`}>
-      <div className="benchmark-example-head">
-        <strong>{example.clip_id}</strong>
-        {example.scenario && <span>{example.scenario}</span>}
-        {deepgramUnsafe.length > 0 && <em>Deepgram unsafe: {deepgramUnsafe.join(", ")}</em>}
-        {databricksUnsafe.length > 0 && <em>Databricks unsafe: {databricksUnsafe.join(", ")}</em>}
+    <div className="benchmark-panel">
+      <div className="benchmark-section-head">
+        <div>
+          <h2>Business entity accuracy</h2>
+          <p>
+            Per-entity preservation rates across models and languages.
+            {hasLegacySource && " Entity columns from legacy multilingual_gold holdout where ml_asr clip results are not synced locally."}
+          </p>
+        </div>
       </div>
-      <div className="benchmark-transcript-grid">
-        <div>
-          <h3>Reference</h3>
-          <p>{example.reference_transcript}</p>
-        </div>
-        <div>
-          <h3>Deepgram</h3>
-          <p>{example.deepgram_transcript}</p>
-          <small>
-            WER {pct(example.deepgram_wer)} · critical entities{" "}
-            {pct(example.deepgram_critical_entity_accuracy)} · latency {num(example.deepgram_latency_ms, "ms")}
-          </small>
-        </div>
-        <div>
-          <h3>Databricks</h3>
-          <p>{example.databricks_transcript}</p>
-          <small>
-            WER {pct(example.databricks_wer)} · critical entities{" "}
-            {pct(example.databricks_critical_entity_accuracy)} · latency {num(example.databricks_latency_ms, "ms")}
-          </small>
+      <div className="benchmark-matrix-scroll">
+        <div
+          className="benchmark-matrix-table holistic entity-matrix"
+          style={{ gridTemplateColumns: `minmax(110px, 0.9fr) minmax(180px, 1.8fr) repeat(${groups.length}, minmax(88px, 0.85fr))` }}
+        >
+        <div className="benchmark-table-head">Language</div>
+        <div className="benchmark-table-head">Model</div>
+        {groups.map((group) => (
+          <div className="benchmark-table-head" key={group}>
+            {entityLabels[group]?.label ?? group.split("_").join(" ")}
+          </div>
+        ))}
+
+        {languages.map((language) => {
+          const modelList = Object.values(language.models).sort((a, b) => {
+            if (a.provider !== b.provider) return a.provider === "deepgram" ? -1 : 1;
+            return a.model_label.localeCompare(b.model_label);
+          });
+          return modelList.map((model, index) => (
+            <div className="benchmark-table-row" key={`${language.code}-${model.model_id}-entities`}>
+              <div className={index === 0 ? "benchmark-language-cell" : "benchmark-language-cell muted"}>
+                {index === 0 ? (
+                  <>
+                    <strong>{language.label}</strong>
+                    <small>{language.code}</small>
+                  </>
+                ) : null}
+              </div>
+              <div className="benchmark-model-cell">
+                <span className={`benchmark-provider-tag ${model.provider}`}>{model.provider}</span>
+                <span>{model.model_label}</span>
+                {model.entity_groups_source && (
+                  <small className="benchmark-entity-source">{model.entity_groups_source}</small>
+                )}
+              </div>
+              {groups.map((group) => {
+                const accuracy = model.entity_groups?.[group]?.accuracy;
+                const winner = language.entity_winners?.[group];
+                const winnerClass = isEntityWinner(model.model_id, winner) ? `winner ${model.provider}` : "";
+                return (
+                  <div key={group} className={winnerClass}>
+                    {pct(accuracy)}
+                  </div>
+                );
+              })}
+            </div>
+          ));
+        })}
         </div>
       </div>
     </div>
+  );
+}
+
+function Scoreboard({
+  tier,
+  tierData,
+  languages,
+}: {
+  tier: BenchmarkTier;
+  tierData: ASRBenchmarkTierOverview;
+  languages: ASRBenchmarkLanguageOverview[];
+}) {
+  const specs = METRIC_SPECS[tier];
+  return (
+    <div className="benchmark-panel">
+      <div className="benchmark-section-head">
+        <div>
+          <h2>Winners by language</h2>
+          <p>Best model per metric in each language. Green = Databricks route, amber = Deepgram Nova-3.</p>
+        </div>
+      </div>
+      <div className="benchmark-matrix-scroll">
+        <div
+          className="benchmark-matrix-table scoreboard"
+          style={{ gridTemplateColumns: scoreboardColumns(languages.length) }}
+        >
+          <div className="benchmark-table-head">Metric</div>
+          {languages.map((language) => (
+            <div className="benchmark-table-head" key={language.code}>
+              {language.label}
+            </div>
+          ))}
+          {specs.map((spec) => (
+            <div className="benchmark-table-row" key={spec.key}>
+              <div className="benchmark-metric-name">
+                {spec.label}
+                <small>{spec.lowerIsBetter ? "lower is better" : "higher is better"}</small>
+              </div>
+              {languages.map((language) => (
+                <div className="benchmark-scoreboard-cell" key={`${language.code}-${spec.key}`}>
+                  <WinnerBadge winner={language.winners[spec.key]} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      {Object.keys(tierData.scoreboard).length > 0 && (
+        <div className="benchmark-scoreboard-totals">
+          {specs.map((spec) => {
+            const counts = tierData.scoreboard[spec.key] ?? [];
+            if (!counts.length) return null;
+            return (
+              <div key={spec.key}>
+                <strong>{spec.label}</strong>
+                <span>
+                  {counts
+                    .map((entry) => {
+                      const label =
+                        languages
+                          .flatMap((language) => Object.values(language.models))
+                          .find((model) => model.model_id === entry.model_id)?.model_label ?? entry.model_id;
+                      return `${label} (${entry.wins})`;
+                    })
+                    .join(" · ")}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HolisticMatrix({
+  tier,
+  languages,
+}: {
+  tier: BenchmarkTier;
+  languages: ASRBenchmarkLanguageOverview[];
+}) {
+  const specs = METRIC_SPECS[tier];
+
+  return (
+    <div className="benchmark-panel">
+      <div className="benchmark-section-head">
+        <div>
+          <h2>All models · all languages</h2>
+          <p>Highlighted cells are best for that metric within the language group.</p>
+        </div>
+      </div>
+      <div className="benchmark-matrix-scroll">
+        <div
+          className="benchmark-matrix-table holistic"
+          style={{ gridTemplateColumns: `minmax(110px, 0.9fr) minmax(180px, 1.8fr) minmax(56px, 0.6fr) repeat(${specs.length}, minmax(88px, 0.85fr))` }}
+        >
+        <div className="benchmark-table-head">Language</div>
+        <div className="benchmark-table-head">Model</div>
+        <div className="benchmark-table-head">Clips</div>
+        {specs.map((spec) => (
+          <div className="benchmark-table-head" key={spec.key}>
+            {spec.label}
+          </div>
+        ))}
+
+        {languages.map((language) => {
+          const modelList = Object.values(language.models).sort((a, b) => {
+            if (a.provider !== b.provider) return a.provider === "deepgram" ? -1 : 1;
+            return a.model_label.localeCompare(b.model_label);
+          });
+          return modelList.map((model, index) => (
+            <div className="benchmark-table-row" key={`${language.code}-${model.model_id}`}>
+              <div className={index === 0 ? "benchmark-language-cell" : "benchmark-language-cell muted"}>
+                {index === 0 ? (
+                  <>
+                    <strong>{language.label}</strong>
+                    <small>{language.code}</small>
+                  </>
+                ) : null}
+              </div>
+              <div className="benchmark-model-cell">
+                <span className={`benchmark-provider-tag ${model.provider}`}>{model.provider}</span>
+                <span>{model.model_label}</span>
+              </div>
+              <div>{model.clips}</div>
+              {specs.map((spec) => {
+                const winner = language.winners[spec.key];
+                const value = model[spec.key];
+                const winnerClass = isWinner(model.model_id, spec.key, winner) ? `winner ${model.provider}` : "";
+                return (
+                  <div key={spec.key} className={winnerClass}>
+                    {formatMetric(spec.key, value)}
+                  </div>
+                );
+              })}
+            </div>
+          ));
+        })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MixedEntityDataNotice({ languages }: { languages: ASRBenchmarkLanguageOverview[] }) {
+  const usesLegacyEntities = languages.some((language) =>
+    Object.values(language.models).some((model) => model.entity_groups_source === "legacy_holdout"),
+  );
+  if (!usesLegacyEntities) return null;
+
+  return (
+    <div className="benchmark-mixed-source">
+      <strong>Entity columns use legacy holdout data</strong>
+      <p>
+        Aggregate WER/CER/latency above come from the current ml_asr FLEURS smoke eval (small clip counts).
+        Per-entity accuracy below is filled from packaged multilingual_gold holdout (~420 clips/lang) until local
+        ml_asr results.jsonl files are synced.
+      </p>
+    </div>
+  );
+}
+
+function TierSection({
+  tier,
+  tierData,
+}: {
+  tier: BenchmarkTier;
+  tierData: ASRBenchmarkTierOverview;
+}) {
+  const languages = LANGUAGE_ORDER.map((code) => tierData.languages[code]).filter(Boolean);
+  if (!languages.length) return null;
+
+  return (
+    <section className="benchmark-tier-section">
+      <div className="benchmark-tier-head">
+        <div>
+          <div className="eyebrow">{tier === "business" ? "Business tier" : "Acoustic tier"}</div>
+          <h2>{tier === "business" ? "Entity readiness + transcript quality" : "Read-speech WER/CER"}</h2>
+          <p>Dataset: {tierData.dataset_id}</p>
+        </div>
+      </div>
+      <Scoreboard tier={tier} tierData={tierData} languages={languages} />
+      {tier === "business" && (
+        <>
+          <MixedEntityDataNotice languages={languages} />
+          <EntityWinnersByLanguage languages={languages} />
+          <EntityAccuracyMatrix languages={languages} />
+        </>
+      )}
+      <HolisticMatrix tier={tier} languages={languages} />
+    </section>
   );
 }
 
 export function ASRBenchmarkPage() {
-  const [language, setLanguage] = useState<InteractionLanguage>("th-TH");
-  const [data, setData] = useState<ASRBenchmarkResponse | null>(null);
+  const [data, setData] = useState<ASRBenchmarkOverviewResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -234,7 +415,7 @@ export function ASRBenchmarkPage() {
     setData(null);
     setErr(null);
     api
-      .asrBenchmark(language)
+      .asrBenchmarkOverview("auto")
       .then((result) => {
         if (active) {
           setData(result);
@@ -247,54 +428,22 @@ export function ASRBenchmarkPage() {
     return () => {
       active = false;
     };
-  }, [language]);
+  }, []);
 
-  const deepgram = data?.summary?.providers?.deepgram;
-  const databricks = data?.summary?.providers?.databricks;
-  const promotion = data?.summary?.promotion_read;
-  const clipCount = databricks?.clips ?? deepgram?.clips ?? promotion?.paired_clips;
-  const latencyPenalty = deltaMs(databricks?.latency_ms?.p95, deepgram?.latency_ms?.p95);
-  const responseLanguage = data?.language ?? language;
-  const transcriptWinner = winnerFor({ deepgram: deepgram?.avg_wer, databricks: databricks?.avg_wer, lowerIsBetter: true });
-  const entityWinner = winnerFor({
-    deepgram: deepgram?.avg_critical_entity_accuracy,
-    databricks: databricks?.avg_critical_entity_accuracy,
-  });
-  const latencyWinner = winnerFor({
-    deepgram: deepgram?.latency_ms?.p95,
-    databricks: databricks?.latency_ms?.p95,
-    lowerIsBetter: true,
-  });
-  const languageOptions =
-    data?.available_languages && data.available_languages.length > 0
-      ? data.available_languages
-      : INTERACTION_LANGUAGES.map((item) => ({ ...item, available: undefined }));
-  const selectedLanguageLabel =
-    languageOptions.find((item) => item.code === language)?.label ??
-    language;
+  const dataSource = data?.source ?? "legacy";
 
   return (
-    <section className="benchmark-page">
+    <section className="benchmark-page benchmark-page-holistic">
       <div className="benchmark-page-head">
         <div>
           <div className="eyebrow">ASR Model Evaluation</div>
-          <h1>Deepgram vs Databricks ASR endpoint</h1>
+          <h1>Holistic ASR benchmark</h1>
           <p>
-            Offline 420-clip voice-model benchmark focused on what this app needs: accurate final
-            utterances, billing entity preservation, safe resolution signals, and latency after mic stop.
+            All languages and models side by side. Highlighted cells show the best route per metric; badges name the
+            winning Deepgram or Databricks model.
           </p>
         </div>
         <div className="benchmark-head-actions">
-          <label className="benchmark-language-control">
-            <span>Benchmark language</span>
-            <select value={language} onChange={(e) => setLanguage(e.target.value as InteractionLanguage)}>
-              {languageOptions.map((item) => (
-                <option key={item.code} value={item.code} disabled={item.available === false}>
-                  {item.label}{item.available === false ? " (not packaged)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
           <a className="benchmark-back-link" href="#/">Back to cockpit</a>
         </div>
       </div>
@@ -304,171 +453,48 @@ export function ASRBenchmarkPage() {
         <div className="benchmark-empty">
           <strong>No benchmark results found.</strong>
           <p>{data.message}</p>
-          <code>scripts/asr/07_deep_voice_model_eval.sh run</code>
+          <code>./scripts/ml_asr.sh eval && ./scripts/ml_asr/05_eval.sh sync-index</code>
         </div>
       )}
 
-      {data?.available && (
+      {data?.available && data.tiers && (
         <>
-          <div className="benchmark-verdict">
-            <div>
-              <div className="eyebrow">Executive Readout</div>
-              <h2>{selectedLanguageLabel}: Databricks vs Deepgram ASR benchmark.</h2>
-              <p>
-                Use this per-language result to compare final transcript accuracy, business entity preservation,
-                unsafe resolution rate, and post-stop latency. Deepgram remains the streaming caption path; the
-                Databricks model is evaluated as the final utterance transcription path.
-              </p>
-              <div className="benchmark-result-identity">
-                <span>requested: {language}</span>
-                <span>served: {responseLanguage}</span>
-                <span>summary: {shortPath(data.summary_path)}</span>
-              </div>
-            </div>
-            <div className="benchmark-verdict-numbers">
-              <div>
-                <span>clips compared</span>
-                <strong>{clipCount ?? "n/a"}</strong>
-              </div>
-              <div>
-                <span>critical entity delta</span>
-                <strong>{deltaPct(databricks?.avg_critical_entity_accuracy, deepgram?.avg_critical_entity_accuracy)}</strong>
-              </div>
-              <div>
-                <span>p95 latency delta</span>
-                <strong>{latencyPenalty}</strong>
-              </div>
-            </div>
-          </div>
-
           <div className="benchmark-reading-guide">
             <div>
-              <strong>How to read this page</strong>
-              <span>Each card declares its own winner. A lower error/latency is good; a higher accuracy is good.</span>
+              <strong>Data source</strong>
+              <span>
+                {dataSource === "ml_asr"
+                  ? "ml_asr FLEURS smoke eval (config/ml_asr_eval.yaml)"
+                  : "Legacy multilingual_gold holdout (~420 clips/lang)"}
+              </span>
             </div>
             <div>
-              <strong>No single winner</strong>
-              <span>Use the category winners: accuracy-sensitive workflows favor Databricks; real-time UX favors Deepgram.</span>
+              <strong>Index</strong>
+              <span>{shortPath(data.index_path)}</span>
             </div>
           </div>
 
           <div className="benchmark-glossary">
             <div>
-              <strong>WER</strong>
-              <span>Word Error Rate: percentage of word insertions, deletions, and substitutions. Lower is better.</span>
+              <strong>WER / CER</strong>
+              <span>Transcript error rates — lower is better.</span>
             </div>
             <div>
-              <strong>CER</strong>
-              <span>Character Error Rate: character-level transcript error. Useful for IDs and spelling. Lower is better.</span>
+              <strong>Critical entities</strong>
+              <span>Invoice IDs, amounts, confirmations preserved — higher is better (business tier).</span>
             </div>
             <div>
-              <strong>Business Entity Accuracy</strong>
-              <span>Whether billing facts like invoice IDs, amounts, dates, and confirmations were preserved. Higher is better.</span>
+              <strong>Unsafe</strong>
+              <span>Transcripts missing signals needed for auto-resolution — lower is better.</span>
             </div>
             <div>
-              <strong>Unsafe Rate</strong>
-              <span>Share of transcripts that should not drive automatic resolution because a critical signal is missing. Lower is better.</span>
+              <strong>P95 latency</strong>
+              <span>Post-stop transcription time — lower is better.</span>
             </div>
           </div>
 
-          <div className="benchmark-provider-row">
-            <ProviderSummary name="Deepgram Nova-3" summary={deepgram} />
-            <ProviderSummary name="Databricks Fine-Tuned Whisper" summary={databricks} />
-          </div>
-
-          <EntityBreakdown deepgram={deepgram} databricks={databricks} />
-
-          <div className="benchmark-metric-row">
-            <MetricCard
-              label="Transcript Error"
-              help="Average WER. Lower means fewer word-level mistakes."
-              deepgram={pct(deepgram?.avg_wer)}
-              databricks={pct(databricks?.avg_wer)}
-              winner={winnerFor({ deepgram: deepgram?.avg_wer, databricks: databricks?.avg_wer, lowerIsBetter: true })}
-              delta={deltaPct(databricks?.avg_wer, deepgram?.avg_wer)}
-            />
-            <MetricCard
-              label="Critical Entity Accuracy"
-              help="Invoice IDs, amounts, dates, actions, confirmations, and refusals."
-              deepgram={pct(deepgram?.avg_critical_entity_accuracy)}
-              databricks={pct(databricks?.avg_critical_entity_accuracy)}
-              winner={winnerFor({
-                deepgram: deepgram?.avg_critical_entity_accuracy,
-                databricks: databricks?.avg_critical_entity_accuracy,
-              })}
-              delta={deltaPct(databricks?.avg_critical_entity_accuracy, deepgram?.avg_critical_entity_accuracy)}
-            />
-            <MetricCard
-              label="Unsafe For Auto-Resolution"
-              help="Rows with empty transcript, missing invoice/amount, or negation/entity risk."
-              deepgram={pct(deepgram?.unsafe_for_resolution_rate)}
-              databricks={pct(databricks?.unsafe_for_resolution_rate)}
-              winner={winnerFor({
-                deepgram: deepgram?.unsafe_for_resolution_rate,
-                databricks: databricks?.unsafe_for_resolution_rate,
-                lowerIsBetter: true,
-              })}
-              delta={deltaPct(databricks?.unsafe_for_resolution_rate, deepgram?.unsafe_for_resolution_rate)}
-            />
-            <MetricCard
-              label="P95 Latency"
-              help="Time from provider request to final transcript. Lower is better."
-              deepgram={num(deepgram?.latency_ms?.p95, "ms")}
-              databricks={num(databricks?.latency_ms?.p95, "ms")}
-              winner={winnerFor({
-                deepgram: deepgram?.latency_ms?.p95,
-                databricks: databricks?.latency_ms?.p95,
-                lowerIsBetter: true,
-              })}
-              delta={deltaMs(databricks?.latency_ms?.p95, deepgram?.latency_ms?.p95)}
-            />
-          </div>
-
-          <div className="benchmark-tradeoff-grid">
-            <div className="benchmark-tradeoff-card good">
-              <h2>Transcript Readout</h2>
-              <p>
-                WER winner for {selectedLanguageLabel}: {transcriptWinner}. Deepgram is {pct(deepgram?.avg_wer)};
-                Databricks is {pct(databricks?.avg_wer)}.
-              </p>
-            </div>
-            <div className="benchmark-tradeoff-card caution">
-              <h2>Business Entity Readout</h2>
-              <p>
-                Critical entity winner for {selectedLanguageLabel}: {entityWinner}. Deepgram is{" "}
-                {pct(deepgram?.avg_critical_entity_accuracy)}; Databricks is{" "}
-                {pct(databricks?.avg_critical_entity_accuracy)}.
-              </p>
-            </div>
-            <div className="benchmark-tradeoff-card risk">
-              <h2>Latency / Stability Readout</h2>
-              <p>
-                P95 latency winner for {selectedLanguageLabel}: {latencyWinner}. Deepgram is{" "}
-                {num(deepgram?.latency_ms?.p95, "ms")}; Databricks is{" "}
-                {num(databricks?.latency_ms?.p95, "ms")}.
-              </p>
-            </div>
-          </div>
-
-          <div className="benchmark-panel">
-            <div className="benchmark-section-head">
-              <div>
-                <h2>Failure Examples Worth Reviewing</h2>
-                <p>Sorted toward unsafe or high-delta examples so the page explains what to improve next.</p>
-              </div>
-            </div>
-            <div className="benchmark-examples">
-              {(data.examples ?? []).map((example) => (
-                <ExampleCard key={example.clip_id} example={example} />
-              ))}
-            </div>
-          </div>
-
-          <div className="benchmark-paths">
-            <span>Summary: {data.summary_path}</span>
-            <span>Deepgram JSONL: {data.deepgram_output}</span>
-            <span>Databricks JSONL: {data.databricks_output}</span>
-          </div>
+          {data.tiers.business && <TierSection tier="business" tierData={data.tiers.business} />}
+          {data.tiers.acoustic && <TierSection tier="acoustic" tierData={data.tiers.acoustic} />}
         </>
       )}
     </section>

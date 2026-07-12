@@ -1,0 +1,145 @@
+# Iterative serverless pipeline — all artifacts on UC Volume.
+#
+# Datasets use licensed human speech only (no proxy TTS):
+#   - business: FLEURS validation mined for billing-relevant clips
+#   - acoustic: FLEURS validation read-speech holdout
+#
+#   ./scripts/ml_asr.sh datasets
+#   ./scripts/ml_asr.sh quality
+#   ./scripts/ml_asr/03_register.sh all
+#   ./scripts/ml_asr/04_serve.sh deploy-all
+#   ./scripts/ml_asr.sh eval
+#
+version: 3
+serverless:
+  environment_version: 2
+  jobs_subdir: jobs/ml_asr_eval
+  deepgram_secret_scope: genie-voice
+  deepgram_secret_key: deepgram_api_key
+  databricks_concurrency: 4
+
+storage:
+  datasets_subdir: datasets/ml_asr_eval
+  results_subdir: evaluations/ml_asr_eval
+  state_file: evaluations/ml_asr_eval/pipeline_state.json
+  audit_file: evaluations/ml_asr_eval/dataset_audit.json
+  index_file: evaluations/ml_asr_eval/results/index.json
+
+eval_plan:
+  tiers: [business, acoustic]
+  languages: [en-US, th-TH, id-ID, zh-CN]
+  min_clips_per_language:
+    acoustic: 100
+    business: 100
+  smoke:
+    acoustic_clip_limit: 25
+    business_clip_limit: 25
+    eval_clip_limit: 25
+
+datasets:
+  fleurs_business_v1:
+    eval_tier: business
+    split: holdout
+    builder: fleurs_business
+    clip_limit: 150
+    source: google/fleurs
+    scenario: mined_fleurs_business_holdout
+    domain: billing_support
+    audio_mode: fleurs
+    languages:
+      en-US: { fleurs_config: en_us, manifest_language: en }
+      th-TH: { fleurs_config: th_th, manifest_language: th }
+      id-ID: { fleurs_config: id_id, manifest_language: id }
+      zh-CN: { fleurs_config: cmn_hans_cn, manifest_language: zh }
+
+  fleurs_acoustic_v1:
+    eval_tier: acoustic
+    split: holdout
+    builder: fleurs
+    clip_limit: 200
+    source: google/fleurs
+    scenario: external_fleurs_acoustic_holdout
+    domain: public_read_speech
+    audio_mode: fleurs
+    languages:
+      en-US: { fleurs_config: en_us, manifest_language: en }
+      th-TH: { fleurs_config: th_th, manifest_language: th }
+      id-ID: { fleurs_config: id_id, manifest_language: id }
+      zh-CN: { fleurs_config: cmn_hans_cn, manifest_language: zh }
+
+# model_kind: commercial_api = SaaS baseline (eval only)
+#             uc_serving     = UC-registered Databricks endpoint (register + serve + eval)
+models:
+  deepgram_nova3:
+    provider: deepgram
+    model_kind: commercial_api
+    model: nova-3
+    label: Deepgram Nova-3
+
+  databricks_en_finetuned_whisper_lora:
+    provider: databricks_serving
+    model_kind: uc_serving
+    endpoint: voice_asr_en_finetuned_whisper_lora
+    label: Databricks EN Whisper LoRA
+    languages: [en-US]
+
+  databricks_th_pathumma_whisper_large_v3:
+    provider: databricks_serving
+    model_kind: uc_serving
+    endpoint: voice_asr_th_oss_pathumma_whisper_large_v3
+    label: Databricks TH Pathumma Whisper
+    languages: [th-TH]
+
+  databricks_id_qwen3_asr_0_6b:
+    provider: databricks_serving
+    model_kind: uc_serving
+    endpoint: voice_asr_id_oss_qwen3_asr_0_6b
+    label: Databricks ID Qwen3-ASR-0.6B
+    languages: [id-ID]
+
+  databricks_zh_qwen3_asr_0_6b:
+    provider: databricks_serving
+    model_kind: uc_serving
+    endpoint: voice_asr_zh_oss_qwen3_asr_0_6b
+    label: Databricks ZH Qwen3-ASR-0.6B
+    languages: [zh-CN]
+
+eval_matrix:
+  en-US: [deepgram_nova3, databricks_en_finetuned_whisper_lora]
+  th-TH: [deepgram_nova3, databricks_th_pathumma_whisper_large_v3]
+  id-ID: [deepgram_nova3, databricks_id_qwen3_asr_0_6b]
+  zh-CN: [deepgram_nova3, databricks_zh_qwen3_asr_0_6b]
+
+# UC registration + Model Serving — databricks_* only (not deepgram_nova3).
+# Used by scripts/ml_asr/03_register.sh and 04_serve.sh
+model_serving:
+  alias: candidate
+  defaults:
+    workload_type: CPU
+    workload_size: Medium
+    scale_to_zero: false
+    route_optimized: false
+  models:
+    databricks_en_finetuned_whisper_lora:
+      registered_model_leaf: genie_asr_en_finetuned_whisper_lora
+      register:
+        type: finetuned_whisper
+      serve:
+        workload_type: CPU
+    databricks_th_pathumma_whisper_large_v3:
+      registered_model_leaf: genie_asr_th_oss_pathumma_whisper_large_v3
+      register:
+        type: oss
+        candidate_id: th_oss_pathumma_whisper_large_v3
+      serve:
+        workload_type: GPU_SMALL
+    databricks_id_qwen3_asr_0_6b:
+      registered_model_leaf: genie_asr_id_oss_qwen3_asr_0_6b
+      register:
+        type: oss
+        candidate_id: id_oss_qwen3_asr_0_6b
+    databricks_zh_qwen3_asr_0_6b:
+      registered_model_leaf: genie_asr_zh_oss_qwen3_asr_0_6b
+      register:
+        type: oss
+        candidate_id: zh_oss_qwen3_asr_0_6b

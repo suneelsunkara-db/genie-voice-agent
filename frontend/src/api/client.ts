@@ -210,6 +210,16 @@ export interface ASRProviderSummary {
   unsafe_reason_counts?: Record<string, number>;
 }
 
+export interface ASRBenchmarkModelRanking {
+  model_id: string;
+  model_label?: string;
+  avg_wer?: number | null;
+  avg_cer?: number | null;
+  p95_latency_ms?: number | null;
+  avg_critical_entity_accuracy?: number | null;
+  unsafe_for_resolution_rate?: number | null;
+}
+
 export interface ASRBenchmarkExample {
   clip_id: string;
   scenario?: string | null;
@@ -228,12 +238,23 @@ export interface ASRBenchmarkExample {
 
 export interface ASRBenchmarkResponse {
   available: boolean;
+  source?: "ml_asr" | "legacy";
+  tier?: "business" | "acoustic";
+  dataset_id?: string;
+  clip_count?: number;
   language?: InteractionLanguage;
-  available_languages?: (InteractionLanguageOption & { available?: boolean })[];
+  available_languages?: (InteractionLanguageOption & {
+    available?: boolean;
+    ml_asr_available?: boolean;
+    legacy_available?: boolean;
+  })[];
   message?: string;
   summary_path?: string;
+  index_path?: string;
   deepgram_output?: string;
   databricks_output?: string;
+  models?: Record<string, ASRProviderSummary>;
+  ranking?: ASRBenchmarkModelRanking[];
   summary?: {
     providers?: {
       deepgram?: ASRProviderSummary;
@@ -254,6 +275,57 @@ export interface ASRBenchmarkResponse {
   examples?: ASRBenchmarkExample[];
 }
 
+export interface ASRBenchmarkModelMetrics {
+  model_id: string;
+  model_label: string;
+  provider: "deepgram" | "databricks";
+  clips: number;
+  wer?: number | null;
+  cer?: number | null;
+  critical_entity_accuracy?: number | null;
+  unsafe_for_resolution_rate?: number | null;
+  p95_latency_ms?: number | null;
+  entity_groups?: Record<string, { expected: number; matched: number; accuracy?: number | null }>;
+  entity_groups_source?: string;
+}
+
+export interface ASRBenchmarkMetricWinner {
+  model_id?: string;
+  model_label?: string;
+  provider?: "deepgram" | "databricks";
+  tie?: boolean;
+  model_ids?: string[];
+  model_labels?: string[];
+}
+
+export interface ASRBenchmarkLanguageOverview {
+  code: string;
+  label: string;
+  models: Record<string, ASRBenchmarkModelMetrics>;
+  winners: Record<string, ASRBenchmarkMetricWinner>;
+  entity_winners?: Record<string, ASRBenchmarkMetricWinner>;
+  source?: string;
+}
+
+export interface ASRBenchmarkTierOverview {
+  dataset_id: string;
+  languages: Record<string, ASRBenchmarkLanguageOverview>;
+  scoreboard: Record<string, Array<{ model_id: string; wins: number }>>;
+}
+
+export interface ASRBenchmarkOverviewResponse {
+  available: boolean;
+  source?: "ml_asr" | "legacy";
+  index_path?: string;
+  message?: string;
+  tiers?: Record<string, ASRBenchmarkTierOverview>;
+  available_languages?: (InteractionLanguageOption & {
+    available?: boolean;
+    ml_asr_available?: boolean;
+    legacy_available?: boolean;
+  })[];
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -263,10 +335,23 @@ async function getJSON<T>(path: string): Promise<T> {
 export const api = {
   status: () => getJSON<StatusResponse>("/status"),
   health: () => getJSON<Record<string, unknown>>("/health"),
-  asrBenchmark: (language?: InteractionLanguage) =>
-    getJSON<ASRBenchmarkResponse>(
-      `/asr-benchmark${language ? `?language=${encodeURIComponent(language)}` : ""}`
-    ),
+  asrBenchmarkOverview: (source?: "auto" | "ml_asr" | "legacy") => {
+    const params = new URLSearchParams();
+    if (source) params.set("source", source);
+    const query = params.toString();
+    return getJSON<ASRBenchmarkOverviewResponse>(`/asr-benchmark/overview${query ? `?${query}` : ""}`);
+  },
+  asrBenchmark: (
+    language?: InteractionLanguage,
+    options?: { tier?: "business" | "acoustic"; source?: "auto" | "ml_asr" | "legacy" }
+  ) => {
+    const params = new URLSearchParams();
+    if (language) params.set("language", language);
+    if (options?.tier) params.set("tier", options.tier);
+    if (options?.source) params.set("source", options.source);
+    const query = params.toString();
+    return getJSON<ASRBenchmarkResponse>(`/asr-benchmark${query ? `?${query}` : ""}`);
+  },
   customersWithIssues: () =>
     getJSON<{ customers: CustomerWithIssue[]; count: number }>("/accounts/with-issues"),
   callAccount: (callId: string) =>

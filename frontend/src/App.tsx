@@ -78,7 +78,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="hero-shell">
+      <header className={`hero-shell${showBenchmark ? " hero-shell-compact" : ""}`}>
         <div className="hero-topbar">
           <div className="hero-brand-row">
             <img className="hero-logo dbx-full" src={databricksLogo} alt="Databricks" />
@@ -101,6 +101,7 @@ export default function App() {
           </div>
         </div>
 
+        {!showBenchmark && (
         <div className="hero-content">
           <div className="eyebrow">{copy.heroEyebrow}</div>
           <h1>{copy.heroTitle}</h1>
@@ -113,12 +114,15 @@ export default function App() {
             <span className="flow-pill">{copy.flowResolution}</span>
           </div>
         </div>
+        )}
       </header>
 
       {error && <div className="error">API error: {error} — is the backend running?</div>}
 
       {showBenchmark ? (
-        <ASRBenchmarkPage />
+        <section className="command-stage">
+          <ASRBenchmarkPage />
+        </section>
       ) : (
         <section className="command-stage">
           <CallList

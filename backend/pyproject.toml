@@ -17,10 +17,12 @@ dependencies = [
 # Installed on Databricks clusters / for local Spark experiments.
 spark = ["pyspark>=3.5"]
 dev = ["pytest>=8", "ruff>=0.5"]
+ml-asr = ["pandas>=2", "pyarrow>=15", "soundfile>=0.12", "huggingface_hub>=0.23", "numpy>=1.26"]
 
 # Console entry point invoked by the Databricks python_wheel_task.
 [project.scripts]
 genie-pipeline = "genie_voice.pipeline.cli:main"
+ml-asr-eval = "genie_voice.ml_asr.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

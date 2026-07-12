@@ -1,9 +1,25 @@
-flowchart LR
-    A[Customer utterance] --> B[STT]
-    B --> C[FM enrich]
-    C --> D[Lakebase read/write]
-    C --> E[Validate facts]
-    E --> F[Agent reply]
-    F --> G[Billing commit]
-    D --> H[UC gold tables]
-    H --> I[Genie portfolio Q&A]
+flowchart TB
+    subgraph inputs [Same eval harness]
+        A[420 clips per locale]
+        B[Human reference transcript]
+        C[Expected entities: invoice ID, amount, waiver phrase, confirmation]
+    end
+
+    subgraph metrics [Two metric layers]
+        D[WER / CER]
+        E[Critical entity accuracy]
+        F[Unsafe for resolution rate]
+    end
+
+    subgraph outcomes [What we observed]
+        G[Thai: low WER, 100% unsafe]
+        H[id-ID: Deepgram partially viable]
+        I[zh-CN: low WER, 97% unsafe]
+    end
+
+    A --> D
+    A --> E
+    E --> F
+    F --> G
+    F --> H
+    F --> I

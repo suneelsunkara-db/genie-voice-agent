@@ -1,14 +1,23 @@
-"""ASR benchmark result API for Deepgram vs fine-tuned Databricks ASR."""
+"""ASR benchmark result API for Deepgram vs Databricks ASR routes."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter
 from genie_voice.i18n import LANGUAGE_SPECS, SUPPORTED_LANGUAGES, normalize_language
+from genie_voice.ml_asr.benchmark_export import (
+    _compute_entity_winners,
+    load_ml_asr_benchmark,
+    load_ml_asr_overview,
+    ml_asr_available_languages,
+)
 
 router = APIRouter(prefix="/asr-benchmark", tags=["asr-benchmark"])
+
+BenchmarkSource = Literal["auto", "ml_asr", "legacy"]
+BenchmarkTier = Literal["business", "acoustic"]
 
 
 def _repo_root() -> Path:
@@ -114,48 +123,200 @@ def _paired_examples(deepgram_rows: list[dict[str, Any]], databricks_rows: list[
     return examples[:20]
 
 
-@router.get("")
-def latest_asr_benchmark(language: str = "en-US") -> dict[str, Any]:
-    language_code = normalize_language(language)
+def _legacy_language_models(language_code: str) -> dict[str, dict[str, Any]] | None:
     summary_path = next((path for path in _summary_candidates(language_code) if path.exists()), None)
     summary = _read_json(summary_path) if summary_path else None
     if not summary:
+        return None
+    providers = summary.get("providers") or {}
+    models: dict[str, dict[str, Any]] = {}
+    deepgram = providers.get("deepgram") or {}
+    databricks = providers.get("databricks") or {}
+    if deepgram:
+        models["deepgram_nova3"] = {
+            "model_id": "deepgram_nova3",
+            "model_label": "Deepgram Nova-3",
+            "provider": "deepgram",
+            "clips": deepgram.get("clips") or 0,
+            "wer": deepgram.get("avg_wer"),
+            "cer": deepgram.get("avg_cer"),
+            "critical_entity_accuracy": deepgram.get("avg_critical_entity_accuracy"),
+            "unsafe_for_resolution_rate": deepgram.get("unsafe_for_resolution_rate"),
+            "p95_latency_ms": (deepgram.get("latency_ms") or {}).get("p95"),
+            "entity_groups": deepgram.get("entity_groups") or {},
+        }
+    if databricks:
+        db_models = databricks.get("models") or ["databricks"]
+        model_label = ", ".join(str(name) for name in db_models)
+        models["databricks_route"] = {
+            "model_id": "databricks_route",
+            "model_label": f"Databricks · {model_label}",
+            "provider": "databricks",
+            "clips": databricks.get("clips") or 0,
+            "wer": databricks.get("avg_wer"),
+            "cer": databricks.get("avg_cer"),
+            "critical_entity_accuracy": databricks.get("avg_critical_entity_accuracy"),
+            "unsafe_for_resolution_rate": databricks.get("unsafe_for_resolution_rate"),
+            "p95_latency_ms": (databricks.get("latency_ms") or {}).get("p95"),
+            "entity_groups": databricks.get("entity_groups") or {},
+        }
+    return models or None
+
+
+def _legacy_overview() -> dict[str, Any] | None:
+    from genie_voice.ml_asr.benchmark_export import _compute_entity_winners, _compute_metric_winners, _scoreboard
+
+    languages: dict[str, Any] = {}
+    for code in SUPPORTED_LANGUAGES:
+        models = _legacy_language_models(code)
+        if not models:
+            continue
+        languages[code] = {
+            "code": code,
+            "label": LANGUAGE_SPECS[code].label,
+            "models": models,
+            "winners": _compute_metric_winners(models, tier="business"),
+            "entity_winners": _compute_entity_winners(models),
+            "source": "legacy",
+        }
+    if not languages:
+        return None
+    return {
+        "available": True,
+        "source": "legacy",
+        "tiers": {
+            "business": {
+                "dataset_id": "multilingual_gold_holdout",
+                "languages": languages,
+                "scoreboard": _scoreboard(languages),
+            }
+        },
+    }
+
+
+@router.get("/overview")
+def asr_benchmark_overview(source: BenchmarkSource = "auto") -> dict[str, Any]:
+    repo_root = _repo_root()
+    overview: dict[str, Any] | None = None
+    if source in {"auto", "ml_asr"}:
+        overview = load_ml_asr_overview(repo_root=repo_root)
+
+    if source == "ml_asr" and not overview:
         return {
             "available": False,
-            "language": language_code,
-            "available_languages": _available_languages(),
-            "summary_path": str(_summary_candidates(language_code)[0]),
+            "source": "ml_asr",
             "message": (
-                "No ASR benchmark summary found for this language. "
-                "Run scripts/asr/07_deep_voice_model_eval.sh run with ASR_EVAL_LANGUAGE set first."
+                "No ml_asr overview index found. Sync Volume index to "
+                ".run/ml_asr_eval/index.json (./scripts/ml_asr/05_eval.sh sync-index)."
             ),
         }
+
+    if source in {"auto", "legacy"} and not overview:
+        overview = _legacy_overview()
+
+    if not overview:
+        return {
+            "available": False,
+            "source": source,
+            "message": "No ASR benchmark overview found.",
+        }
+
+    overview["available_languages"] = _available_languages(tier="business")
+    return overview
+
+
+def _legacy_benchmark(language_code: str) -> dict[str, Any] | None:
+    summary_path = next((path for path in _summary_candidates(language_code) if path.exists()), None)
+    summary = _read_json(summary_path) if summary_path else None
+    if not summary or not summary_path:
+        return None
 
     deepgram_path, databricks_path = _resolve_provider_paths(summary, summary_path)
     deepgram_rows = _read_jsonl(deepgram_path)
     databricks_rows = _read_jsonl(databricks_path)
     return {
         "available": True,
+        "source": "legacy",
+        "tier": "business",
+        "dataset_id": "multilingual_gold_holdout",
         "language": language_code,
-        "available_languages": _available_languages(),
+        "available_languages": _available_languages(tier="business"),
         "summary_path": str(summary_path),
         "deepgram_output": str(deepgram_path),
         "databricks_output": str(databricks_path),
+        "clip_count": (summary.get("providers") or {}).get("deepgram", {}).get("clips"),
         "summary": summary,
         "examples": _paired_examples(deepgram_rows, databricks_rows),
     }
 
 
-def _available_languages() -> list[dict[str, str | bool]]:
+def _available_languages(*, tier: BenchmarkTier = "business") -> list[dict[str, str | bool]]:
+    ml_asr_langs = ml_asr_available_languages(tier=tier, repo_root=_repo_root())
     out = []
     for code in SUPPORTED_LANGUAGES:
         spec = LANGUAGE_SPECS[code]
+        legacy = any(path.exists() for path in _summary_candidates(code))
+        ml_asr = ml_asr_langs.get(code, False)
         out.append(
             {
                 "code": code,
                 "label": spec.label,
                 "english_name": spec.english_name,
-                "available": any(path.exists() for path in _summary_candidates(code)),
+                "available": ml_asr or legacy,
+                "ml_asr_available": ml_asr,
+                "legacy_available": legacy,
             }
         )
     return out
+
+
+@router.get("")
+def latest_asr_benchmark(
+    language: str = "en-US",
+    tier: BenchmarkTier = "business",
+    source: BenchmarkSource = "auto",
+) -> dict[str, Any]:
+    language_code = normalize_language(language)
+    repo_root = _repo_root()
+
+    ml_asr_payload: dict[str, Any] | None = None
+    if source in {"auto", "ml_asr"}:
+        ml_asr_payload = load_ml_asr_benchmark(language=language_code, tier=tier, repo_root=repo_root)
+
+    if source == "ml_asr":
+        if not ml_asr_payload:
+            return {
+                "available": False,
+                "source": "ml_asr",
+                "tier": tier,
+                "language": language_code,
+                "available_languages": _available_languages(tier=tier),
+                "message": (
+                    "No ml_asr benchmark index found. Sync Volume index to "
+                    ".run/ml_asr_eval/index.json (see scripts/ml_asr.sh eval / summarize)."
+                ),
+            }
+        ml_asr_payload["available_languages"] = _available_languages(tier=tier)
+        return ml_asr_payload
+
+    if source == "auto" and ml_asr_payload:
+        ml_asr_payload["available_languages"] = _available_languages(tier=tier)
+        return ml_asr_payload
+
+    legacy_payload = _legacy_benchmark(language_code)
+    if legacy_payload:
+        return legacy_payload
+
+    return {
+        "available": False,
+        "source": source,
+        "tier": tier,
+        "language": language_code,
+        "available_languages": _available_languages(tier=tier),
+        "summary_path": str(_summary_candidates(language_code)[0]),
+        "message": (
+            "No ASR benchmark results found. Run ./scripts/ml_asr.sh eval and sync "
+            "evaluations/ml_asr_eval/results/index.json to .run/ml_asr_eval/index.json, "
+            "or run scripts/asr/07_deep_voice_model_eval.sh for legacy holdout eval."
+        ),
+    }
