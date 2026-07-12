@@ -11,7 +11,8 @@
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Why Is It Hard to Build Voice Models for Asian Languages?" />
   <meta name="twitter:description" content="Benchmarking Thai, Indonesian, and Chinese speech recognition for contact-center billing showed us that word error rate and operational safety diverge — and that no single model covers the region." />
-
+  <meta property="og:image" content="../assets/genie-for-voice-use-cases/header-thumbnail.png" />
+  <meta name="twitter:image" content="../assets/genie-for-voice-use-cases/header-thumbnail.png" />
   <style>
     :root {
       color-scheme: light;
@@ -136,6 +137,55 @@
       cursor: pointer;
     }
     .publish-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .publish-actions .publish-copy {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .publish-actions .publish-copy:hover {
+      filter: brightness(1.05);
+      color: #fff;
+    }
+    .publish-actions .publish-copy-secondary {
+      background: #fff;
+      color: var(--accent);
+    }
+    .publish-actions .publish-direct {
+      background: #fff;
+      color: var(--text);
+    }
+    .publish-advanced {
+      width: 100%;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .publish-advanced summary {
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .publish-import-url {
+      width: 100%;
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .publish-actions .publish-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-decoration: none;
+    }
     .copy-status { min-height: 18px; color: var(--accent); font-size: 13px; margin-top: 8px; }
     .publish-note { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
     @media (max-width: 820px) {
@@ -153,15 +203,25 @@
     </div>
     <section class="publish-panel" aria-label="Publish controls">
       <h2>Publish</h2>
-      <p>Review this page, then copy the rich blog draft and open the platform editor in one click. Paste into the editor; Medium or LinkedIn creates the public URL after you publish there.</p>
+      <p>Use <strong>Open publish view</strong> for the most reliable Medium workflow: Select all → Copy → Open Medium → Paste. Or click <strong>Copy and open Medium</strong> after starting with <code>--serve --open</code>. For images in Medium, regenerate with <code>--public-base-url</code> or upload diagrams manually after paste.</p>
       <div class="publish-actions">
-        <button type="button" class="publish-open" data-publish-url="https://medium.com/new-story">Copy and Open Medium</button>
-<button type="button" class="publish-open" data-publish-url="https://www.linkedin.com/feed/">Copy and Open LinkedIn</button>
+        <button type="button" class="publish-copy" data-publish-url="https://medium.com/new-story">Copy and open Medium</button>
+<button type="button" class="publish-select">Select article (Cmd+C)</button>
+<button type="button" class="publish-copy publish-copy-secondary" data-publish-url="https://www.linkedin.com/article/new/">Copy and open LinkedIn</button>
+<a class="publish-link" href="genie-for-voice-use-cases-markdown-publish-view.html" target="_blank" rel="noopener">Open publish view</a>
+
+<details class="publish-advanced">
+<summary>Direct API publish (legacy Medium token only)</summary>
+<div class="publish-actions">
+<button type="button" class="publish-direct" data-publish-status="draft">Publish draft via API</button>
+<button type="button" class="publish-direct publish-direct-secondary" data-publish-status="public">Publish publicly via API</button>
+</div>
+<p>Medium stopped issuing new integration tokens in 2023. Skip this unless you already have one.</p>
+</details>
       </div>
-      <p class="publish-note">Images are copied using public URLs when <code>--public-base-url</code> is provided.</p>
       <div class="copy-status" id="copy-status"></div>
     </section>
-
+    <img class="preview-hero" src="../assets/genie-for-voice-use-cases/header-thumbnail.png" alt="Why Is It Hard to Build Voice Models for Asian Languages?" />
     <article id="blog-preview">
 <h1>Why Is It Hard to Build Voice Models for Asian Languages?</h1>
 <h2>The use case</h2>
@@ -188,103 +248,83 @@
 <p><strong>Third, multilingual coverage on leaderboards obscures domain and channel risk.</strong> A model that performs well on clean, read speech can still fail on short confirmations, alphanumeric invoice IDs, or narrowband telephony audio.</p>
 <h2>What the application requires beyond transcription</h2>
 <p>Contact-center voice is not general-purpose transcription. The system must preserve, in the final utterance:</p>
-<ul><li>Invoice IDs (<code>INV-90022</code>) even when the conversation is in Thai or Indonesian</li><li>Dollar amounts expressed in local phrasing</li><li>Billing-action phrases (late-fee waiver, payment plan)</li><li>Minimal confirmations and refusals that determine whether a case may close</li></ul>
+<ul>
+<li>Invoice IDs (<code>INV-90022</code>) even when the conversation is in Thai or Indonesian</li>
+<li>Dollar amounts expressed in local phrasing</li>
+<li>Billing-action phrases (late-fee waiver, payment plan)</li>
+<li>Minimal confirmations and refusals that determine whether a case may close</li>
+</ul>
 <p>We evaluate these as <strong>entity groups</strong> alongside WER. A model is considered for promotion only when it meets thresholds on <strong>critical entity accuracy</strong> and <strong>unsafe for resolution rate</strong>.</p>
 <p>This requirement is especially demanding for Asian languages because utterances frequently combine local grammar with <strong>canonical English identifiers</strong> the business system stores as <code>INV-900xx</code> and USD amounts.</p>
 <h2>How we measure operational fitness</h2>
 <p>Before reviewing the results, it is worth defining how an utterance is judged.</p>
-<table><tr><th>Measure</th><th>Definition</th></tr><tr><td><strong>Word error rate (WER)</strong></td><td>Share of words that differ from the human reference transcript</td></tr><tr><td><strong>Critical entity accuracy</strong></td><td>Share of required billing entities (invoice ID, amount, date, action phrase, confirmation/refusal) correctly present in the transcript</td></tr><tr><td><strong>Unsafe for resolution rate</strong></td><td>Share of utterances missing at least one entity or numeric token required to advance billing resolution</td></tr><tr><td><strong>Numeric recall</strong></td><td>Share of spoken numbers and currency values retained in the transcript</td></tr><tr><td><strong>P95 latency</strong></td><td>95th-percentile time to return a final transcript</td></tr></table>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Measure</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Definition</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Word error rate (WER)</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Share of words that differ from the human reference transcript</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Critical entity accuracy</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Share of required billing entities (invoice ID, amount, date, action phrase, confirmation/refusal) correctly present in the transcript</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Unsafe for resolution rate</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Share of utterances missing at least one entity or numeric token required to advance billing resolution</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Numeric recall</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Share of spoken numbers and currency values retained in the transcript</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>P95 latency</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">95th-percentile time to return a final transcript</td></tr></tbody></table>
 <p>A transcript can exhibit low WER and still be unsafe. Conversely, a higher WER does not always prevent resolution if the critical entities are intact.</p>
 <h2>How we prepared evaluation data</h2>
 <p>Fair model comparison depends on the dataset before it depends on the model. We standardized that work in <code>scripts/ml_asr/</code> — a five-step pipeline backed by <code>backend/genie_voice/ml_asr/</code> and configured in <code>config/ml_asr_eval.yaml</code>. Artifacts land on Unity Catalog Volumes so preparation, quality review, and scoring share the same manifests.</p>
 <h3>Two evaluation tiers</h3>
 <p>We separate <strong>acoustic</strong> fitness from <strong>business</strong> fitness:</p>
-<table><tr><th>Tier</th><th>Purpose</th><th>Source</th></tr><tr><td><strong>Acoustic</strong></td><td>Word-level accuracy (WER/CER) on read speech</td><td><a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a> validation audio per locale</td></tr><tr><td><strong>Business</strong></td><td>Entity retention and resolution readiness</td><td>FLEURS transcripts mined for billing-relevant content</td></tr></table>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Tier</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Purpose</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Source</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Acoustic</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Word-level accuracy (WER/CER) on read speech</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a> validation audio per locale</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Business</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Entity retention and resolution readiness</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">FLEURS transcripts mined for billing-relevant content</td></tr></tbody></table>
 <p>Acoustic tier answers whether a model hears the language. Business tier answers whether it preserves invoice IDs, amounts, waiver language, and confirmations — the fields our agent-assist workflow requires.</p>
 <h3>Step 1 — Build holdout corpora</h3>
 <p><code>01_datasets.sh</code> runs on Databricks serverless and materializes two datasets per locale (<code>en-US</code>, <code>th-TH</code>, <code>id-ID</code>, <code>zh-CN</code>):</p>
-<ul><li><strong><code>fleurs_acoustic_v1</code></strong> — licensed human read speech from FLEURS, held out from training use.</li><li><strong><code>fleurs_business_v1</code></strong> — the same source, filtered through <strong>entity mining</strong>: transcripts must pass billing keyword checks, scenario classification (dispute, payment confirmation, refund request, and similar), and entity extraction rules for invoice patterns, currency amounts, and decision phrases in the target language.</li></ul>
+<ul>
+<li><strong><code>fleurs_acoustic_v1</code></strong> — licensed human read speech from FLEURS, held out from training use.</li>
+<li><strong><code>fleurs_business_v1</code></strong> — the same source, filtered through <strong>entity mining</strong>: transcripts must pass billing keyword checks, scenario classification (dispute, payment confirmation, refund request, and similar), and entity extraction rules for invoice patterns, currency amounts, and decision phrases in the target language.</li>
+</ul>
 <p>Mining is locale-aware. Thai, Indonesian, and Chinese each carry their own billing-term lexicon and confirmation/refusal patterns rather than relying on English-only labels.</p>
 <p>Each selected clip is written to a JSONL manifest with a human reference transcript, expected entity labels, scenario metadata, and a normalized audio file on the Volume.</p>
 <h3>Step 2 — Dataset quality gates</h3>
 <p><code>02_quality.sh</code> runs a <strong>semantic quality review</strong> on those manifests before any model is scored. This is not a clip-count check. We measure:</p>
-<ul><li><strong>Entity label quality</strong> — are invoice IDs and amounts plausible, not false positives from general speech?</li><li><strong>Scenario consistency</strong> — does the transcript match the assigned billing scenario?</li><li><strong>Audio suitability</strong> — duration within bounds, readable audio bytes</li><li><strong>Duplicate and suspicious-label rates</strong> — caps on near-duplicate transcripts and mis-tagged entities</li></ul>
+<ul>
+<li><strong>Entity label quality</strong> — are invoice IDs and amounts plausible, not false positives from general speech?</li>
+<li><strong>Scenario consistency</strong> — does the transcript match the assigned billing scenario?</li>
+<li><strong>Audio suitability</strong> — duration within bounds, readable audio bytes</li>
+<li><strong>Duplicate and suspicious-label rates</strong> — caps on near-duplicate transcripts and mis-tagged entities</li>
+</ul>
 <p>Datasets that fail these gates do not advance to model evaluation.</p>
 <h3>Steps 3–5 — Register, serve, and score</h3>
 <p>The remaining steps complete the loop:</p>
-<ul><li><strong><code>03_register.sh</code></strong> — register open-source candidates in Unity Catalog (Whisper LoRA for English; locale-specific routes for Thai, Indonesian, and Chinese).</li><li><strong><code>04_serve.sh</code></strong> — deploy Model Serving endpoints for <code>databricks_*</code> routes.</li><li><strong><code>05_eval.sh</code></strong> — score every route in the evaluation matrix: Deepgram Nova-3 (commercial API) and Databricks-hosted models through the <strong>same manifest and scorer</strong>.</li></ul>
+<ul>
+<li><strong><code>03_register.sh</code></strong> — register open-source candidates in Unity Catalog (Whisper LoRA for English; locale-specific routes for Thai, Indonesian, and Chinese).</li>
+<li><strong><code>04_serve.sh</code></strong> — deploy Model Serving endpoints for <code>databricks_*</code> routes.</li>
+<li><strong><code>05_eval.sh</code></strong> — score every route in the evaluation matrix: Deepgram Nova-3 (commercial API) and Databricks-hosted models through the <strong>same manifest and scorer</strong>.</li>
+</ul>
 <p>Business-tier scoring applies <code>assess_readiness()</code> — the same unsafe-for-resolution logic used in the tables below — alongside WER and per-entity accuracy. Results sync to the in-app ASR benchmark view for side-by-side comparison.</p>
 <p>For promotion-scale decisions, we extended this methodology to a larger contact-center business holdout (<strong>420 utterances per locale</strong>) with synthetic billing scenarios and labeled invoice IDs, amounts, and confirmations. The benchmark tables in the next section report that holdout; the <code>ml_asr</code> pipeline is the repeatable path we use to iterate.</p>
-<pre class="mermaid">flowchart LR
-    A[FLEURS per locale] --&gt; B{Tier}
-    B --&gt;|Acoustic| C[Read-speech holdout]
-    B --&gt;|Business| D[Entity mining + labeling]
-    C --&gt; E[Quality gates]
-    D --&gt; E
-    E --&gt; F[Manifest on UC Volume]
-    F --&gt; G[Deepgram + Databricks routes]
-    G --&gt; H[WER + entity + readiness scores]</pre>
+<figure class="blog-diagram"><img src="../assets/genie-for-voice-use-cases/diagram-01.svg.png" alt="Diagram 1" class="blog-diagram" data-diagram="true" /></figure>
 <h2>Benchmark results: identical methodology, divergent outcomes</h2>
 <p>Each locale was evaluated against a <strong>420-utterance contact-center business holdout</strong>, scored with the same readiness logic as the <code>ml_asr</code> business tier. The tables below compare Deepgram Nova-3 with the leading open-source route registered on Databricks at the time of evaluation.</p>
 <h3>Thai (<code>th-TH</code>)</h3>
-<table><tr><th>Measure</th><th>Deepgram Nova-3</th><th>Pathumma Whisper large-v3</th></tr><tr><td>Avg WER</td><td>8.4%</td><td><strong>1.0%</strong></td></tr><tr><td>Critical entity accuracy</td><td>5.6%</td><td>7.8%</td></tr><tr><td>Invoice ID accuracy</td><td><strong>0%</strong></td><td><strong>0%</strong></td></tr><tr><td>Unsafe for resolution</td><td><strong>100%</strong></td><td><strong>100%</strong></td></tr><tr><td>P95 latency</td><td>1.4 s</td><td>28.4 s</td></tr></table>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Measure</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Deepgram Nova-3</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Pathumma Whisper large-v3</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Avg WER</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">8.4%</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>1.0%</strong></td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Critical entity accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">5.6%</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">7.8%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Invoice ID accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>0%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>0%</strong></td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Unsafe for resolution</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>100%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>100%</strong></td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">P95 latency</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">1.4 s</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">28.4 s</td></tr></tbody></table>
 <p>Pathumma Whisper, a Thai-tuned open-source model, achieved substantially lower WER. Neither system produced transcripts suitable for waiver detection. Invoice IDs were not recovered on any utterance.</p>
 <h3>Indonesian (<code>id-ID</code>)</h3>
-<table><tr><th>Measure</th><th>Deepgram Nova-3</th><th>Qwen3-ASR 0.6B</th></tr><tr><td>Avg WER</td><td><strong>0.25%</strong></td><td>1.0%</td></tr><tr><td>Critical entity accuracy</td><td><strong>57.0%</strong></td><td>1.6%</td></tr><tr><td>Invoice ID accuracy</td><td><strong>88.3%</strong></td><td>0%</td></tr><tr><td>Unsafe for resolution</td><td><strong>11.7%</strong></td><td><strong>100%</strong></td></tr><tr><td>Empty transcript rate</td><td>0%</td><td><strong>80.5%</strong></td></tr></table>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Measure</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Deepgram Nova-3</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Qwen3-ASR 0.6B</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Avg WER</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>0.25%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">1.0%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Critical entity accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>57.0%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">1.6%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Invoice ID accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>88.3%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">0%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Unsafe for resolution</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>11.7%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>100%</strong></td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Empty transcript rate</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">0%</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>80.5%</strong></td></tr></tbody></table>
 <p>Indonesian was the most favorable locale for the commercial provider. Qwen3-ASR, an open-source multilingual LLM-based ASR model, returned empty transcripts on most utterances, recovered no invoice IDs, and exhibited unacceptable latency.</p>
 <h3>Chinese (<code>zh-CN</code>)</h3>
-<table><tr><th>Measure</th><th>Deepgram Nova-3</th><th>Qwen3-ASR 0.6B</th></tr><tr><td>Avg WER</td><td>1.0%</td><td>1.0%</td></tr><tr><td>Critical entity accuracy</td><td>17.5%</td><td>1.3%</td></tr><tr><td>Amount accuracy</td><td><strong>0%</strong></td><td><strong>0%</strong></td></tr><tr><td>Unsafe for resolution</td><td><strong>96.7%</strong></td><td><strong>100%</strong></td></tr><tr><td>Numeric recall</td><td><strong>0%</strong></td><td><strong>0%</strong></td></tr></table>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Measure</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Deepgram Nova-3</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Qwen3-ASR 0.6B</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Avg WER</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">1.0%</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">1.0%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Critical entity accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">17.5%</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">1.3%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Amount accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>0%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>0%</strong></td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Unsafe for resolution</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>96.7%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>100%</strong></td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Numeric recall</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>0%</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>0%</strong></td></tr></tbody></table>
 <p>WER remained near 1% for both systems. Amounts and invoice IDs failed at scale. For Chinese billing audio, numeric fidelity — not general word accuracy — was the limiting factor.</p>
-<pre class="mermaid">flowchart TB
-    subgraph inputs [Evaluation corpus per locale]
-        A[420 utterances]
-        B[Human reference transcript]
-        C[Labeled entities: invoice ID, amount, waiver phrase, confirmation]
-    end
-
-    subgraph metrics [Two evaluation layers]
-        D[WER]
-        E[Critical entity accuracy]
-        F[Unsafe for resolution rate]
-    end
-
-    subgraph outcomes [Observed results]
-        G[Thai: low WER, 100% unsafe]
-        H[Indonesian: commercial ASR partially viable]
-        I[Chinese: low WER, 97% unsafe]
-    end
-
-    A --&gt; D
-    A --&gt; E
-    E --&gt; F
-    F --&gt; G
-    F --&gt; H
-    F --&gt; I</pre>
+<figure class="blog-diagram"><img src="../assets/genie-for-voice-use-cases/diagram-02.svg.png" alt="Diagram 2" class="blog-diagram" data-diagram="true" /></figure>
 <h2>Why Asian languages present distinct engineering challenges</h2>
 <h3>1. Training data rarely matches production conditions</h3>
 <p>Most open ASR corpora emphasize read speech, high-resource languages, and clean wideband audio. Asian contact centers introduce additional complexity:</p>
-<ul><li><strong>Tonal and syllable-timed phonology</strong> (Thai, Mandarin), where small acoustic errors alter meaning</li><li><strong>Particle-rich grammar</strong> (Indonesian), where phrase boundaries affect short confirmations</li><li><strong>Code-switching</strong> between local language and English product identifiers</li><li><strong>Narrowband telephony</strong> (8 kHz), which removes spectral cues present in 16 kHz wideband training data</li></ul>
+<ul>
+<li><strong>Tonal and syllable-timed phonology</strong> (Thai, Mandarin), where small acoustic errors alter meaning</li>
+<li><strong>Particle-rich grammar</strong> (Indonesian), where phrase boundaries affect short confirmations</li>
+<li><strong>Code-switching</strong> between local language and English product identifiers</li>
+<li><strong>Narrowband telephony</strong> (8 kHz), which removes spectral cues present in 16 kHz wideband training data</li>
+</ul>
 <p>Published work on clinical and rural telephony reports WER increasing by a factor of three or more when models trained on clean audio are applied to 8 kHz phone channels — a domain shift, not a parameter adjustment (<a href="https://arxiv.org/html/2512.16401v5">arXiv 2512.16401</a>). Resampling 8 kHz audio to 16 kHz is necessary but insufficient; codec compression introduces distortions that bandwidth limiting alone does not replicate.</p>
 <h3>2. Multilingual models are not fungible across the region</h3>
 <p>Language coverage in a model card does not imply uniform fitness:</p>
-<ul><li><strong>SenseVoice</strong> performs strongly on Chinese but does not support Thai or Indonesian</li><li><strong>Canary</strong> targets European languages</li><li><strong>Qwen3-ASR</strong> lists Thai, Indonesian, and Chinese, yet our domain benchmark and telephony evaluations revealed severe failure modes on billing utterances and narrowband audio</li><li><strong>Whisper</strong> spans 99 languages but requires per-locale adaptation for billing entities and telephony conditions</li></ul>
+<ul>
+<li><strong>SenseVoice</strong> performs strongly on Chinese but does not support Thai or Indonesian</li>
+<li><strong>Canary</strong> targets European languages</li>
+<li><strong>Qwen3-ASR</strong> lists Thai, Indonesian, and Chinese, yet our domain benchmark and telephony evaluations revealed severe failure modes on billing utterances and narrowband audio</li>
+<li><strong>Whisper</strong> spans 99 languages but requires per-locale adaptation for billing entities and telephony conditions</li>
+</ul>
 <p>A single model serving English, Thai, Indonesian, and Chinese in a regulated billing workflow is not a viable default. We adopted <strong>per-locale routing</strong> — distinct model families by language — which increases operational complexity but reflects the empirical results.</p>
-<pre class="mermaid">flowchart LR
-    subgraph problem [Single-model assumption]
-        M[One multilingual ASR]
-        M --&gt; TH[Thai]
-        M --&gt; ID[Indonesian]
-        M --&gt; ZH[Chinese]
-    end
-
-    subgraph reality [Per-locale routing]
-        TH2[Thai: language-specific Whisper variant]
-        ID2[Indonesian: adapted Whisper or commercial ASR]
-        ZH2[Chinese: FunASR or narrowband Paraformer]
-        EN[English: adapted Whisper or commercial ASR]
-    end
-
-    problem -.-&gt;|benchmark evaluation| reality</pre>
+<figure class="blog-diagram"><img src="../assets/genie-for-voice-use-cases/diagram-03.svg.png" alt="Diagram 3" class="blog-diagram" data-diagram="true" /></figure>
 <h3>3. Word accuracy and business safety measure different properties</h3>
 <p>Research on named-entity recognition over ASR output demonstrates that downstream task error can diverge sharply from WER — transcripts may appear fluent while populating the wrong entity values (<a href="https://doi.org/10.18653/v1/2023.acl-long.98">Why Aren&#x27;t We NER Yet?, ACL 2023</a>).</p>
 <p>We observed the same pattern in Thai: conversational content transcribed with reasonable fidelity while <strong>invoice IDs scored 0%</strong> across all evaluated models. Intent and action detection depend on identifiers and confirmations remaining in the text.</p>
@@ -295,14 +335,19 @@
 <h2>What we can do better</h2>
 <p>The evaluation clarified where investment should go next. The tables below list the <strong>open-source models we registered and scored on Databricks</strong>, the commercial baseline used for comparison, and the <strong>candidates we plan to evaluate next</strong> based on locale fit, published benchmarks, and the failure modes observed in our holdout.</p>
 <h3>Models evaluated</h3>
-<table><tr><th>Locale</th><th>Commercial baseline</th><th>Open-source model evaluated</th><th>Role in evaluation</th></tr><tr><td><code>en-US</code></td><td>Deepgram Nova-3</td><td><strong>Whisper large-v3 + LoRA</strong> (billing fine-tune)</td><td>English billing-domain adaptation via parameter-efficient fine-tuning</td></tr><tr><td><code>th-TH</code></td><td>Deepgram Nova-3</td><td><strong>Pathumma Whisper large-v3</strong></td><td>Thai-tuned Whisper baseline</td></tr><tr><td><code>id-ID</code></td><td>Deepgram Nova-3</td><td><strong>Qwen3-ASR 0.6B</strong></td><td>Multilingual LLM-based ASR</td></tr><tr><td><code>zh-CN</code></td><td>Deepgram Nova-3</td><td><strong>Qwen3-ASR 0.6B</strong></td><td>Multilingual LLM-based ASR</td></tr></table>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Locale</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Commercial baseline</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Open-source model evaluated</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Role in evaluation</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>en-US</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Deepgram Nova-3</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Whisper large-v3 + LoRA</strong> (billing fine-tune)</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">English billing-domain adaptation via parameter-efficient fine-tuning</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>th-TH</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Deepgram Nova-3</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Pathumma Whisper large-v3</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Thai-tuned Whisper baseline</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>id-ID</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Deepgram Nova-3</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Qwen3-ASR 0.6B</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Multilingual LLM-based ASR</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>zh-CN</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Deepgram Nova-3</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Qwen3-ASR 0.6B</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Multilingual LLM-based ASR</td></tr></tbody></table>
 <p>Deepgram Nova-3 served as the commercial reference across all four locales. Each open-source model was registered in Unity Catalog, deployed to a Databricks Model Serving endpoint, and scored through the same <code>ml_asr</code> manifests and readiness logic.</p>
 <p><strong>What the holdout showed about these OSS routes:</strong></p>
-<ul><li><strong>Whisper LoRA (English)</strong> — viable starting point; extend with telephony-band augmentation before PSTN deployment.</li><li><strong>Pathumma Whisper (Thai)</strong> — strong WER (~1%) but <strong>0% invoice ID recovery</strong> and 100% unsafe for resolution; word accuracy alone is insufficient.</li><li><strong>Qwen3-ASR 0.6B (Indonesian)</strong> — 80.5% empty transcripts, 0% invoice IDs, 100% unsafe; materially worse than Deepgram on domain audio.</li><li><strong>Qwen3-ASR 0.6B (Chinese)</strong> — 83.8% empty transcripts, 0% amounts and invoice IDs, 100% unsafe; unsuitable for billing holdout despite competitive published multilingual scores.</li></ul>
+<ul>
+<li><strong>Whisper LoRA (English)</strong> — viable starting point; extend with telephony-band augmentation before PSTN deployment.</li>
+<li><strong>Pathumma Whisper (Thai)</strong> — strong WER (~1%) but <strong>0% invoice ID recovery</strong> and 100% unsafe for resolution; word accuracy alone is insufficient.</li>
+<li><strong>Qwen3-ASR 0.6B (Indonesian)</strong> — 80.5% empty transcripts, 0% invoice IDs, 100% unsafe; materially worse than Deepgram on domain audio.</li>
+<li><strong>Qwen3-ASR 0.6B (Chinese)</strong> — 83.8% empty transcripts, 0% amounts and invoice IDs, 100% unsafe; unsuitable for billing holdout despite competitive published multilingual scores.</li>
+</ul>
 <h3>Next open-source models to evaluate by locale</h3>
 <p>Our objective is to identify self-hosted speech-to-text routes that meet business-tier acceptance criteria on Databricks. No single open-source model covers English, Thai, Indonesian, and Chinese with acceptable billing-entity fidelity, so the next evaluation cycle should test <strong>a distinct model per locale</strong> rather than another multilingual checkpoint.</p>
 <p>The table below lists <strong>open-source candidates for the next comparative evaluation</strong>. These are not committed production selections. Deepgram Nova-3 remains the commercial reference and a viable production option where registered OSS routes have not yet passed acceptance gates.</p>
-<table><tr><th>Locale</th><th>Current registered OSS model</th><th>Next OSS candidates for evaluation</th><th>Why we are evaluating them</th></tr><tr><td><code>en-US</code></td><td>Whisper large-v3 + LoRA</td><td><strong>faster-whisper large-v3-turbo</strong> with telephony LoRA</td><td>Extends the existing LoRA pipeline; faster-whisper is reported to be more robust on narrowband telephony codecs</td></tr><tr><td><code>th-TH</code></td><td>Pathumma Whisper large-v3</td><td><strong>Typhoon Whisper large-v3</strong> or <strong>Thonburian Whisper large-v3</strong> (utterance); <strong>Typhoon ASR Real-Time</strong> (streaming)</td><td>Thai-specific training corpora; Thonburian reports financial-domain and noisy-audio robustness</td></tr><tr><td><code>id-ID</code></td><td>Qwen3-ASR 0.6B</td><td><strong>cahya/whisper-large-id</strong> or <strong>cahya/whisper-medium-id</strong></td><td>Indonesian Whisper fine-tunes within the same adaptation family; addresses Qwen3 empty-transcript failures on billing audio</td></tr><tr><td><code>zh-CN</code></td><td>Qwen3-ASR 0.6B</td><td><strong>FunASR SenseVoice-Small</strong> (utterance); <strong>FunASR Paraformer-8k</strong> (telephony)</td><td>Strong published Chinese benchmarks; Paraformer provides native 8 kHz telephony variants</td></tr></table>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Locale</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Current registered OSS model</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Next OSS candidates for evaluation</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Why we are evaluating them</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>en-US</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Whisper large-v3 + LoRA</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>faster-whisper large-v3-turbo</strong> with telephony LoRA</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Extends the existing LoRA pipeline; faster-whisper is reported to be more robust on narrowband telephony codecs</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>th-TH</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Pathumma Whisper large-v3</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>Typhoon Whisper large-v3</strong> or <strong>Thonburian Whisper large-v3</strong> (utterance); <strong>Typhoon ASR Real-Time</strong> (streaming)</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Thai-specific training corpora; Thonburian reports financial-domain and noisy-audio robustness</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>id-ID</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR 0.6B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>cahya/whisper-large-id</strong> or <strong>cahya/whisper-medium-id</strong></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Indonesian Whisper fine-tunes within the same adaptation family; addresses Qwen3 empty-transcript failures on billing audio</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><code>zh-CN</code></td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR 0.6B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;"><strong>FunASR SenseVoice-Small</strong> (utterance); <strong>FunASR Paraformer-8k</strong> (telephony)</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Strong published Chinese benchmarks; Paraformer provides native 8 kHz telephony variants</td></tr></tbody></table>
 <p>The following models are <strong>deprioritized</strong> for this use case based on language coverage or observed channel fit: <strong>SenseVoice</strong> (no Thai or Indonesian), <strong>Canary-1B-v2</strong> (European languages only), and <strong>Qwen3-ASR</strong> on telephony or billing-entity paths until domain holdout performance improves.</p>
 <p>Each candidate must pass the same business-tier acceptance criteria — critical entity accuracy and unsafe-for-resolution rate — before it can replace a registered route.</p>
 <h3>1. Richer business audio, especially for Thai and Chinese</h3>
@@ -325,12 +370,23 @@
 <h2>Appendix: evaluation protocol</h2>
 <p>Comparisons followed a consistent protocol: call-level train and test partitioning to prevent data leakage, a held-out benchmark corpus excluded from model selection, identical scoring logic across providers, and separate assessment planned for narrowband telephony audio. Results from microphone-quality 16 kHz audio do not generalize to PSTN channels.</p>
 <h2>Sources and Further Reading</h2>
-<ul><li><a href="https://doi.org/10.18653/v1/2023.acl-long.98">Why Aren&#x27;t We NER Yet? (ACL 2023)</a> — ASR errors versus downstream entity extraction</li><li><a href="https://arxiv.org/html/2512.16401v5">Navigating the Reality Gap: ASR for Clinical Telephony (arXiv 2512.16401)</a> — clean versus telephony WER degradation</li><li><a href="https://arxiv.org/html/2601.21337">Qwen3-ASR Technical Report</a> — multilingual coverage versus deployment fitness</li><li><a href="https://github.com/modelscope/FunASR">FunASR</a> — Chinese ASR including 8 kHz telephony variants</li><li><a href="https://github.com/FunAudioLLM/SenseVoice">FunASR SenseVoice</a> — Chinese utterance ASR candidate</li><li><a href="https://huggingface.co/typhoon-ai/typhoon-whisper-large-v3">Typhoon Whisper Large-v3</a> — Thai-focused Whisper training</li><li><a href="https://opentyphoon.ai/blog/en/typhoon-asr-realtime-release">Typhoon ASR Real-Time</a> — Thai streaming ASR candidate</li><li><a href="https://huggingface.co/biodatlab/whisper-th-large-v3-combined">Thonburian Whisper</a> — Thai Whisper with financial-domain training</li><li><a href="https://huggingface.co/cahya/whisper-large-id">cahya/whisper-large-id</a> — Indonesian Whisper fine-tunes</li><li><a href="https://huggingface.co/cahya/whisper-medium-id">cahya/whisper-medium-id</a> — lighter Indonesian Whisper candidate</li><li><a href="https://docs.databricks.com/en/generative-ai/genie.html">Databricks AI/BI Genie</a> — governed reasoning layer in the broader voice stack</li></ul>
+<ul>
+<li><a href="https://doi.org/10.18653/v1/2023.acl-long.98">Why Aren&#x27;t We NER Yet? (ACL 2023)</a> — ASR errors versus downstream entity extraction</li>
+<li><a href="https://arxiv.org/html/2512.16401v5">Navigating the Reality Gap: ASR for Clinical Telephony (arXiv 2512.16401)</a> — clean versus telephony WER degradation</li>
+<li><a href="https://arxiv.org/html/2601.21337">Qwen3-ASR Technical Report</a> — multilingual coverage versus deployment fitness</li>
+<li><a href="https://github.com/modelscope/FunASR">FunASR</a> — Chinese ASR including 8 kHz telephony variants</li>
+<li><a href="https://github.com/FunAudioLLM/SenseVoice">FunASR SenseVoice</a> — Chinese utterance ASR candidate</li>
+<li><a href="https://huggingface.co/typhoon-ai/typhoon-whisper-large-v3">Typhoon Whisper Large-v3</a> — Thai-focused Whisper training</li>
+<li><a href="https://opentyphoon.ai/blog/en/typhoon-asr-realtime-release">Typhoon ASR Real-Time</a> — Thai streaming ASR candidate</li>
+<li><a href="https://huggingface.co/biodatlab/whisper-th-large-v3-combined">Thonburian Whisper</a> — Thai Whisper with financial-domain training</li>
+<li><a href="https://huggingface.co/cahya/whisper-large-id">cahya/whisper-large-id</a> — Indonesian Whisper fine-tunes</li>
+<li><a href="https://huggingface.co/cahya/whisper-medium-id">cahya/whisper-medium-id</a> — lighter Indonesian Whisper candidate</li>
+<li><a href="https://docs.databricks.com/en/generative-ai/genie.html">Databricks AI/BI Genie</a> — governed reasoning layer in the broader voice stack</li>
+</ul>
     </article>
   </main>
 
-  <template id="markdown-source">
-# Why Is It Hard to Build Voice Models for Asian Languages?
+  <template id="markdown-source"># Why Is It Hard to Build Voice Models for Asian Languages?
 
 ## The use case
 
@@ -452,6 +508,17 @@ Business-tier scoring applies `assess_readiness()` — the same unsafe-for-resol
 
 For promotion-scale decisions, we extended this methodology to a larger contact-center business holdout (**420 utterances per locale**) with synthetic billing scenarios and labeled invoice IDs, amounts, and confirmations. The benchmark tables in the next section report that holdout; the `ml_asr` pipeline is the repeatable path we use to iterate.
 
+```mermaid
+flowchart LR
+    A[FLEURS per locale] --&gt; B{Tier}
+    B --&gt;|Acoustic| C[Read-speech holdout]
+    B --&gt;|Business| D[Entity mining + labeling]
+    C --&gt; E[Quality gates]
+    D --&gt; E
+    E --&gt; F[Manifest on UC Volume]
+    F --&gt; G[Deepgram + Databricks routes]
+    G --&gt; H[WER + entity + readiness scores]
+```
 
 ## Benchmark results: identical methodology, divergent outcomes
 
@@ -493,6 +560,33 @@ Indonesian was the most favorable locale for the commercial provider. Qwen3-ASR,
 
 WER remained near 1% for both systems. Amounts and invoice IDs failed at scale. For Chinese billing audio, numeric fidelity — not general word accuracy — was the limiting factor.
 
+```mermaid
+flowchart TB
+    subgraph inputs [Evaluation corpus per locale]
+        A[420 utterances]
+        B[Human reference transcript]
+        C[Labeled entities: invoice ID, amount, waiver phrase, confirmation]
+    end
+
+    subgraph metrics [Two evaluation layers]
+        D[WER]
+        E[Critical entity accuracy]
+        F[Unsafe for resolution rate]
+    end
+
+    subgraph outcomes [Observed results]
+        G[Thai: low WER, 100% unsafe]
+        H[Indonesian: commercial ASR partially viable]
+        I[Chinese: low WER, 97% unsafe]
+    end
+
+    A --&gt; D
+    A --&gt; E
+    E --&gt; F
+    F --&gt; G
+    F --&gt; H
+    F --&gt; I
+```
 
 ## Why Asian languages present distinct engineering challenges
 
@@ -518,6 +612,24 @@ Language coverage in a model card does not imply uniform fitness:
 
 A single model serving English, Thai, Indonesian, and Chinese in a regulated billing workflow is not a viable default. We adopted **per-locale routing** — distinct model families by language — which increases operational complexity but reflects the empirical results.
 
+```mermaid
+flowchart LR
+    subgraph problem [Single-model assumption]
+        M[One multilingual ASR]
+        M --&gt; TH[Thai]
+        M --&gt; ID[Indonesian]
+        M --&gt; ZH[Chinese]
+    end
+
+    subgraph reality [Per-locale routing]
+        TH2[Thai: language-specific Whisper variant]
+        ID2[Indonesian: adapted Whisper or commercial ASR]
+        ZH2[Chinese: FunASR or narrowband Paraformer]
+        EN[English: adapted Whisper or commercial ASR]
+    end
+
+    problem -.-&gt;|benchmark evaluation| reality
+```
 
 ### 3. Word accuracy and business safety measure different properties
 
@@ -627,16 +739,124 @@ Comparisons followed a consistent protocol: call-level train and test partitioni
   <script>
     const article = document.getElementById("blog-preview");
     const status = document.getElementById("copy-status");
+    const PUBLISH_API = "http://127.0.0.1:8765/api/publish/medium";
+    const ARTICLE_TITLE = "Why Is It Hard to Build Voice Models for Asian Languages?";
 
-    function fallbackCopyRichHtml(htmlValue, textValue) {
+    function preparePublishImages(root) {
+      root.querySelectorAll("img").forEach((image) => {
+        if (image.dataset.publicSrc) {
+          image.setAttribute("src", image.dataset.publicSrc);
+          image.removeAttribute("data-public-src");
+        } else if (image.dataset.copySrc) {
+          image.setAttribute("src", image.dataset.copySrc);
+        }
+      });
+    }
+
+    function flattenTablesForPublish(root) {
+      root.querySelectorAll("table").forEach((table) => {
+        const rows = [];
+        table.querySelectorAll("thead tr").forEach((row) => rows.push(row.cloneNode(true)));
+        table.querySelectorAll("tbody tr").forEach((row) => rows.push(row.cloneNode(true)));
+        if (!rows.length) {
+          table.querySelectorAll("tr").forEach((row) => rows.push(row.cloneNode(true)));
+        }
+        const body = document.createElement("tbody");
+        rows.forEach((row) => body.appendChild(row));
+        table.innerHTML = "";
+        table.appendChild(body);
+      });
+    }
+
+    function cloneNodeWithCopySrc(node) {
+      const clone = node.cloneNode(true);
+      if (node.dataset && node.dataset.copySrc) {
+        clone.setAttribute("src", node.dataset.copySrc);
+      }
+      return clone;
+    }
+
+    function buildPublishContentSync() {
+      const root = document.createElement("div");
+      const hero = document.querySelector(".preview-hero");
+      if (hero) {
+        root.appendChild(cloneNodeWithCopySrc(hero));
+      }
+      const articleClone = article.cloneNode(true);
+      articleClone.querySelectorAll("img").forEach((cloneImg, index) => {
+        const liveImg = article.querySelectorAll("img")[index];
+        if (liveImg && liveImg.dataset.copySrc) {
+          cloneImg.setAttribute("src", liveImg.dataset.copySrc);
+        }
+      });
+      root.appendChild(articleClone);
+      preparePublishImages(root);
+      flattenTablesForPublish(root);
+      root.querySelectorAll(".mermaid, [data-mermaid-source]").forEach((node) => {
+        node.remove();
+      });
+      return { html: root.innerHTML, text: root.innerText };
+    }
+
+    function cacheCopyImageSource(img) {
+      if (img.dataset.copySrc || !img.complete || !img.naturalWidth) {
+        return;
+      }
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          img.dataset.copySrc = img.currentSrc || img.src;
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        img.dataset.copySrc = canvas.toDataURL("image/png");
+      } catch (err) {
+        img.dataset.copySrc = img.currentSrc || img.src;
+      }
+    }
+
+    function cacheAllCopyImageSources() {
+      const hero = document.querySelector(".preview-hero");
+      if (hero) {
+        cacheCopyImageSource(hero);
+      }
+      article.querySelectorAll("img").forEach((img) => {
+        if (!img.complete) {
+          img.addEventListener("load", () => cacheCopyImageSource(img), { once: true });
+          return;
+        }
+        cacheCopyImageSource(img);
+      });
+    }
+
+    function wrapClipboardHtml(html) {
+      return `<!DOCTYPE html><html><body><!--StartFragment-->${html}<!--EndFragment--></body></html>`;
+    }
+
+    function copyRichHtmlSync(html, plain) {
+      const wrapped = wrapClipboardHtml(html);
+
+      function onCopy(event) {
+        event.clipboardData.setData("text/html", wrapped);
+        event.clipboardData.setData("text/plain", plain);
+        event.preventDefault();
+      }
+
+      document.addEventListener("copy", onCopy, { once: true });
       const container = document.createElement("div");
       container.contentEditable = "true";
+      container.innerHTML = html;
       container.style.position = "fixed";
-      container.style.left = "-9999px";
+      container.style.left = "0";
       container.style.top = "0";
-      container.innerHTML = htmlValue;
+      container.style.width = "1px";
+      container.style.height = "1px";
+      container.style.opacity = "0.01";
       document.body.appendChild(container);
-
+      container.focus();
       const range = document.createRange();
       range.selectNodeContents(container);
       const selection = window.getSelection();
@@ -645,134 +865,125 @@ Comparisons followed a consistent protocol: call-level train and test partitioni
       const copied = document.execCommand("copy");
       selection.removeAllRanges();
       container.remove();
-
-      if (!copied) {
-        const textArea = document.createElement("textarea");
-        textArea.value = textValue;
-        textArea.style.position = "fixed";
-        textArea.style.left = "-9999px";
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        const textCopied = document.execCommand("copy");
-        textArea.remove();
-        return textCopied;
-      }
-
       return copied;
     }
 
-    function cleanMermaidLabel(value) {
-      return value
-        .replace(/<br\s*\/?>/gi, " ")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/[`"']/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
+    function selectArticleForManualCopy() {
+      const hero = document.querySelector(".preview-hero");
+      const range = document.createRange();
+      if (hero) {
+        range.setStartBefore(hero);
+      } else {
+        range.setStartBefore(article);
+      }
+      range.setEndAfter(article);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      status.textContent = "Article selected. Press Cmd+C, open Medium, then Cmd+V.";
     }
 
-    function extractMermaidLabels(source) {
-      const labels = [];
-      const seen = new Set();
-      const addLabel = (value) => {
-        const label = cleanMermaidLabel(value);
-        if (label && !seen.has(label)) {
-          seen.add(label);
-          labels.push(label);
+    function copyAndOpen(url) {
+      if (location.protocol === "file:") {
+        status.textContent = "Open with --serve --open, not file://.";
+        return;
+      }
+
+      const publishContent = buildPublishContentSync();
+      status.textContent = "Copying...";
+
+      const finish = (copied) => {
+        if (!copied) {
+          selectArticleForManualCopy();
+          status.textContent = "Auto-copy failed. Article selected — press Cmd+C, then paste in Medium.";
+        } else {
+          status.textContent = "Copied. Paste in Medium with Cmd+V or Ctrl+V.";
         }
+        setTimeout(() => window.open(url, "_blank", "noopener"), 120);
       };
 
-      source.split(/\n/).forEach((line) => {
-        const trimmed = line.trim();
-        if (!trimmed || /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|subgraph|end|classDef|style|linkStyle)\b/i.test(trimmed)) {
+      if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
+        const wrapped = wrapClipboardHtml(publishContent.html);
+        navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([wrapped], { type: "text/html" }),
+            "text/plain": new Blob([publishContent.text], { type: "text/plain" }),
+          }),
+        ]).then(() => finish(true)).catch(() => finish(copyRichHtmlSync(publishContent.html, publishContent.text)));
+        return;
+      }
+
+      finish(copyRichHtmlSync(publishContent.html, publishContent.text));
+    }
+
+    window.addEventListener("load", () => {
+      cacheAllCopyImageSources();
+      setTimeout(cacheAllCopyImageSources, 300);
+      setTimeout(cacheAllCopyImageSources, 1200);
+    });
+
+    document.querySelectorAll(".publish-copy").forEach((button) => {
+      button.addEventListener("click", () => {
+        copyAndOpen(button.dataset.publishUrl);
+      });
+    });
+
+    document.querySelectorAll(".publish-select").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectArticleForManualCopy();
+      });
+    });
+
+    async function publishToMedium(publishStatus) {
+      if (location.protocol === "file:") {
+        status.textContent = "Start the preview server: python3 scripts/preview_blog.py <blog.md> --serve";
+        return;
+      }
+
+      let token = localStorage.getItem("medium_integration_token");
+      if (!token) {
+        token = window.prompt(
+          "Legacy Medium integration token (only if you already have one):"
+        );
+        if (!token) {
+          status.textContent = "API publish cancelled. Use Copy and open Medium instead.";
           return;
         }
-
-        const bracketMatches = trimmed.matchAll(/[A-Za-z0-9_-]*\s*(?:\[([^\]]+)\]|\(([^)]+)\)|\{([^}]+)\})/g);
-        for (const match of bracketMatches) {
-          addLabel(match[1] || match[2] || match[3] || "");
-        }
-      });
-
-      return labels;
-    }
-
-    function mermaidSourceToSummary(source) {
-      const labels = extractMermaidLabels(source);
-      const figure = document.createElement("figure");
-      const caption = document.createElement("p");
-      caption.innerHTML = "<strong>Diagram summary</strong>";
-      figure.appendChild(caption);
-
-      if (labels.length) {
-        const list = document.createElement("ol");
-        labels.forEach((label) => {
-          const item = document.createElement("li");
-          item.textContent = label;
-          list.appendChild(item);
-        });
-        figure.appendChild(list);
-      } else {
-        const fallback = document.createElement("p");
-        fallback.textContent = "See the local preview for the visual diagram.";
-        figure.appendChild(fallback);
+        localStorage.setItem("medium_integration_token", token.trim());
       }
 
-      return figure;
-    }
-
-    function articleHtmlForPublishing() {
-      const clone = document.createElement("div");
-      const hero = document.querySelector(".preview-hero");
-      if (hero) {
-        clone.appendChild(hero.cloneNode(true));
-      }
-      clone.appendChild(article.cloneNode(true));
-      clone.querySelectorAll("img").forEach((image) => {
-        if (image.dataset.publicSrc) {
-          image.setAttribute("src", image.dataset.publicSrc);
-          image.removeAttribute("data-public-src");
-        }
-      });
-      clone.querySelectorAll(".mermaid, [data-mermaid-source]").forEach((node) => {
-        const source = node.getAttribute("data-mermaid-source") || node.textContent || "";
-        node.replaceWith(mermaidSourceToSummary(source));
-      });
-      return { html: clone.innerHTML, text: clone.innerText };
-    }
-
-    async function copyBlogDraft() {
-      const publishContent = articleHtmlForPublishing();
-      const htmlValue = publishContent.html;
-      const textValue = publishContent.text;
+      status.textContent = publishStatus === "public" ? "Publishing publicly..." : "Publishing draft...";
+      const publishContent = buildPublishContentSync();
 
       try {
-        if (navigator.clipboard && window.ClipboardItem) {
-          await navigator.clipboard.write([
-            new ClipboardItem({
-              "text/html": new Blob([htmlValue], { type: "text/html" }),
-              "text/plain": new Blob([textValue], { type: "text/plain" }),
-            }),
-          ]);
-          status.textContent = "Blog draft copied with formatting.";
-          return true;
+        const response = await fetch(PUBLISH_API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: token.trim(),
+            title: ARTICLE_TITLE,
+            content: publishContent.html,
+            publishStatus: publishStatus,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || "Medium publish failed.");
+        }
+        status.textContent = publishStatus === "public"
+          ? "Published on Medium."
+          : "Draft published on Medium.";
+        if (payload.url) {
+          window.open(payload.url, "_blank", "noopener");
         }
       } catch (err) {
-        // Local file previews may not have Clipboard API permission.
+        status.textContent = err.message || "Medium publish failed.";
       }
-
-      const copied = fallbackCopyRichHtml(htmlValue, textValue);
-      status.textContent = copied
-        ? "Blog draft copied. Paste it into the platform editor."
-        : "Could not copy automatically. Select the article content manually.";
-      return copied;
     }
 
-    document.querySelectorAll("[data-publish-url]").forEach((button) => {
+    document.querySelectorAll(".publish-direct").forEach((button) => {
       button.addEventListener("click", async () => {
-        await copyBlogDraft();
-        window.open(button.dataset.publishUrl, "_blank", "noopener");
+        await publishToMedium(button.dataset.publishStatus || "draft");
       });
     });
   </script>

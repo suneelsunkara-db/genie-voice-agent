@@ -3,7 +3,7 @@ title: "Why Is It Hard to Build Voice Models for Asian Languages?"
 subtitle: "Benchmarking Thai, Indonesian, and Chinese speech recognition for contact-center billing showed us that word error rate and operational safety diverge — and that no single model covers the region."
 platform: markdown
 length: standard
-thumbnail: assets/genie-for-voice-use-cases/header-thumbnail.svg
+thumbnail: assets/genie-for-voice-use-cases/header-thumbnail.png
 ---
 
 # Why Is It Hard to Build Voice Models for Asian Languages?
