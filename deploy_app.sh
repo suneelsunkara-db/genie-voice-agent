@@ -80,15 +80,19 @@ fi
 # ---- 3. app resource spec (auto-grants the app SP on deploy) ----------------
 APP_JSON="$(mktemp)"
 INCLUDE_EL="$([[ -n "$ELEVENLABS_API_KEY" ]] && echo 1 || echo 0)"
+# Derive the ASR endpoints to attach as app resources from the DEPLOYED config
+# (config/config.yaml) - NOT get_settings(), which deep-merges the gitignored
+# config.local.yaml. Local dev overrides (e.g. a personal base endpoint) must not
+# leak into the app's granted resources, since config.local.yaml is never synced.
 if [[ -z "$ASR_ENDPOINTS" ]]; then
   ASR_ENDPOINTS="$(
-    PYTHONPATH=backend "$PYBIN" - <<PY 2>/dev/null || true
-from genie_voice.config import get_settings
-
-s = get_settings()
-opts = s.providers.stt.options.get("databricks", {})
+    CONFIG_YAML="$ROOT/config/config.yaml" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" "$PYBIN" - <<'PY' 2>/dev/null || true
+import os, yaml
+with open(os.environ["CONFIG_YAML"]) as fh:
+    cfg = yaml.safe_load(fh) or {}
+opts = ((((cfg.get("providers") or {}).get("stt") or {}).get("options") or {}).get("databricks")) or {}
 endpoints = []
-base = opts.get("endpoint") or "$WHISPER_ENDPOINT"
+base = opts.get("endpoint") or os.environ.get("WHISPER_ENDPOINT")
 if base:
     endpoints.append(base)
 for route in (opts.get("routes") or opts.get("language_routes") or {}).values():
@@ -96,13 +100,31 @@ for route in (opts.get("routes") or opts.get("language_routes") or {}).values():
         endpoints.append(route["endpoint"])
 seen = []
 for endpoint in endpoints:
-    if endpoint not in seen:
+    if endpoint and endpoint not in seen:
         seen.append(endpoint)
 print(",".join(seen))
 PY
   )"
 fi
 ASR_ENDPOINTS="${ASR_ENDPOINTS:-$WHISPER_ENDPOINT}"
+
+# Drop any endpoint that does not actually exist so the app-resource attach (which
+# grants CAN_QUERY) can never fail on a phantom serving endpoint. Each attached
+# endpoint is a hard deploy dependency.
+_FILTERED=""
+IFS=',' read -ra _ASR_EPS <<< "$ASR_ENDPOINTS"
+for _ep in "${_ASR_EPS[@]}"; do
+  _ep="$(printf '%s' "$_ep" | xargs)"
+  [[ -z "$_ep" ]] && continue
+  if dbx serving-endpoints get "$_ep" >/dev/null 2>&1; then
+    _FILTERED="${_FILTERED:+$_FILTERED,}$_ep"
+  else
+    warn "ASR endpoint '$_ep' not found - skipping (not attached as an app resource)."
+  fi
+done
+[[ -n "$_FILTERED" ]] || die "No valid ASR serving endpoints resolved to attach. Check config/config.yaml routes."
+ASR_ENDPOINTS="$_FILTERED"
+log "ASR endpoints to attach: $ASR_ENDPOINTS"
 
 APP_NAME="$APP_NAME" SECRET_SCOPE="$SECRET_SCOPE" SQL_WAREHOUSE_ID="$SQL_WAREHOUSE_ID" \
 CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" INCLUDE_EL="$INCLUDE_EL" \
