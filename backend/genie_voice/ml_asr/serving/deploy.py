@@ -46,10 +46,18 @@ def deploy(model_id: str, *, config_path: str | None = None, recreate_on_route_c
             exists = False
 
     if exists:
-        client.serving_endpoints.update_config(name=spec.endpoint, served_entities=config["served_entities"])
+        client.api_client.do(
+            "PUT",
+            f"/api/2.0/serving-endpoints/{spec.endpoint}/config",
+            body=config,
+        )
         action = "update-config"
     else:
-        client.serving_endpoints.create(name=spec.endpoint, config=config, route_optimized=spec.route_optimized)
+        client.api_client.do(
+            "POST",
+            "/api/2.0/serving-endpoints",
+            body={"name": spec.endpoint, "config": config, "route_optimized": spec.route_optimized},
+        )
         action = "create"
 
     status = endpoint_status(model_id, config_path=config_path)
@@ -85,7 +93,7 @@ def endpoint_status(model_id: str, *, config_path: str | None = None) -> dict[st
     return {
         "endpoint": spec.endpoint,
         "exists": True,
-        "ready": ready,
+        "ready": str(ready) if ready is not None else None,
         "config_update": str(config_update) if config_update is not None else None,
         "route_optimized": _route_optimized(client, spec.endpoint),
         "deployments": deployments,
@@ -93,6 +101,8 @@ def endpoint_status(model_id: str, *, config_path: str | None = None) -> dict[st
 
 
 def smoke(model_id: str, *, config_path: str | None = None, manifest_path: str | None = None) -> dict[str, Any]:
+    from genie_voice.ml_asr.config import load_config
+
     spec = get_serving_spec(model_id, config_path=config_path)
     clip = _smoke_clip(spec, manifest_path=manifest_path, config_path=config_path)
     config = load_config(config_path=config_path)

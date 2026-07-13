@@ -1,9 +1,10 @@
-"""Register a multilingual ASR candidate model in Unity Catalog."""
+"""Register an OSS ASR candidate in Unity Catalog (ml_asr pipeline worker)."""
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from mlflow.tracking import MlflowClient
 
 
 def load_pyfunc_class(wrapper_path: Path) -> Any:
-    spec = importlib.util.spec_from_file_location("mlflow_multilingual_asr_pyfunc", wrapper_path)
+    spec = importlib.util.spec_from_file_location("mlflow_oss_asr_pyfunc", wrapper_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load pyfunc wrapper from {wrapper_path}")
     module = importlib.util.module_from_spec(spec)
@@ -24,7 +25,7 @@ def load_pyfunc_class(wrapper_path: Path) -> Any:
     return module.MultilingualASRModel
 
 
-def pip_requirements_for_family(family: str) -> list[str]:
+def pip_requirements_for_family(family: str, requirements_dir: Path) -> list[str]:
     base = [
         "mlflow",
         "torch",
@@ -36,7 +37,7 @@ def pip_requirements_for_family(family: str) -> list[str]:
         "pandas",
     ]
     if family == "funasr":
-        req_path = Path(__file__).resolve().parent / "funasr_serving_requirements.txt"
+        req_path = requirements_dir / "funasr_serving_requirements.txt"
         return [line.strip() for line in req_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     return base
 
@@ -71,8 +72,6 @@ def download_model_snapshot(
     if force_download and snapshot_dir.exists():
         for child in snapshot_dir.iterdir():
             if child.is_dir():
-                import shutil
-
                 shutil.rmtree(child)
             else:
                 child.unlink()
@@ -103,6 +102,7 @@ def main() -> None:
     parser.add_argument("--registered-model", required=True)
     parser.add_argument("--package-dir", required=True)
     parser.add_argument("--wrapper-path", required=True)
+    parser.add_argument("--requirements-dir", required=True)
     parser.add_argument("--output-json", required=True)
     parser.add_argument("--force-download", action="store_true")
     parser.add_argument("--funasr-hub", choices=["ms", "hf"], default="ms")
@@ -110,11 +110,12 @@ def main() -> None:
     parser.add_argument("--funasr-variant", default="")
     parser.add_argument(
         "--experiment-name",
-        default="/Users/suneel.sunkara@databricks.com/genie_multilingual_asr_model_registration",
+        default="/Users/suneel.sunkara@databricks.com/genie_ml_asr_model_registration",
     )
     args = parser.parse_args()
 
     package_dir = Path(args.package_dir)
+    requirements_dir = Path(args.requirements_dir)
     snapshot_dir = package_dir / args.candidate_id / "model_snapshot"
     vad_snapshot_dir = package_dir / args.candidate_id / "vad_snapshot"
     download_model_snapshot(
@@ -185,8 +186,8 @@ def main() -> None:
                 "family": args.family,
                 "base_model": args.base_model,
                 "language": args.language_code,
-                            "adaptation_type": args.adaptation_type,
-                            "fine_tuned_by_us": args.fine_tuned_by_us == "true",
+                "adaptation_type": args.adaptation_type,
+                "fine_tuned_by_us": args.fine_tuned_by_us == "true",
                 "requires_invoice_postprocessing": True,
                 "requires_real_recorded_holdout_before_production": True,
             }
@@ -202,8 +203,8 @@ def main() -> None:
                 "family": args.family,
                 "base_model": args.base_model,
                 "language_code": args.language_code,
-                        "adaptation_type": args.adaptation_type,
-                        "fine_tuned_by_us": args.fine_tuned_by_us,
+                "adaptation_type": args.adaptation_type,
+                "fine_tuned_by_us": args.fine_tuned_by_us,
             }
         )
         mlflow.log_artifact(str(metadata_path), artifact_path="asr_candidate_package_raw")
@@ -214,7 +215,7 @@ def main() -> None:
             registered_model_name=args.registered_model,
             signature=signature,
             input_example=input_example,
-            pip_requirements=pip_requirements_for_family(args.family),
+            pip_requirements=pip_requirements_for_family(args.family, requirements_dir),
             code_paths=[args.wrapper_path],
             metadata=metadata,
         )
@@ -227,8 +228,8 @@ def main() -> None:
         "family": args.family,
         "base_model": args.base_model,
         "language_code": args.language_code,
-                    "adaptation_type": args.adaptation_type,
-                    "fine_tuned_by_us": args.fine_tuned_by_us,
+        "adaptation_type": args.adaptation_type,
+        "fine_tuned_by_us": args.fine_tuned_by_us,
         "requires_invoice_postprocessing": "true",
         "requires_real_recorded_holdout_before_production": "true",
     }

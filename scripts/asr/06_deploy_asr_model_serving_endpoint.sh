@@ -115,7 +115,7 @@ apply_candidate_defaults() {
         ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-CPU}"
         ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-Medium}"
         ;;
-      id_oss_qwen3_asr_0_6b|zh_oss_qwen3_asr_0_6b)
+      id_oss_qwen3_asr_0_6b|zh_oss_qwen3_asr_0_6b|zh_oss_sensevoice_small|zh_oss_paraformer_8k)
         ASR_REGISTERED_MODEL_NAME="${ASR_REGISTERED_MODEL_NAME:-genie_asr_${ASR_SERVING_CANDIDATE}}"
         ASR_SERVING_WORKLOAD_TYPE="${ASR_SERVING_WORKLOAD_TYPE:-CPU}"
         ASR_SERVING_WORKLOAD_SIZE="${ASR_SERVING_WORKLOAD_SIZE:-Medium}"

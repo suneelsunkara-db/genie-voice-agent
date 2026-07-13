@@ -13,11 +13,12 @@ import {
   ResolutionEvent,
 } from "../api/client";
 import { WS_BASE_URL } from "../config";
-import { PRIORITY_RANK, recommend } from "../guidance";
+import { recommend } from "../guidance";
 import {
   isSpeechCaptionSupported,
   MicRecordingSession,
   MicStreamSession,
+  speechRecognitionLanguage,
   SpeechCaptionSession,
   startMicRecording,
   startMicStream,
@@ -26,14 +27,10 @@ import {
 } from "../lib/micStream";
 import {
   localizedValue,
-  localizeRationale,
   localizeResolutionNote,
   uiCopy,
 } from "../i18n";
-import databricksLogo from "../assets/databricks-logo.png";
-import genieLogo from "../assets/genie-logo.png";
-
-const SPOTLIGHT_CUSTOMER_ID = "CUST-4028";
+import { SentientHCol, SentientStep } from "./sentient/Sentient";
 
 type LocalTurn = { text: string; speaker?: number; language?: InteractionLanguage };
 
@@ -49,12 +46,6 @@ function signalsOf(call: CallState) {
     invoice: gold.mentioned_invoice_id ?? live.mentioned_invoice_id,
     amount: gold.mentioned_amount ?? live.mentioned_amount,
   };
-}
-
-function customerPriority(c: CustomerWithIssue) {
-  if (c.issue_status !== "closed") return "high" as const;
-  if ((c.overdue_invoice_count ?? 0) > 0 || c.customer_status === "at_risk") return "medium" as const;
-  return "low" as const;
 }
 
 function localizedIntentLabel(language: InteractionLanguage, code?: string | null): string {
@@ -119,167 +110,7 @@ function localizedRecommendation(
   }
 }
 
-export function CallList({
-  calls,
-  sttProvider,
-  customers,
-  customersLoading,
-  customersErr,
-  languages,
-  selectedLanguage,
-  onLanguageChange,
-}: {
-  calls: CallState[];
-  sttProvider: string;
-  customers: CustomerWithIssue[];
-  customersLoading: boolean;
-  customersErr: string | null;
-  languages?: {
-    default?: InteractionLanguage;
-    supported?: InteractionLanguageOption[];
-  };
-  selectedLanguage: InteractionLanguage;
-  onLanguageChange: (language: InteractionLanguage) => void;
-}) {
-  const copy = uiCopy(selectedLanguage);
-  const sortedCustomers = useMemo(() => {
-    const base = [...customers].sort((a, b) => {
-      const pa = PRIORITY_RANK[customerPriority(a)];
-      const pb = PRIORITY_RANK[customerPriority(b)];
-      if (pa !== pb) return pa - pb;
-      return (b.overdue_amount ?? 0) - (a.overdue_amount ?? 0);
-    });
-    const spotlight = base.find((c) => c.customer_id === SPOTLIGHT_CUSTOMER_ID);
-    if (!spotlight) return base;
-    return [spotlight, ...base.filter((c) => c.customer_id !== SPOTLIGHT_CUSTOMER_ID)];
-  }, [customers]);
-
-  const callByCustomer = useMemo(() => {
-    const map = new Map<string, CallState>();
-    for (const c of calls) {
-      if (c.customer_id && !map.has(c.customer_id)) map.set(c.customer_id, c);
-    }
-    return map;
-  }, [calls]);
-
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
-  const [userPicked, setUserPicked] = useState(false);
-
-  useEffect(() => {
-    if (!sortedCustomers.length || userPicked) return;
-    const defaultId =
-      sortedCustomers.find((c) => c.customer_id === SPOTLIGHT_CUSTOMER_ID)?.customer_id ??
-      sortedCustomers[0].customer_id;
-    setSelectedCustomerId(defaultId);
-  }, [sortedCustomers, userPicked]);
-
-  const selectedCustomer =
-    sortedCustomers.find((c) => c.customer_id === selectedCustomerId) ?? sortedCustomers[0] ?? null;
-  const selectedCall = selectedCustomer?.call_id
-    ? calls.find((c) => c.call_id === selectedCustomer.call_id) ??
-      callByCustomer.get(selectedCustomer.customer_id) ??
-      null
-    : selectedCustomer
-    ? callByCustomer.get(selectedCustomer.customer_id) ?? null
-    : null;
-
-  const [conversationByCall, setConversationByCall] = useState<
-    Record<string, LocalTurn[]>
-  >({});
-
-  if (customersLoading && !customers.length) {
-    return <p className="muted">{copy.loadingCustomers}</p>;
-  }
-
-  if (!sortedCustomers.length) {
-    return (
-      <p className="muted">
-        {customersErr
-          ? `${copy.unableToLoadCustomers}: ${customersErr}`
-          : copy.noCustomers}
-      </p>
-    );
-  }
-
-  return (
-    <div className="cc-layout">
-      <aside className="cc-sidebar">
-        <div className="cc-stack-brand">
-          <img className="hero-logo dbx-full side" src={databricksLogo} alt="Databricks" />
-          <img className="hero-logo genie-full side" src={genieLogo} alt="Genie" />
-        </div>
-        <div className="cc-sidebar-title">{copy.sidebarTitle}</div>
-        <div className="cc-sidebar-sub">{copy.sidebarSubtitle}</div>
-        {sortedCustomers.map((c) => {
-          const prio = customerPriority(c);
-          const active = selectedCustomer?.customer_id === c.customer_id;
-          const hasLiveCall = Boolean(c.call_id ?? callByCustomer.get(c.customer_id)?.call_id);
-          return (
-            <button
-              key={c.customer_id}
-              className={`cc-call-row cc-customer-row ${active ? "active" : ""} ${
-                !hasLiveCall ? "cc-customer-muted" : ""
-              }`}
-              onClick={() => {
-                setUserPicked(true);
-                setSelectedCustomerId(c.customer_id);
-              }}
-            >
-              <span className={`prio-dot p-${prio}`} />
-              <span className="cc-call-main">
-                <span className="cc-customer-name">{c.full_name ?? c.customer_id}</span>
-                <span className="cc-call-id">{c.customer_id}</span>
-                <span className="cc-call-intent">
-                  {c.rationale
-                    ? localizeRationale(selectedLanguage, c.rationale)
-                    : localizedIntentLabel(selectedLanguage, c.primary_intent)}
-                </span>
-                {c.call_id && <span className="cc-customer-call">{copy.call} {c.call_id}</span>}
-              </span>
-              <span className={`badge sentiment cc-sentiment ${c.sentiment_label ?? "neutral"}`}>
-                {localizedValue(selectedLanguage, c.sentiment_label ?? c.issue_status)}
-              </span>
-            </button>
-          );
-        })}
-      </aside>
-
-      {selectedCall ? (
-        <Cockpit
-          call={selectedCall}
-          customer={selectedCustomer}
-          sttProvider={sttProvider}
-          languageOptions={languages?.supported}
-          defaultLanguage={languages?.default}
-          selectedLanguage={selectedLanguage}
-          onLanguageChange={onLanguageChange}
-          localTurns={conversationByCall[selectedCall.call_id] ?? []}
-          onAppendLocalTurn={(turn) =>
-            setConversationByCall((prev) => ({
-              ...prev,
-              [selectedCall.call_id]: [...(prev[selectedCall.call_id] ?? []), turn],
-            }))
-          }
-          onResetLocalTurns={() =>
-            setConversationByCall((prev) => ({
-              ...prev,
-              [selectedCall.call_id]: [],
-            }))
-          }
-        />
-      ) : (
-        <div className="cc-main cc-empty-call">
-          <div className="eyebrow">{copy.noLiveCall}</div>
-          <h2>{selectedCustomer?.full_name ?? selectedCustomer?.customer_id}</h2>
-          <p className="muted">{copy.noLiveCallDetail}</p>
-          {selectedCustomer?.rationale && <p>{localizeRationale(selectedLanguage, selectedCustomer.rationale)}</p>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Cockpit({
+export function CockpitSession({
   call,
   customer,
   sttProvider,
@@ -289,7 +120,11 @@ function Cockpit({
   onLanguageChange,
   localTurns,
   onAppendLocalTurn,
+  onUpdateLastCustomerTurn,
+  onRemoveLastCustomerTurn,
   onResetLocalTurns,
+  layout = "horizontal",
+  panel = "all",
 }: {
   call: CallState;
   customer: CustomerWithIssue | null;
@@ -300,7 +135,11 @@ function Cockpit({
   onLanguageChange: (language: InteractionLanguage) => void;
   localTurns: LocalTurn[];
   onAppendLocalTurn: (turn: LocalTurn) => void;
+  onUpdateLastCustomerTurn: (turn: LocalTurn) => void;
+  onRemoveLastCustomerTurn: () => void;
   onResetLocalTurns: () => void;
+  layout?: "stacked" | "single" | "horizontal";
+  panel?: "conversation" | "genie" | "resolution" | "all";
 }) {
   const base = signalsOf(call);
   const [facts, setFacts] = useState<AccountFacts | null>(null);
@@ -359,12 +198,11 @@ function Cockpit({
   const nba = live?.next_best_action ?? base.nba;
   const intent = live?.primary_intent ?? base.intent;
 
-  const cust = facts?.customer ?? {};
   const sum = facts?.summary ?? {};
   // Keep stream empty by default so the UI feels like a true live call surface.
   const utterances = localTurns;
   const hasAgentTurn = utterances.some((u) => (u.speaker ?? 0) === 0);
-  const issueStatus = String(sum.issue_status ?? "open");
+  const issueStatus = String(assistMeta?.resolution?.status ?? sum.issue_status ?? "open");
   const rec =
     issueStatus === "closed"
       ? {
@@ -381,9 +219,9 @@ function Cockpit({
           detail: copy.listeningDetail,
           priority: "low" as const,
         };
+
   const overdueCount = Number(sum.overdue_invoice_count ?? 0);
   const overdueAmount = Number(sum.overdue_amount ?? 0);
-  const riskLevel = overdueCount > 0 || !sum.autopay_enabled ? "elevated" : "stable";
   const suggestedQuestion =
     facts?.customer_id || call.customer_id
       ? copy.suggestedAssistQuestion(String(facts?.customer_id ?? call.customer_id), call.call_id)
@@ -448,62 +286,12 @@ function Cockpit({
     }
   };
 
-  return (
-    <div className="cc-main">
-      <div className="cc-top">
-        <div>
-          <div className="eyebrow">{copy.activeCustomer}</div>
-          <div className="cust-name">{cust.full_name ?? call.customer_id ?? call.call_id}</div>
-          <div className="cust-sub">
-            {[cust.segment, cust.plan, cust.region]
-              .filter(Boolean)
-              .map((item) => localizedValue(language, item, "profile"))
-              .join(" · ") || copy.customerProfileLoading}
-            {cust.tenure_months != null && <> · {copy.monthsTenure(Number(cust.tenure_months))}</>}
-          </div>
-        </div>
-        <div className="cust-status studio-status">
-          <label className="language-control">
-            <span>{copy.interactionLanguage}</span>
-            <select
-              value={language}
-              onChange={(e) => {
-                onLanguageChange(e.target.value as InteractionLanguage);
-                setGenieResp(null);
-                setGenieShowSql(false);
-              }}
-              disabled={voiceUi.phase !== "idle"}
-            >
-              {availableLanguages.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className={`status-chip issue issue-${issueStatus}`}>
-            {copy.issue}: {localizedValue(language, issueStatus)}
-          </span>
-          <span className={`status-chip ${riskLevel === "elevated" ? "st-at_risk" : "st-active"}`}>
-            {copy.risk}: {localizedValue(language, riskLevel)}
-          </span>
-          {cust.status && (
-            <span className={`status-chip st-${cust.status}`}>{localizedValue(language, cust.status)}</span>
-          )}
-          {cust.monthly_charge != null && (
-            <span className="cust-arpu">${cust.monthly_charge}/{copy.perMonth}</span>
-          )}
-        </div>
-      </div>
-      {sum.resolution_note && (
-        <div className="resolution-banner">
-          {localizeResolutionNote(language, String(sum.resolution_note))}
-          {sum.resolved_at ? ` (resolved at ${sum.resolved_at})` : ""}
-        </div>
-      )}
+  const hCompact = layout === "horizontal";
+  const panelClass = hCompact ? "sentient-panel-inner" : "sentient-glass";
 
-      <div className="cc-grid">
-        <div className="panel cc-conversation">
+  const conversationPanel = (
+    <div className={`${panelClass} sentient-conversation`}>
+          {!hCompact && (
           <RecommendationCard
             rec={rec}
             intent={intent}
@@ -511,49 +299,70 @@ function Cockpit({
             label={copy.recommendedNextAction}
             language={language}
           />
-          <div className="panel-title convo-title-row">
+          )}
+          {hCompact && (
+            <div className="sentient-rec sentient-rec-slim is-active">
+              <div className="sentient-rec-title">{rec.title}</div>
+              <div className="sentient-muted-text">{rec.detail}</div>
+            </div>
+          )}
+          {!hCompact && (
+          <div className="sentient-kicker sentient-row-between">
             <span>{copy.conversationStream}</span>
-            <button className="ghost mini" onClick={resetScenario} disabled={resetBusy}>
+            <button className="sentient-btn-ghost sentient-btn-sm" onClick={resetScenario} disabled={resetBusy}>
               {resetBusy ? copy.resetting : copy.resetScenario}
             </button>
           </div>
-          <div className="transcript cc-transcript">
+          )}
+          {hCompact && (
+            <div className="sentient-row-between sentient-conv-tools">
+              <span className="sentient-muted-text">Transcript</span>
+              <button className="sentient-btn-ghost sentient-btn-sm" onClick={resetScenario} disabled={resetBusy}>
+                {resetBusy ? copy.resetting : copy.resetScenario}
+              </button>
+            </div>
+          )}
+          <div className="sentient-transcript">
             {utterances.length === 0 && voiceUi.phase === "idle" && (
-              <div className="muted">{copy.noTranscript}</div>
+              <div className="sentient-muted-text">{copy.noTranscript}</div>
             )}
             {utterances.map((u, i) => {
               const isCustomer = (u.speaker ?? 0) === 1;
+              const isLatest = i === utterances.length - 1 && voiceUi.phase === "idle";
               return (
-                <div key={i} className={`turn ${isCustomer ? "t-customer" : "t-agent"}`}>
-                  <span className="turn-who">
+                <div
+                  key={i}
+                  className={`sentient-turn ${isCustomer ? "is-customer" : "is-agent"}${isLatest ? " is-latest" : ""}`}
+                >
+                  <span className="sentient-turn-who">
                     {isCustomer ? copy.customer : copy.agentGenieAssisted}
-                    {u.language && <span className="turn-language"> · {u.language}</span>}
+                    {u.language && <span className="sentient-turn-lang"> · {u.language}</span>}
                   </span>
-                  <span className="turn-text">{u.text}</span>
+                  <span className="sentient-turn-text">{u.text}</span>
                 </div>
               );
             })}
             {voiceUi.phase === "speaking" && (
-              <div className="turn t-customer turn-live">
-                <span className="turn-who">{copy.customerSpeaking}</span>
-                <span className="turn-text turn-placeholder">
+              <div className="sentient-turn is-customer is-live">
+                <span className="sentient-turn-who">{copy.customerSpeaking}</span>
+                <span className="sentient-turn-text is-placeholder">
                   {voiceUi.interimText?.trim() || copy.listening}
                 </span>
                 <LiveWaveform level={voiceUi.micLevel ?? 0.2} active />
               </div>
             )}
             {voiceUi.phase === "transcribing" && (
-              <div className="turn t-customer turn-live">
-                <span className="turn-who">{copy.customer}</span>
-                <span className="turn-text turn-placeholder transcribing">
+              <div className="sentient-turn is-customer is-live">
+                <span className="sentient-turn-who">{copy.customer}</span>
+                <span className="sentient-turn-text is-placeholder">
                   {voiceUi.interimText?.trim() || voiceUi.processingLabel || copy.transcribingMessage}
                 </span>
               </div>
             )}
             {voiceUi.phase === "agent_reply" && (
-              <div className="turn t-agent turn-live">
-                <span className="turn-who">{copy.agentGenieAssisted}</span>
-                <span className="turn-text turn-placeholder transcribing">
+              <div className="sentient-turn is-agent is-live">
+                <span className="sentient-turn-who">{copy.agentGenieAssisted}</span>
+                <span className="sentient-turn-text is-placeholder">
                   {voiceUi.processingLabel || copy.preparingGenieResponse}
                 </span>
               </div>
@@ -564,21 +373,63 @@ function Cockpit({
             customerId={String(facts?.customer_id ?? call.customer_id ?? "")}
             sttProvider={sttProvider}
             language={language}
+            compact={hCompact}
             onNudge={(n) => {
               setLive(n.live);
               setAssistMeta(n);
+              if (n.billing?.applied && n.billing.adjustment) {
+                const adj = n.billing.adjustment;
+                setFacts((prev) => {
+                  if (!prev?.invoices) return prev;
+                  const invoices = prev.invoices.map((inv) =>
+                    inv.invoice_id === adj.invoice_id
+                      ? {
+                          ...inv,
+                          amount: String(adj.amount_after ?? inv.amount),
+                          late_fee: String(adj.late_fee_after ?? inv.late_fee),
+                          status: String(adj.status_after ?? inv.status),
+                          resolution_status: "closed",
+                        }
+                      : inv
+                  );
+                  const overdueInvoices = invoices.filter((inv) => inv.status === "overdue");
+                  return {
+                    ...prev,
+                    invoices,
+                    summary: {
+                      ...prev.summary,
+                      issue_status: n.resolution?.status ?? prev.summary?.issue_status,
+                      overdue_invoice_count: overdueInvoices.length,
+                      overdue_amount: overdueInvoices.reduce(
+                        (total, inv) => total + Number(inv.amount ?? 0),
+                        0
+                      ),
+                      resolution_note: n.resolution?.note ?? prev.summary?.resolution_note,
+                    },
+                  };
+                });
+              }
               refreshAssistData();
             }}
             onLocalTurn={onAppendLocalTurn}
+            onUpdateLastCustomerTurn={onUpdateLastCustomerTurn}
+            onRemoveLastCustomerTurn={onRemoveLastCustomerTurn}
             onVoiceUiChange={setVoiceUi}
           />
           <AssistStatusPanel meta={assistMeta} language={language} />
-        </div>
+    </div>
+  );
 
-        <div className="panel cc-genie">
-          <div className="panel-title">{copy.databricksGenieLive}</div>
-          <div className="genie-brand-note">{copy.genieBrandNote}</div>
-          <div className="facts-grid cc-kpis">
+  const geniePanel = (
+    <div className={`${panelClass} sentient-genie`}>
+          <div className={hCompact ? "sentient-genie-scroll" : undefined}>
+          {!hCompact && (
+            <>
+          <div className="sentient-kicker">{copy.databricksGenieLive}</div>
+          <p className="sentient-muted-text">{copy.genieBrandNote}</p>
+            </>
+          )}
+          <div className="sentient-stat-grid">
             <Fact label={copy.openInvoices} value={sum.open_invoice_count ?? 0} />
             <Fact
               label={copy.overdue}
@@ -597,22 +448,24 @@ function Cockpit({
             />
           </div>
 
-          {factErr && <div className="account-error">{copy.unavailable}: {factErr}</div>}
-          {!facts && !factErr && <div className="muted">{copy.loading}</div>}
+          {factErr && <div className="sentient-alert">{copy.unavailable}: {factErr}</div>}
+          {!facts && !factErr && <div className="sentient-muted-text">{copy.loading}</div>}
 
           {facts?.invoices && facts.invoices.length > 0 && (
-            <table className="inv-table">
+            <table className="sentient-table">
               <thead>
                 <tr>
                   <th>{copy.invoice}</th>
-                  <th>{copy.period}</th>
+                  {!hCompact && <th>{copy.period}</th>}
                   <th>{copy.amount}</th>
-                  <th>{copy.lateFee}</th>
+                  {facts.invoices.some((inv) => Number(inv.late_fee) > 0) && (
+                    <th>{copy.lateFee}</th>
+                  )}
                   <th>{copy.status}</th>
                 </tr>
               </thead>
               <tbody>
-                {facts.invoices.slice(0, 4).map((inv) => (
+                {facts.invoices.map((inv) => (
                   <tr
                     key={inv.invoice_id}
                     className={
@@ -626,43 +479,51 @@ function Cockpit({
                     }
                   >
                     <td>{inv.invoice_id}</td>
-                    <td>{inv.period}</td>
+                    {!hCompact && <td>{inv.period}</td>}
                     <td>${inv.amount}</td>
-                    <td>${inv.late_fee}</td>
+                    {facts.invoices!.some((row) => Number(row.late_fee) > 0) && (
+                      <td>{Number(inv.late_fee) > 0 ? `$${inv.late_fee}` : "—"}</td>
+                    )}
                     <td>{localizedValue(language, inv.status)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-          <div className="resolution-timeline">
-            <div className="panel-title">{copy.resolutionTimeline}</div>
-            {resolutionEvents.length === 0 && <div className="muted">{copy.noResolutionEvents}</div>}
-            {resolutionEvents.map((ev) => (
-              <div className="timeline-item" key={ev.event_id}>
-                <div className="timeline-head">
-                  <span className="timeline-type">{localizedValue(language, ev.event_type)}</span>
-                  <span className="timeline-status">{localizedValue(language, ev.issue_status ?? "open")}</span>
+          {!hCompact && (
+          <div className="sentient-timeline">
+            <div className="sentient-kicker">{copy.resolutionTimeline}</div>
+            {resolutionEvents.length === 0 && <div className="sentient-muted-text">{copy.noResolutionEvents}</div>}
+            {resolutionEvents.map((ev, index) => (
+              <div
+                className={`sentient-timeline-item${index === 0 ? " is-latest" : ""}`}
+                key={ev.event_id}
+              >
+                <div className="sentient-timeline-head">
+                  <span>{localizedValue(language, ev.event_type)}</span>
+                  <span>{localizedValue(language, ev.issue_status ?? "open")}</span>
                 </div>
-                {ev.note && <div className="timeline-note">{localizeResolutionNote(language, ev.note)}</div>}
+                {ev.note && <div className="sentient-timeline-note">{localizeResolutionNote(language, ev.note)}</div>}
               </div>
             ))}
           </div>
+          )}
+          </div>
 
-          <div className="genie-console cc-console">
-            <label className="genie-label">{copy.askGenieLabel}</label>
+          <div className={`sentient-genie-console${genieLoading ? " is-loading" : ""}${genieResp ? " has-answer" : ""}`}>
+            <label className="sentient-field-label">{copy.askGenieLabel}</label>
             <textarea
               value={genieQuestion}
               onChange={(e) => setGenieQuestion(e.target.value)}
-              className="genie-input-box"
-              rows={3}
+              className="sentient-textarea"
+              rows={hCompact ? 2 : 3}
             />
-            <div className="genie-actions">
-              <button onClick={() => askGenie(genieQuestion)} disabled={genieLoading}>
+            <div className="sentient-actions">
+              <button className="sentient-btn" onClick={() => askGenie(genieQuestion)} disabled={genieLoading}>
                 {genieLoading ? copy.analyzing : copy.runGenieQuery}
               </button>
               <button
-                className="ghost"
+                className="sentient-btn-ghost"
                 onClick={() => {
                   setGenieQuestion(suggestedQuestion);
                   askGenie(suggestedQuestion);
@@ -672,23 +533,23 @@ function Cockpit({
                 {copy.refreshAssist}
               </button>
             </div>
-            {genieErr && <div className="account-error">{genieErr}</div>}
+            {genieErr && <div className="sentient-alert">{genieErr}</div>}
             {genieResp && (genieResp.answer || genieResp.description) && (
-              <div className="genie-answer">
+              <div className="sentient-answer is-active">
                 {genieResp.answer ?? genieResp.description}
               </div>
             )}
             {genieResp?.description &&
               genieResp.answer &&
               genieResp.description !== genieResp.answer && (
-                <div className="genie-hint">{genieResp.description}</div>
+                <div className="sentient-muted-text">{genieResp.description}</div>
               )}
             {genieResp?.suggested_followups && genieResp.suggested_followups.length > 0 && (
-              <div className="genie-followups">
+              <div className="sentient-chips">
                 {genieResp.suggested_followups.map((f, i) => (
                   <button
                     key={i}
-                    className="followup-chip"
+                    className="sentient-chip"
                     disabled={genieLoading}
                     onClick={() => askGenie(f, true)}
                   >
@@ -697,23 +558,25 @@ function Cockpit({
                 ))}
               </div>
             )}
-            {!genieResp && (
-              <div className="genie-hint">
+            {!genieResp && !hCompact && (
+              <div className="sentient-muted-text">
                 {copy.designedAround(customer?.full_name ?? copy.spotlightCustomers)}
               </div>
             )}
             {genieResp?.sql && (
-              <div className="genie-sql">
-                <button className="sql-toggle" onClick={() => setGenieShowSql((v) => !v)}>
+              <div className="sentient-sql">
+                <button className="sentient-btn-ghost sentient-btn-sm" onClick={() => setGenieShowSql((v) => !v)}>
                   {genieShowSql ? copy.hideQuery : copy.showQuery}
                 </button>
-                {genieShowSql && <pre className="sql">{genieResp.sql}</pre>}
+                {genieShowSql && <pre className="sentient-sql-pre">{genieResp.sql}</pre>}
               </div>
             )}
           </div>
-        </div>
-      </div>
+    </div>
+  );
 
+  const resolutionPanel = (
+    <div className={`${panelClass} sentient-resolution`}>
       <ResolutionJourneyStrip
         issueStatus={issueStatus}
         localTurns={utterances}
@@ -723,7 +586,68 @@ function Cockpit({
         facts={facts}
         intent={intent}
         language={language}
+        compact={hCompact}
       />
+    </div>
+  );
+
+  if (layout === "horizontal") {
+    return (
+      <div className="sentient-h-session">
+        <SentientHCol
+          step={2}
+          title="On the call"
+          description="Voice → transcript → response"
+        >
+          {conversationPanel}
+        </SentientHCol>
+        <SentientHCol
+          step={3}
+          title="Genie assist"
+          description="Facts, invoices, live query"
+        >
+          {geniePanel}
+        </SentientHCol>
+        <SentientHCol step={4} title="Resolution" description="Issue journey to close">
+          {resolutionPanel}
+        </SentientHCol>
+      </div>
+    );
+  }
+
+  if (layout === "stacked") {
+    return (
+      <div className="sentient-session-stack">
+        <SentientStep
+          step={2}
+          title="What's happening on the call?"
+          description="Listen, transcribe, and respond. Use the mic or type the next utterance."
+        >
+          {conversationPanel}
+        </SentientStep>
+        <SentientStep
+          step={3}
+          title="What does Genie recommend?"
+          description="Review account facts, invoices, and run a live Genie assist query."
+        >
+          {geniePanel}
+        </SentientStep>
+        <SentientStep
+          step={4}
+          title="Where are we in resolution?"
+          description="Track the issue journey from first utterance through close."
+        >
+          {resolutionPanel}
+        </SentientStep>
+      </div>
+    );
+  }
+
+  return (
+    <div className="sentient-session">
+      {(panel === "all" || panel === "conversation") && conversationPanel}
+      {(panel === "all" || panel === "genie") && geniePanel}
+      {(panel === "all" || panel === "resolution") && resolutionPanel}
     </div>
   );
 }
@@ -866,7 +790,7 @@ function buildResolutionJourney({
       {
         key: "waiting",
         label: copy.awaitingCustomer,
-        status: "pending",
+        status: "active",
         detail: copy.awaitingCustomerDetail,
       },
     ];
@@ -875,10 +799,18 @@ function buildResolutionJourney({
   return stages.map((stage, idx) => {
     const isActive = activeKey === stage.key;
     const isDone = !isActive && idx <= doneThrough;
+    let stepStatus: "active" | "done" | "pending" | "complete" = isActive
+      ? "active"
+      : isDone
+        ? "done"
+        : "pending";
+    if (status === "closed" && stage.key === "close" && !activeKey) {
+      stepStatus = "complete";
+    }
     return {
       key: stage.key,
       label: stage.label,
-      status: isActive ? "active" : isDone ? "done" : "pending",
+      status: stepStatus,
       detail: (isActive && inProgressDetail[stage.key]) || details[stage.key],
     };
   });
@@ -893,6 +825,8 @@ function ResolutionJourneyStrip({
   facts,
   intent,
   language,
+  compact = false,
+  horizontal = false,
 }: {
   issueStatus: string;
   localTurns: LocalTurn[];
@@ -902,6 +836,8 @@ function ResolutionJourneyStrip({
   facts: AccountFacts | null;
   intent?: string;
   language: InteractionLanguage;
+  compact?: boolean;
+  horizontal?: boolean;
 }) {
   const copy = uiCopy(language);
   const steps = buildResolutionJourney({
@@ -916,22 +852,33 @@ function ResolutionJourneyStrip({
   });
 
   return (
-    <div className="assist-pipeline-strip resolution-journey">
-      <div className="assist-pipeline-head">
-        <span className="panel-title">{copy.issueResolutionJourney}</span>
-        <span className="assist-pipeline-total">{copy.status}: {localizedValue(language, issueStatus)}</span>
+    <div className={`sentient-journey${horizontal ? " is-horizontal" : ""}`}>
+      {!compact && (
+      <div className="sentient-journey-head">
+        <span className="sentient-kicker">{copy.issueResolutionJourney}</span>
+        <span className="sentient-muted-text">{copy.status}: {localizedValue(language, issueStatus)}</span>
       </div>
-      <div className="assist-pipeline-track">
+      )}
+      {compact && (
+        <div
+          className={`sentient-journey-status${
+            issueStatus === "closed" ? " is-ok" : issueStatus === "open" ? " is-active" : " is-warn"
+          }`}
+        >
+          {copy.status}: <strong>{localizedValue(language, issueStatus)}</strong>
+        </div>
+      )}
+      <div className="sentient-journey-track">
         {steps.map((step, idx) => (
-          <div key={step.key} className={`assist-pipeline-step s-${step.status}`}>
-            <div className="assist-pipeline-node">
-              <span className="assist-pipeline-index">{idx + 1}</span>
+          <div key={step.key} className={`sentient-journey-step is-${step.status}`}>
+            <div className="sentient-journey-node">
+              <span>{idx + 1}</span>
             </div>
-            <div className="assist-pipeline-copy">
-              <div className="assist-pipeline-label">{step.label}</div>
-              {step.detail && <div className="assist-pipeline-detail">{step.detail}</div>}
+            <div className="sentient-journey-copy">
+              <div className="sentient-journey-label">{step.label}</div>
+              {step.detail && <div className="sentient-journey-detail">{step.detail}</div>}
             </div>
-            {idx < steps.length - 1 && <div className="assist-pipeline-connector" aria-hidden="true" />}
+            {idx < steps.length - 1 && <div className="sentient-journey-connector" aria-hidden="true" />}
           </div>
         ))}
       </div>
@@ -953,27 +900,25 @@ function RecommendationCard({
   language: InteractionLanguage;
 }) {
   return (
-    <div className={`rec-card r-${rec.priority} cc-recommendation`}>
-      <div className="rec-top">
-        <span className="rec-kicker">{label}</span>
-        <span className="rec-tags">
-          <span className="chip">{localizedIntentLabel(language, intent)}</span>
-          <span className={`badge sentiment ${sentiment ?? "neutral"}`}>
-            {localizedValue(language, sentiment ?? "neutral")}
-          </span>
+    <div className={`sentient-glass sentient-rec is-${rec.priority}`}>
+      <div className="sentient-rec-top">
+        <span className="sentient-kicker">{label}</span>
+        <span className="sentient-chips">
+          <span className="sentient-chip">{localizedIntentLabel(language, intent)}</span>
+          <span className="sentient-chip">{localizedValue(language, sentiment ?? "neutral")}</span>
         </span>
       </div>
-      <div className="rec-title">{rec.title}</div>
-      <div className="rec-detail">{rec.detail}</div>
+      <div className="sentient-rec-title">{rec.title}</div>
+      <div className="sentient-muted-text">{rec.detail}</div>
     </div>
   );
 }
 
 function Fact({ label, value, warn }: { label: string; value: ReactNode; warn?: boolean }) {
   return (
-    <div className={`fact ${warn ? "fact-warn" : ""}`}>
-      <div className="fact-val">{value}</div>
-      <div className="fact-label">{label}</div>
+    <div className={`sentient-stat${warn ? " sentient-stat-warn" : ""}`}>
+      <div className="sentient-stat-value">{value}</div>
+      <div className="sentient-stat-label">{label}</div>
     </div>
   );
 }
@@ -981,7 +926,7 @@ function Fact({ label, value, warn }: { label: string; value: ReactNode; warn?: 
 function LiveWaveform({ level, active }: { level: number; active: boolean }) {
   const bars = [0.35, 0.55, 0.75, 1, 0.8, 0.6, 0.45, 0.3];
   return (
-    <div className={`wave-wrap ${active ? "wave-live" : ""}`} aria-hidden="true">
+    <div className={`sentient-wave${active ? " is-live" : ""}`} aria-hidden="true">
       {bars.map((weight, i) => (
         <span
           key={i}
@@ -1004,24 +949,22 @@ function AssistStatusPanel({ meta, language }: { meta: LiveNudge | null; languag
   if (!hasContent) return null;
 
   return (
-    <div className="assist-status-panel">
+    <div className="sentient-status">
       {resolutionStatus && (
-        <div className="assist-status-row">
-          <span className="assist-status-label">{copy.resolution}</span>
-          <span className={`status-chip issue issue-${resolutionStatus}`}>
-            {localizedValue(language, resolutionStatus)}
-          </span>
+        <div className={`sentient-status-row${resolutionStatus === "closed" ? " is-ok" : " is-active"}`}>
+          <span className="sentient-status-label">{copy.resolution}</span>
+          <span>{localizedValue(language, resolutionStatus)}</span>
         </div>
       )}
       {closeBlock && (
-        <div className="assist-status-row warn">
-          <span className="assist-status-label">{copy.closeBlocked}</span>
+        <div className="sentient-status-row is-warn">
+          <span className="sentient-status-label">{copy.closeBlocked}</span>
           <span>{localizedValue(language, closeBlock, "reason")}</span>
         </div>
       )}
       {billing && (
-        <div className="assist-status-row">
-          <span className="assist-status-label">{copy.billing}</span>
+        <div className={`sentient-status-row${billing.applied ? " is-ok" : " is-active"}`}>
+          <span className="sentient-status-label">{copy.billing}</span>
           <span>
             {billing.applied
               ? `${copy.applied} (${String(billing.adjustment?.invoice_id ?? copy.invoice)})`
@@ -1030,8 +973,8 @@ function AssistStatusPanel({ meta, language }: { meta: LiveNudge | null; languag
         </div>
       )}
       {validation && (
-        <div className="assist-status-row">
-          <span className="assist-status-label">{copy.genieValidation}</span>
+        <div className={`sentient-status-row${validation.reply_available ? " is-ok" : " is-warn"}`}>
+          <span className="sentient-status-label">{copy.genieValidation}</span>
           <span>
             {validation.reply_available
               ? copy.replyValidated
@@ -1053,16 +996,22 @@ function LiveAssist({
   callId,
   sttProvider,
   language,
+  compact = false,
   onNudge,
   onLocalTurn,
+  onUpdateLastCustomerTurn: _onUpdateLastCustomerTurn,
+  onRemoveLastCustomerTurn: _onRemoveLastCustomerTurn,
   onVoiceUiChange,
 }: {
   callId: string;
   customerId: string;
   sttProvider: string;
   language: InteractionLanguage;
+  compact?: boolean;
   onNudge: (n: LiveNudge) => void;
   onLocalTurn: (turn: LocalTurn) => void;
+  onUpdateLastCustomerTurn: (turn: LocalTurn) => void;
+  onRemoveLastCustomerTurn: () => void;
   onVoiceUiChange: (state: VoiceUiState) => void;
 }) {
   const copy = uiCopy(language);
@@ -1158,7 +1107,7 @@ function LiveAssist({
             });
           },
           undefined,
-          language
+          speechRecognitionLanguage(language)
         );
         setRecording(true);
         onVoiceUiChange({
@@ -1195,7 +1144,7 @@ function LiveAssist({
           });
         },
         (message) => setErr(message),
-        language
+        speechRecognitionLanguage(language)
       );
       micSessionRef.current = session;
       setRecording(true);
@@ -1234,22 +1183,25 @@ function LiveAssist({
         captionRef.current = null;
         const recording = await (session as MicRecordingSession).stop();
         micSessionRef.current = null;
+        voicePhaseRef.current = "agent_reply";
+        onVoiceUiChange({
+          phase: "agent_reply",
+          source: "mic",
+          interimText: voiceRef.current.interim,
+          processingLabel: copy.geniePreparing,
+        });
         const n = await api.transcribeMic(
           callId,
           recording.audioBase64,
           recording.mimeType,
           1,
-          language
+          language,
+          voiceRef.current.interim
         );
         const textFromMic = String(n.transcript || "").trim();
         if (!textFromMic) throw new Error(copy.noDatabricksTranscript);
+        // Authoritative text is Databricks ASR only — browser caption stays in voiceUi until idle.
         onLocalTurn({ text: textFromMic, speaker: 1, language });
-        voicePhaseRef.current = "agent_reply";
-        onVoiceUiChange({
-          phase: "agent_reply",
-          source: "mic",
-          processingLabel: copy.geniePreparing,
-        });
         onNudge(n);
         applyAgentReply(n);
         voicePhaseRef.current = "idle";
@@ -1284,45 +1236,48 @@ function LiveAssist({
   };
 
   return (
-    <div className="live-assist">
-      <div className="live-input">
+    <div className={`sentient-compose${compact ? " sentient-compose-compact" : ""}`}>
+      <div className="sentient-compose-row">
         <select
           value={speaker}
           onChange={(e) => setSpeaker(Number(e.target.value))}
-          className="speaker-select"
+          className="sentient-select sentient-select-inline"
         >
           <option value={1}>{copy.speakerCustomer}</option>
           <option value={0}>{copy.speakerAgent}</option>
         </select>
         <input
+          className="sentient-input sentient-input-inline"
           value={text}
           placeholder={copy.utterancePlaceholder}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
         />
-        <button onClick={send} disabled={busy}>
+        <div className="sentient-compose-actions">
+        <button className="sentient-btn" onClick={send} disabled={busy}>
           {busy ? "…" : copy.send}
         </button>
-        <button onClick={recording ? () => void stopMic() : () => void startMic()} disabled={busy}>
+        <button className="sentient-btn" onClick={recording ? () => void stopMic() : () => void startMic()} disabled={busy}>
           {recording ? copy.stopMic : copy.mic}
         </button>
+        </div>
       </div>
       {sttProvider === "databricks" && (
         <div
-          className={`caption-status ${captionSupported ? "ok" : "off"}`}
+          className={`sentient-caption ${captionSupported ? "is-ok" : "is-off"}`}
           title={
             captionSupported
               ? copy.captionAvailableTitle
               : copy.captionUnavailableTitle
           }
         >
-          <span className="caption-dot" />
+          <span className="sentient-caption-dot" />
           {captionSupported
             ? copy.captionAvailable
             : copy.captionUnavailable}
         </div>
       )}
-      {err && <div className="account-error">{err}</div>}
+      {err && <div className="sentient-alert">{err}</div>}
     </div>
   );
 }

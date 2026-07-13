@@ -1,7 +1,14 @@
+import type { InteractionLanguage } from "../api/client";
+
 export type VoiceUiPhase = "idle" | "speaking" | "transcribing" | "agent_reply";
 
 export type VoiceInputSource = "mic" | "text";
 export type SpeechRecognitionLanguage = "en-US" | "th-TH" | "id-ID" | "zh-CN";
+
+export function speechRecognitionLanguage(language: InteractionLanguage): SpeechRecognitionLanguage {
+  if (language.startsWith("zh-CN")) return "zh-CN";
+  return language as SpeechRecognitionLanguage;
+}
 
 export interface VoiceUiState {
   phase: VoiceUiPhase;
@@ -294,26 +301,122 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-function preferredMimeType(): string {
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
-  return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? "";
+/** Target rate for the Databricks ASR endpoints (SenseVoice/Paraformer/Qwen3/Whisper). */
+const ASR_TARGET_SAMPLE_RATE = 16000;
+
+function concatFloat32(chunks: Float32Array[]): Float32Array {
+  const total = chunks.reduce((n, a) => n + a.length, 0);
+  const merged = new Float32Array(total);
+  let offset = 0;
+  for (const a of chunks) {
+    merged.set(a, offset);
+    offset += a.length;
+  }
+  return merged;
 }
 
+/**
+ * High-quality resample to 16 kHz using the browser's native (anti-aliased)
+ * resampler via OfflineAudioContext. Naive linear decimation aliases high-
+ * frequency consonant energy (sibilants) into the speech band and wrecks ASR,
+ * so we never hand-roll the downsample.
+ */
+async function resampleTo16k(samples: Float32Array, inputRate: number): Promise<Float32Array> {
+  if (inputRate === ASR_TARGET_SAMPLE_RATE) return samples;
+  const outLength = Math.max(1, Math.round((samples.length * ASR_TARGET_SAMPLE_RATE) / inputRate));
+  const OfflineCtx =
+    (window as any).OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+  const offline = new OfflineCtx(1, outLength, ASR_TARGET_SAMPLE_RATE);
+  const srcBuffer = offline.createBuffer(1, samples.length, inputRate);
+  srcBuffer.copyToChannel(samples, 0);
+  const src = offline.createBufferSource();
+  src.buffer = srcBuffer;
+  src.connect(offline.destination);
+  src.start(0);
+  const rendered = await offline.startRendering();
+  return rendered.getChannelData(0).slice();
+}
+
+/** Encode mono Float32 PCM as a 16-bit little-endian WAV blob. */
+function encodeWavPcm16(samples: Float32Array, sampleRate: number): Blob {
+  const pcm = new Int16Array(floatTo16BitPCM(samples));
+  const buffer = new ArrayBuffer(44 + pcm.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i += 1) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  const dataBytes = pcm.length * 2;
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true); // audio format = PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeStr(36, "data");
+  view.setUint32(40, dataBytes, true);
+  new Int16Array(buffer, 44).set(pcm);
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+/**
+ * Capture mic audio and produce a 16 kHz mono PCM WAV client-side.
+ *
+ * We deliberately avoid MediaRecorder/WebM-Opus: the Databricks ASR serving
+ * containers decode via torchaudio/ffmpeg, and MediaRecorder's headerless,
+ * 48 kHz Opus stream was being mis-decoded (long prompts collapsed to a few
+ * garbled characters). Sending the same 16 kHz mono WAV the endpoints already
+ * transcribe correctly (FLEURS holdout) removes that decode/resample variable.
+ * Resampling runs incrementally so stop-time latency stays ~0.
+ */
 export async function startMicRecording(
   onLevel: (level: number) => void
 ): Promise<MicRecordingSession> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  // Disable the browser's voice-processing: echo cancellation in particular
+  // treats any audio coming from the speakers as "echo" and cancels it, which
+  // wrecks capture when the source is speaker playback (e.g. TTS from another
+  // window) — the mic then records fragmented near-silence. Noise suppression
+  // and auto-gain also distort speech for ASR, so we send raw audio.
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+  });
+  // Capture at the mic's NATIVE rate. Do NOT force the live AudioContext to
+  // 16 kHz: when the browser honors that hint it must resample the 48 kHz mic
+  // stream inside the live graph feeding a main-thread ScriptProcessor, which
+  // glitches and drops buffers (captured audio comes back fragmented, ~silence
+  // with sporadic bursts, and ASR returns garbage). We downsample the complete
+  // signal to 16 kHz offline (anti-aliased) at stop() instead.
   const audioContext = new AudioContext();
+  const inputRate = audioContext.sampleRate;
   const source = audioContext.createMediaStreamSource(stream);
   const analyser = audioContext.createAnalyser();
   analyser.fftSize = 256;
   source.connect(analyser);
 
-  const mimeType = preferredMimeType();
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-  const chunks: BlobPart[] = [];
+  const processor = audioContext.createScriptProcessor(4096, 1, 1);
+  const silentGain = audioContext.createGain();
+  silentGain.gain.value = 0;
+  source.connect(processor);
+  processor.connect(silentGain);
+  silentGain.connect(audioContext.destination);
+
+  const captured: Float32Array[] = [];
   let levelRaf = 0;
   let stopped = false;
+
+  processor.onaudioprocess = (event) => {
+    if (stopped) return;
+    // Copy: the underlying buffer is reused by the audio thread.
+    captured.push(Float32Array.from(event.inputBuffer.getChannelData(0)));
+  };
 
   const levelData = new Uint8Array(analyser.frequencyBinCount);
   const tickLevel = () => {
@@ -325,16 +428,14 @@ export async function startMicRecording(
 
   const cleanup = () => {
     cancelAnimationFrame(levelRaf);
+    processor.onaudioprocess = null;
+    processor.disconnect();
     source.disconnect();
     analyser.disconnect();
     stream.getTracks().forEach((t) => t.stop());
     void audioContext.close();
   };
 
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
-  recorder.start();
   levelRaf = requestAnimationFrame(tickLevel);
 
   return {
@@ -345,26 +446,22 @@ export async function startMicRecording(
           return;
         }
         stopped = true;
-        recorder.onerror = () => {
-          cleanup();
-          reject(new Error("Mic recording failed"));
-        };
-        recorder.onstop = () => {
-          cleanup();
-          const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
-          blobToBase64(blob)
-            .then((audioBase64) =>
-              resolve({ audioBase64, mimeType: blob.type || "audio/webm" })
-            )
-            .catch(reject);
-        };
-        recorder.stop();
+        const raw = concatFloat32(captured);
+        cleanup();
+        if (!raw.length) {
+          reject(new Error("No audio captured"));
+          return;
+        }
+        resampleTo16k(raw, inputRate)
+          .then((samples) => {
+            const blob = encodeWavPcm16(samples, ASR_TARGET_SAMPLE_RATE);
+            return blobToBase64(blob);
+          })
+          .then((audioBase64) => resolve({ audioBase64, mimeType: "audio/wav" }))
+          .catch(reject);
       }),
     close: () => {
-      if (!stopped && recorder.state !== "inactive") {
-        stopped = true;
-        recorder.stop();
-      }
+      stopped = true;
       cleanup();
     },
   };

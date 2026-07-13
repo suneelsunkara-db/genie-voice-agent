@@ -104,11 +104,25 @@ models:
     label: Databricks ZH Qwen3-ASR-0.6B
     languages: [zh-CN]
 
+  databricks_zh_oss_sensevoice_small:
+    provider: databricks_serving
+    model_kind: uc_serving
+    endpoint: voice_asr_zh_oss_sensevoice_small
+    label: Databricks ZH FunASR SenseVoice-Small
+    languages: [zh-CN]
+
+  databricks_zh_oss_paraformer_8k:
+    provider: databricks_serving
+    model_kind: uc_serving
+    endpoint: voice_asr_zh_oss_paraformer_8k
+    label: Databricks ZH FunASR Paraformer-8k
+    languages: [zh-CN]
+
 eval_matrix:
   en-US: [deepgram_nova3, databricks_en_finetuned_whisper_lora]
   th-TH: [deepgram_nova3, databricks_th_pathumma_whisper_large_v3]
   id-ID: [deepgram_nova3, databricks_id_qwen3_asr_0_6b]
-  zh-CN: [deepgram_nova3, databricks_zh_qwen3_asr_0_6b]
+  zh-CN: [deepgram_nova3, databricks_zh_qwen3_asr_0_6b, databricks_zh_oss_sensevoice_small, databricks_zh_oss_paraformer_8k]
 
 # UC registration + Model Serving — databricks_* only (not deepgram_nova3).
 # Used by scripts/ml_asr/03_register.sh and 04_serve.sh
@@ -131,6 +145,10 @@ model_serving:
       register:
         type: oss
         candidate_id: th_oss_pathumma_whisper_large_v3
+        family: whisper
+        base_model: nectec/Pathumma-whisper-th-large-v3
+        language_code: th
+        language_name: Thai
       serve:
         workload_type: GPU_SMALL
     databricks_id_qwen3_asr_0_6b:
@@ -138,8 +156,45 @@ model_serving:
       register:
         type: oss
         candidate_id: id_oss_qwen3_asr_0_6b
+        family: qwen3
+        base_model: Qwen/Qwen3-ASR-0.6B
+        language_code: id
+        language_name: Indonesian
     databricks_zh_qwen3_asr_0_6b:
       registered_model_leaf: genie_asr_zh_oss_qwen3_asr_0_6b
       register:
         type: oss
         candidate_id: zh_oss_qwen3_asr_0_6b
+        family: qwen3
+        base_model: Qwen/Qwen3-ASR-0.6B
+        language_code: zh
+        language_name: Chinese
+    databricks_zh_oss_sensevoice_small:
+      registered_model_leaf: genie_asr_zh_oss_sensevoice_small
+      register:
+        type: oss
+        candidate_id: zh_oss_sensevoice_small
+        family: funasr
+        base_model: iic/SenseVoiceSmall
+        language_code: zh
+        language_name: Chinese
+        funasr_hub: ms
+        funasr_vad_model: iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+        funasr_variant: sensevoice
+      serve:
+        workload_type: CPU
+        workload_size: Medium
+    databricks_zh_oss_paraformer_8k:
+      registered_model_leaf: genie_asr_zh_oss_paraformer_8k
+      register:
+        type: oss
+        candidate_id: zh_oss_paraformer_8k
+        family: funasr
+        base_model: damo/speech_paraformer_asr_nat-zh-cn-8k-common-vocab8358-tensorflow1
+        language_code: zh
+        language_name: Chinese
+        funasr_hub: ms
+        funasr_variant: paraformer_8k
+      serve:
+        workload_type: CPU
+        workload_size: Medium

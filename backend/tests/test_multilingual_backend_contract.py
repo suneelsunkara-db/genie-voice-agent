@@ -2,12 +2,17 @@ from types import SimpleNamespace
 
 from genie_voice.assist.genie_facts import genie_account_insight
 from genie_voice.enrich.engine import enrich_utterance
+from genie_voice.enrich.fm import agent_reply_system_prompt
 from genie_voice.genie.client import GenieClient
 from genie_voice.i18n import (
+    asr_model_language,
     canonical_business_context_instruction,
+    content_language,
     generated_text_language_check,
+    is_zh_asr_compare_language,
     localized_reply_opener,
     normalize_language,
+    prose_for_language_check,
     sanitize_generated_display_text,
     stt_options_for_language,
 )
@@ -18,6 +23,8 @@ def test_normalize_language_aliases_and_rejects_unknown():
     assert normalize_language("thai") == "th-TH"
     assert normalize_language("id") == "id-ID"
     assert normalize_language("mandarin") == "zh-CN"
+    assert normalize_language("sensevoice") == "zh-CN-sensevoice"
+    assert normalize_language("paraformer") == "zh-CN-paraformer"
 
     try:
         normalize_language("fr-FR")
@@ -25,6 +32,22 @@ def test_normalize_language_aliases_and_rejects_unknown():
         assert "Unsupported language" in str(exc)
     else:
         raise AssertionError("expected unsupported language to raise")
+
+
+def test_content_language_maps_zh_variants_to_zh_cn():
+    assert content_language("zh-CN-sensevoice") == "zh-CN"
+    assert content_language("zh-CN-paraformer") == "zh-CN"
+    assert content_language("th-TH") == "th-TH"
+
+
+def test_asr_model_language_maps_zh_variants_to_zh():
+    assert asr_model_language("zh-CN-sensevoice") == "zh"
+    assert asr_model_language("en-US") == "en-US"
+
+
+def test_is_zh_asr_compare_language():
+    assert is_zh_asr_compare_language("zh-CN-paraformer") is True
+    assert is_zh_asr_compare_language("th-TH") is False
 
 
 def test_stt_options_for_language_overlays_route():
@@ -52,6 +75,24 @@ def test_stt_options_for_language_overlays_route():
     assert thai["endpoint"] == "voice_asr_th_oss_pathumma_whisper_large_v3"
     assert thai["postprocess_invoice_ids"] is True
     assert thai["language"] == "th-TH"
+
+    sensevoice = stt_options_for_language(
+        SimpleNamespace(
+            providers=SimpleNamespace(
+                stt=SimpleNamespace(
+                    active_options=lambda: {
+                        "endpoint": "voice_asr_en_finetuned_whisper_lora",
+                        "routes": {
+                            "zh-CN-sensevoice": {"endpoint": "voice_asr_zh_oss_sensevoice_small"},
+                        },
+                    }
+                )
+            )
+        ),
+        "zh-CN-sensevoice",
+    )
+    assert sensevoice["endpoint"] == "voice_asr_zh_oss_sensevoice_small"
+    assert sensevoice["language"] == "zh-CN-sensevoice"
 
 
 def test_genie_question_is_wrapped_for_non_english_only():
@@ -89,10 +130,24 @@ def test_generated_text_language_check_catches_obvious_script_mismatch():
     assert chinese["matches"] is True
 
 
+def test_prose_for_language_check_strips_canonical_business_tokens():
+    stripped = prose_for_language_check("好的，已为 INV-90114 处理 $239.00。")
+    assert "INV" not in stripped
+    assert "$" not in stripped
+    assert "好的" in stripped
+
+
+def test_agent_reply_system_prompt_includes_target_language():
+    prompt = agent_reply_system_prompt("zh-CN")
+    assert "zh-CN" in prompt
+    assert "Simplified Chinese" in prompt
+
+
 def test_localized_reply_openers_are_not_english_for_non_english():
     assert localized_reply_opener("th-TH", genie_insight=True).startswith("จากข้อมูล")
     assert localized_reply_opener("id-ID", genie_insight=False).startswith("Berdasarkan")
     assert localized_reply_opener("zh-CN", genie_insight=True).startswith("根据")
+    assert localized_reply_opener("zh-CN-sensevoice", genie_insight=True).startswith("根据")
     assert localized_reply_opener("en-US", genie_insight=False).startswith("Based on")
 
 

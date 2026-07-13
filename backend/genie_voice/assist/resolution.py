@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import re
 from typing import Any
 
+from genie_voice.assist.billing_intent import detect_waiver_plan_request
 from genie_voice.assist.validation import validate_close_eligible
 from genie_voice.config import Settings, get_settings
 
@@ -13,26 +14,44 @@ _CLOSED_NOTE = (
     "Update will reflect on next statement."
 )
 
+_CONFIRM_SHORT = frozenset(
+    {
+        "yes",
+        "yep",
+        "yeah",
+        "ok",
+        "okay",
+        "proceed",
+        "continue",
+        "confirm",
+        "好",
+        "好的",
+        "继续",
+        "确认",
+        "可以",
+        "行的",
+        "同意",
+        "嗯",
+        "ตกลง",
+        "ยืนยัน",
+        "ได้",
+        "ใช่",
+        "ya",
+        "setuju",
+        "baik",
+        "oke",
+    }
+)
 _CONFIRM_RE = re.compile(
-    r"\b(yes|yep|yeah|proceed|continue|go ahead|confirm|approved?|sounds good)\b|"
-    r"(ดำเนินการต่อ|ต่อเลย|ตกลง|ยืนยัน|ได้เลย)|"
-    r"\b(lanjutkan|lanjut|setuju|ya|silakan)\b|"
-    r"(继续|確認|确认|可以|好的|同意)",
+    r"\b(yes|yep|yeah|ok|okay|proceed|continue|go ahead|confirm|approved?|sounds good)\b|"
+    r"(ดำเนินการต่อ|ต่อเลย|ตกลง|ยืนยัน|ได้เลย|ครับ|ค่ะ|ได้|ใช่)|"
+    r"\b(lanjutkan|lanjut|setuju|ya|silakan|baik|oke)\b|"
+    r"(继续|確認|确认|可以|好的|行的|同意|嗯)",
     re.IGNORECASE,
 )
-_WAIVER_RE = re.compile(
-    r"\b(waive|remove|reverse|forgive|drop)\b.*\b(late fee|fee)\b|"
-    r"\b(late fee|fee)\b.*\b(waive|remove|reverse|forgive|drop)\b|"
-    r"(ยกเว้น|ยกเลิก|ยกโทษ).*(ค่าธรรมเนียม|ค่าปรับ)|"
-    r"(hapus|menghapus|bebaskan|dibebaskan).*(biaya keterlambatan|denda)|"
-    r"(免除|减免|取消).*(滞纳金|逾期费用|费用)",
-    re.IGNORECASE,
-)
-_PAYMENT_PLAN_RE = re.compile(
-    r"\b(payment plan|payment arrangement|installment|instalment)\b|"
-    r"(แผนการชำระ|ผ่อนชำระ|แบ่งชำระ)|"
-    r"(rencana pembayaran|cicilan|angsuran)|"
-    r"(付款计划|分期付款|还款计划)",
+_CONFIRM_LONG_RE = re.compile(
+    r"\b(yes|yep|yeah|ok|okay|proceed|continue|go ahead|confirm|approved?|sounds good)\b|"
+    r"\b(lanjutkan|lanjut)\b",
     re.IGNORECASE,
 )
 
@@ -49,18 +68,19 @@ def _requested_actions_from_signal(
     existing_actions: dict[str, Any],
 ) -> dict[str, bool]:
     intents = _nudge_intents(nudge)
+    waiver_text, plan_text = detect_waiver_plan_request(text or "")
     payment_plan = bool(
         existing_actions.get("payment_plan_requested")
         or nudge.get("payment_plan_requested")
         or "payment_arrangement" in intents
         or "set_up_payment_plan" in intents
-        or _PAYMENT_PLAN_RE.search(text or "")
+        or plan_text
     )
     waiver = bool(
         existing_actions.get("waiver_requested")
         or nudge.get("waiver_requested")
         or "offer_fee_waiver" in intents
-        or _WAIVER_RE.search(text or "")
+        or waiver_text
     )
     return {
         "payment_plan_requested": payment_plan,
@@ -68,11 +88,26 @@ def _requested_actions_from_signal(
     }
 
 
+def _is_proceed_confirmation(text: str) -> bool:
+    msg = (text or "").strip()
+    if not msg:
+        return False
+    if msg.lower() in _CONFIRM_SHORT or msg in _CONFIRM_SHORT:
+        return True
+    if len(msg) <= 20:
+        return bool(_CONFIRM_RE.fullmatch(msg) or _CONFIRM_RE.search(msg))
+    return bool(_CONFIRM_LONG_RE.search(msg))
+
+
 def _customer_signal(text: str, status: str, nudge: dict[str, Any], actions: dict[str, Any]) -> str:
     signal = str(nudge.get("customer_signal") or "neutral")
-    if signal == "neutral" and status == "in_progress" and _CONFIRM_RE.search(text or ""):
-        if actions.get("payment_plan_requested") or actions.get("waiver_requested"):
-            return "confirm_proceed"
+    has_offer = bool(actions.get("payment_plan_requested") or actions.get("waiver_requested"))
+    if signal == "confirm_proceed":
+        if status == "in_progress" and has_offer:
+            return signal
+        return "neutral"
+    if status == "in_progress" and has_offer and _is_proceed_confirmation(text):
+        return "confirm_proceed"
     return signal
 
 
@@ -102,13 +137,18 @@ def evaluate_resolution(
     nudge: dict[str, Any],
     settings: Settings | None = None,
 ) -> dict:
-    """Advance issue resolution using a single FM enrichment call for customer turns."""
+    """Advance issue resolution from FM enrichment on agent or customer turns."""
     settings = settings or get_settings()
     existing = (inner.get("resolution") or {}).copy()
     status = str(existing.get("status") or "open")
     actions = dict(existing.get("actions") or {})
     msg = (text or "").strip()
-    if not msg or speaker != 1:
+    if not msg:
+        existing["status"] = status
+        existing["actions"] = actions
+        return existing
+
+    if speaker != 1:
         existing["status"] = status
         existing["actions"] = actions
         return existing

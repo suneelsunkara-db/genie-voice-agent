@@ -23,7 +23,9 @@ from genie_voice.config import Settings, get_settings
 from genie_voice.i18n import (
     DEFAULT_LANGUAGE,
     canonical_business_context_instruction,
+    content_language,
     language_spec,
+    localized_reply_opener,
     normalize_language,
     sanitize_generated_display_text,
 )
@@ -103,7 +105,10 @@ CUSTOMER_UTTERANCE_INSTRUCTION = (
     "mentioned_amount (number or null), "
     f"customer_signal (one of {CUSTOMER_SIGNALS}), "
     "payment_plan_requested (boolean), waiver_requested (boolean). "
-    "confirm_proceed means the customer agrees to proceed with a previously offered action."
+    "confirm_proceed means the customer agrees to proceed with a previously offered action. "
+    "When the customer asks to waive a late fee set waiver_requested=true and next_best_action=offer_fee_waiver. "
+    "When they ask for a payment plan set payment_plan_requested=true and next_best_action=set_up_payment_plan. "
+    "When they ask for both, set both flags true and next_best_action=set_up_payment_plan."
 )
 RESOLUTION_SIGNAL_INSTRUCTION = (
     "Return JSON for THIS customer utterance with EXACTLY these keys: "
@@ -283,14 +288,29 @@ def fm_customer_resolution_signal(
 
 _AGENT_REPLY_SYSTEM = (
     "You are a warm, professional billing support agent on a live customer call. "
-    "Write only the words you would speak to the customer in the interaction language requested by the user. "
+    "Write only the words you would speak to the customer in the interaction language. "
     "Never mention SQL, databases, schemas, tables, column names, backticks, or internal tools. "
     "Never refuse the request or say a question is unrelated or out of scope. "
     "Use only the validated account facts provided in the user message."
 )
 
 
-def fm_compose_agent_reply(prompt: str, settings: Settings | None = None) -> str:
+def agent_reply_system_prompt(language: str | None) -> str:
+    """System prompt for customer-facing FM prose in the selected language."""
+    spec = language_spec(language)
+    return (
+        f"{_AGENT_REPLY_SYSTEM} "
+        f"Interaction language: {spec.english_name} ({spec.code}). "
+        f"{spec.reply_instruction}"
+    )
+
+
+def fm_compose_agent_reply(
+    prompt: str,
+    settings: Settings | None = None,
+    *,
+    language: str | None = None,
+) -> str:
     """Customer-facing agent prose via the FM serving endpoint (not Genie analytics)."""
     settings = settings or get_settings()
     from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
@@ -301,7 +321,7 @@ def fm_compose_agent_reply(prompt: str, settings: Settings | None = None) -> str
     kwargs: dict[str, Any] = {
         "name": settings.enrichment.model_endpoint,
         "messages": [
-            ChatMessage(role=ChatMessageRole.SYSTEM, content=_AGENT_REPLY_SYSTEM),
+            ChatMessage(role=ChatMessageRole.SYSTEM, content=agent_reply_system_prompt(language)),
             ChatMessage(role=ChatMessageRole.USER, content=prompt),
         ],
         "max_tokens": settings.enrichment.max_tokens,
@@ -334,7 +354,7 @@ def fm_rewrite_in_language(
     This is the repair path for Genie/LLM output. It intentionally does not
     translate SQL or canonical identifiers; it rewrites only display prose.
     """
-    language_code = normalize_language(language)
+    language_code = content_language(language)
     value = (text or "").strip()
     if not value:
         return value

@@ -1,5 +1,11 @@
 import { InteractionLanguage } from "./api/client";
 
+export function contentLanguage(language: InteractionLanguage | undefined): InteractionLanguage {
+  if (!language) return "en-US";
+  if (language.startsWith("zh-CN")) return "zh-CN";
+  return language;
+}
+
 type UiCopy = {
   navCockpit: string;
   navBenchmark: string;
@@ -13,6 +19,9 @@ type UiCopy = {
   flowGenie: string;
   flowResolution: string;
   loadingCustomers: string;
+  connectingWorkspace: string;
+  cockpitArchitectureAlt: string;
+  customersInQueue: (count: number) => string;
   unableToLoadCustomers: string;
   noCustomers: string;
   sidebarTitle: string;
@@ -24,8 +33,17 @@ type UiCopy = {
   customerProfileLoading: string;
   monthsTenure: (months: number) => string;
   interactionLanguage: string;
+  multilingualUSP: string;
+  multilingualUSPDesc: string;
+  sessionPulseLive: string;
+  sessionPulseNow: string;
   issue: string;
   risk: string;
+  issueTagAtRisk: string;
+  issueTagOverdueExposure: string;
+  issueTagAutopayOff: string;
+  issueTagDeclinedPayments: string;
+  issueTagDispute: string;
   recommendedNextAction: string;
   issueResolvedTitle: string;
   issueResolvedDetail: string;
@@ -129,6 +147,12 @@ type UiCopy = {
   askGenie: string;
   asking: string;
   language: string;
+  zhAsrComparisonTitle?: string;
+  zhAsrComparisonRunning?: string;
+  zhAsrBrowserCaption?: string;
+  zhAsrPrimaryPath?: string;
+  zhAsrShadowReplay?: string;
+  zhAsrSelectedModel?: string;
 };
 
 const EN: UiCopy = {
@@ -145,6 +169,10 @@ const EN: UiCopy = {
   flowGenie: "Genie Reasoning",
   flowResolution: "Agent Resolution",
   loadingCustomers: "Loading customers with issues...",
+  connectingWorkspace: "Connecting governed customer context…",
+  cockpitArchitectureAlt:
+    "Databricks hosted speech-to-text model augmented by Genie — live Customer 360, faster resolution, and deeper reasoning on call.",
+  customersInQueue: (count) => `${count} in assist queue`,
   unableToLoadCustomers: "Unable to load customers",
   noCustomers: "No customers with open issues found in account data.",
   sidebarTitle: "Customers with issues",
@@ -156,8 +184,17 @@ const EN: UiCopy = {
   customerProfileLoading: "Customer profile loading",
   monthsTenure: (months) => `${months} mo tenure`,
   interactionLanguage: "Interaction language",
+  multilingualUSP: "Multilingual assist",
+  multilingualUSPDesc: "Speech, Genie answers, and this workspace follow your language choice.",
+  sessionPulseLive: "Live on call",
+  sessionPulseNow: "Session focus",
   issue: "issue",
   risk: "risk",
+  issueTagAtRisk: "At-risk account",
+  issueTagOverdueExposure: "Overdue invoice exposure",
+  issueTagAutopayOff: "Autopay off",
+  issueTagDeclinedPayments: "Declined payments",
+  issueTagDispute: "Billing dispute",
   recommendedNextAction: "Recommended next action",
   issueResolvedTitle: "Issue resolved - confirm and close warmly",
   issueResolvedDetail:
@@ -287,6 +324,10 @@ const TH: UiCopy = {
   flowGenie: "Genie วิเคราะห์",
   flowResolution: "เจ้าหน้าที่แก้ไขปัญหา",
   loadingCustomers: "กำลังโหลดลูกค้าที่มีปัญหา...",
+  connectingWorkspace: "กำลังเชื่อมต่อบริบทลูกค้าที่ได้รับการกำกับดูแล…",
+  cockpitArchitectureAlt:
+    "โมเดลแปลงเสียงเป็นข้อความบน Databricks ที่เสริมด้วย Genie — Customer 360 สด แก้ปัญหาเร็วขึ้น และให้เหตุผลลึกขึ้นระหว่างสาย",
+  customersInQueue: (count) => `${count} คิวรอช่วยเหลือ`,
   unableToLoadCustomers: "โหลดรายชื่อลูกค้าไม่ได้",
   noCustomers: "ไม่พบลูกค้าที่มีปัญหาเปิดอยู่ในข้อมูลบัญชี",
   sidebarTitle: "ลูกค้าที่มีปัญหา",
@@ -298,8 +339,17 @@ const TH: UiCopy = {
   customerProfileLoading: "กำลังโหลดโปรไฟล์ลูกค้า",
   monthsTenure: (months) => `ใช้งานมา ${months} เดือน`,
   interactionLanguage: "ภาษาที่ใช้โต้ตอบ",
+  multilingualUSP: "รองรับหลายภาษา",
+  multilingualUSPDesc: "การถอดเสียง คำตอบจาก Genie และหน้าจอนี้จะตามภาษาที่คุณเลือก",
+  sessionPulseLive: "สดบนสาย",
+  sessionPulseNow: "โฟกัสเซสชัน",
   issue: "ปัญหา",
   risk: "ความเสี่ยง",
+  issueTagAtRisk: "บัญชีเสี่ยง",
+  issueTagOverdueExposure: "มีใบแจ้งหนี้ค้างชำระ",
+  issueTagAutopayOff: "ปิดชำระอัตโนมัติ",
+  issueTagDeclinedPayments: "ชำระเงินไม่สำเร็จ",
+  issueTagDispute: "ข้อโต้แย้งบิล",
   recommendedNextAction: "คำแนะนำถัดไป",
   issueResolvedTitle: "แก้ไขปัญหาแล้ว - ยืนยันและปิดเคสอย่างสุภาพ",
   issueResolvedDetail:
@@ -428,9 +478,17 @@ const ID: UiCopy = {
   flowGenie: "Penalaran Genie",
   flowResolution: "Resolusi Agen",
   loadingCustomers: "Memuat pelanggan bermasalah...",
+  connectingWorkspace: "Menghubungkan konteks pelanggan yang tergovern…",
+  cockpitArchitectureAlt:
+    "Model ucapan-ke-teks Databricks yang diperkuat Genie — Customer 360 langsung, resolusi lebih cepat, dan penalaran lebih dalam saat panggilan.",
+  customersInQueue: (count) => `${count} dalam antrean bantuan`,
   unableToLoadCustomers: "Tidak dapat memuat pelanggan",
   noCustomers: "Tidak ada pelanggan dengan masalah terbuka di data akun.",
   interactionLanguage: "Bahasa interaksi",
+  multilingualUSP: "Dukungan multibahasa",
+  multilingualUSPDesc: "Ucapan, jawaban Genie, dan workspace ini mengikuti bahasa yang Anda pilih.",
+  sessionPulseLive: "Langsung di panggilan",
+  sessionPulseNow: "Fokus sesi",
   sidebarTitle: "Pelanggan bermasalah",
   sidebarSubtitle: "Risiko penagihan, eksposur jatuh tempo, dan akun yang perlu bantuan agen",
   call: "Panggilan",
@@ -441,6 +499,11 @@ const ID: UiCopy = {
   monthsTenure: (months) => `${months} bulan berlangganan`,
   issue: "masalah",
   risk: "risiko",
+  issueTagAtRisk: "Akun berisiko",
+  issueTagOverdueExposure: "Eksposur invoice jatuh tempo",
+  issueTagAutopayOff: "Autopay nonaktif",
+  issueTagDeclinedPayments: "Pembayaran ditolak",
+  issueTagDispute: "Sengketa tagihan",
   recommendedNextAction: "Tindakan berikutnya yang disarankan",
   issueResolvedTitle: "Masalah selesai - konfirmasi dan tutup dengan hangat",
   issueResolvedDetail:
@@ -569,9 +632,17 @@ const ZH: UiCopy = {
   flowGenie: "Genie 推理",
   flowResolution: "客服解决",
   loadingCustomers: "正在加载有问题的客户...",
+  connectingWorkspace: "正在连接受治理的客户上下文…",
+  cockpitArchitectureAlt:
+    "Databricks 托管语音转文本模型，由 Genie 增强 — 通话中实时 Customer 360、更快解决、更深推理。",
+  customersInQueue: (count) => `协助队列 ${count} 人`,
   unableToLoadCustomers: "无法加载客户",
   noCustomers: "账户数据中没有发现未关闭的问题客户。",
   interactionLanguage: "交互语言",
+  multilingualUSP: "多语言支持",
+  multilingualUSPDesc: "语音、Genie 回答和此工作区都会跟随您选择的语言。",
+  sessionPulseLive: "通话进行中",
+  sessionPulseNow: "会话焦点",
   sidebarTitle: "有问题的客户",
   sidebarSubtitle: "账单风险、逾期风险，以及需要客服协助的账户",
   call: "来电",
@@ -582,6 +653,11 @@ const ZH: UiCopy = {
   monthsTenure: (months) => `${months} 个月在网`,
   issue: "问题",
   risk: "风险",
+  issueTagAtRisk: "高风险账户",
+  issueTagOverdueExposure: "逾期发票风险",
+  issueTagAutopayOff: "未开启自动付款",
+  issueTagDeclinedPayments: "付款失败",
+  issueTagDispute: "账单争议",
   recommendedNextAction: "建议的下一步操作",
   issueResolvedTitle: "问题已解决 - 确认并友好结束",
   issueResolvedDetail:
@@ -693,6 +769,12 @@ const ZH: UiCopy = {
   askGenie: "询问 Genie",
   asking: "正在询问...",
   language: "语言",
+  zhAsrComparisonTitle: "中文 ASR 对比",
+  zhAsrComparisonRunning: "后台正在对比 SenseVoice、Paraformer 和 Qwen3…",
+  zhAsrBrowserCaption: "浏览器字幕",
+  zhAsrPrimaryPath: "主路径转写",
+  zhAsrShadowReplay: "后台重放",
+  zhAsrSelectedModel: "当前选择",
 };
 
 const COPY: Record<InteractionLanguage, UiCopy> = {
@@ -700,13 +782,15 @@ const COPY: Record<InteractionLanguage, UiCopy> = {
   "th-TH": TH,
   "id-ID": ID,
   "zh-CN": ZH,
+  "zh-CN-sensevoice": ZH,
+  "zh-CN-paraformer": ZH,
 };
 
 export function uiCopy(language: InteractionLanguage | undefined): UiCopy {
-  return COPY[language ?? "en-US"] ?? EN;
+  return COPY[language ?? "en-US"] ?? COPY[contentLanguage(language)] ?? EN;
 }
 
-const VALUE_LABELS: Record<InteractionLanguage, Record<string, Record<string, string>>> = {
+const VALUE_LABELS: Partial<Record<InteractionLanguage, Record<string, Record<string, string>>>> = {
   "en-US": {
     status: {
       open: "open",
@@ -878,7 +962,7 @@ export function localizedValue(
   const raw = String(value);
   const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
   const baseCode = normalized.split(":")[0];
-  const labels = VALUE_LABELS[language ?? "en-US"] ?? VALUE_LABELS["en-US"];
+  const labels = VALUE_LABELS[contentLanguage(language)] ?? VALUE_LABELS["en-US"] ?? {};
   return labels[group]?.[normalized] ?? labels[group]?.[baseCode] ?? labels.status?.[normalized] ?? raw.replace(/_/g, " ");
 }
 
@@ -887,7 +971,8 @@ export function localizeRationale(
   text: string | null | undefined
 ): string {
   if (!text) return "";
-  if (language === "id-ID") {
+  const lang = contentLanguage(language);
+  if (lang === "id-ID") {
     return text
       .replace(/overdue invoice exposure/gi, "eksposur invoice jatuh tempo")
       .replace(/declined payments/gi, "pembayaran ditolak")
@@ -899,7 +984,7 @@ export function localizeRationale(
       .replace(/invoice/gi, "invoice")
       .replace(/payment/gi, "pembayaran");
   }
-  if (language === "zh-CN") {
+  if (lang === "zh-CN") {
     return text
       .replace(/overdue invoice exposure/gi, "存在逾期发票风险")
       .replace(/declined payments/gi, "付款失败")
@@ -911,7 +996,7 @@ export function localizeRationale(
       .replace(/invoice/gi, "发票")
       .replace(/payment/gi, "付款");
   }
-  if (language !== "th-TH") return text;
+  if (lang !== "th-TH") return text;
   return text
     .replace(/overdue invoice exposure/gi, "มีใบแจ้งหนี้ค้างชำระ")
     .replace(/declined payments/gi, "มีการชำระเงินไม่สำเร็จ")
@@ -929,7 +1014,8 @@ export function localizeResolutionNote(
   text: string | null | undefined
 ): string {
   if (!text) return "";
-  if (language === "id-ID") {
+  const lang = contentLanguage(language);
+  if (lang === "id-ID") {
     return text
       .replace(/issue_in_progress/gi, "masalah sedang diproses")
       .replace(/guided by Genie and account context/gi, "dipandu oleh Genie dan konteks akun")
@@ -938,7 +1024,7 @@ export function localizeResolutionNote(
       .replace(/IN_PROGRESS/gi, "sedang diproses")
       .replace(/overdue/gi, "jatuh tempo");
   }
-  if (language === "zh-CN") {
+  if (lang === "zh-CN") {
     return text
       .replace(/issue_in_progress/gi, "问题处理中")
       .replace(/guided by Genie and account context/gi, "由 Genie 和账户上下文指导")
@@ -947,7 +1033,7 @@ export function localizeResolutionNote(
       .replace(/IN_PROGRESS/gi, "处理中")
       .replace(/overdue/gi, "逾期");
   }
-  if (language !== "th-TH") return text;
+  if (lang !== "th-TH") return text;
   return text
     .replace(/issue_in_progress/gi, "ปัญหากำลังดำเนินการ")
     .replace(/guided by Genie and account context/gi, "นำทางด้วย Genie และบริบทบัญชี")
@@ -962,7 +1048,7 @@ export function localizedLanguageName(
   code: InteractionLanguage,
   fallback: string
 ): string {
-  const labels: Partial<Record<InteractionLanguage, Record<InteractionLanguage, string>>> = {
+  const labels: Partial<Record<InteractionLanguage, Partial<Record<InteractionLanguage, string>>>> = {
     "th-TH": {
       "en-US": "อังกฤษ",
       "th-TH": "ไทย",
@@ -982,5 +1068,5 @@ export function localizedLanguageName(
       "zh-CN": "普通话",
     },
   };
-  return labels[uiLanguage ?? "en-US"]?.[code] ?? fallback;
+  return labels[contentLanguage(uiLanguage)]?.[contentLanguage(code)] ?? fallback;
 }

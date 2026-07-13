@@ -13,6 +13,7 @@ import copy
 import json
 import logging
 import time
+from typing import Any
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException
@@ -28,22 +29,27 @@ from genie_voice.assist.resolution import (
     finalize_resolution_after_billing,
     resolution_event_for_transition,
 )
+from genie_voice.assist.reply_plan import (
+    ReplyActionPlan,
+    build_reply_action_plan,
+    compose_action_instructions,
+    render_deterministic_reply,
+)
 from genie_voice.assist.validation import validate_reply_against_metrics
 from genie_voice.config import get_settings
 from genie_voice.databricks.client import get_workspace_client
 from genie_voice.i18n import (
+    asr_model_language,
     canonical_business_context_instruction,
+    content_language,
     generated_text_language_check,
+    is_zh_asr_compare_language,
     language_spec,
     localized_reply_opener,
     normalize_language,
     stt_options_for_language,
 )
-from genie_voice.serve.lakebase import (
-    _apply_billing_adjustments,
-    _apply_resolution_status_overlay,
-)
-
+from genie_voice.asr.zh_comparison import list_recent_comparisons, schedule_zh_asr_comparison
 from ..asr_postprocess import postprocess_transcript_for_call
 from ..deps import genie, serving
 
@@ -62,6 +68,7 @@ class MicAudioIn(BaseModel):
     mime_type: str = "audio/webm"
     speaker: int = 1
     language: str | None = None
+    browser_caption: str | None = None
 
 
 class GenieInsightIn(BaseModel):
@@ -123,7 +130,7 @@ def _transcribe_with_databricks_model(body: MicAudioIn, settings) -> str:
                     "audio_b64": body.audio_b64,
                     "mime_type": body.mime_type or "audio/webm",
                     "speaker": body.speaker,
-                    "language": normalize_language(body.language),
+                    "language": asr_model_language(body.language),
                     "task": "transcribe",
                 }
             ],
@@ -228,12 +235,61 @@ def _account_context_snippet(
     return "\n".join(str(x) for x in lines)
 
 
+def _validate_and_localize_agent_reply(
+    raw: str,
+    *,
+    lang: Any,
+    metrics: Any,
+    issue_closed: bool,
+    settings: Any,
+    validation_meta: dict[str, object],
+) -> tuple[str | None, dict[str, object]]:
+    """Run language repair (when needed) and metric validation on FM prose."""
+    if not raw or _looks_like_bad_agent_reply(raw):
+        validation_meta["genie_error"] = "reply_rejected_bad_markers"
+        return None, validation_meta
+
+    language_check = generated_text_language_check(raw, lang.code)
+    repaired = False
+    if language_check.get("checked") and not language_check.get("matches"):
+        try:
+            from genie_voice.enrich.fm import fm_rewrite_in_language
+
+            raw = fm_rewrite_in_language(
+                raw,
+                lang.code,
+                settings=settings,
+                purpose="customer-facing agent reply",
+            )
+            repaired = True
+            language_check = generated_text_language_check(raw, lang.code)
+        except Exception as repair_exc:  # noqa: BLE001
+            validation_meta["language_repair_error"] = str(repair_exc)
+
+    validation_meta["language_repaired"] = repaired
+    validation_meta["language_validation"] = language_check
+    ok, issues = validate_reply_against_metrics(raw, metrics, issue_closed=issue_closed)
+    if language_check.get("checked") and not language_check.get("matches"):
+        ok = False
+        issues = [*issues, f"language_mismatch:{lang.code}"]
+    validation_meta["output_validated"] = ok
+    validation_meta["output_issues"] = issues
+    if ok:
+        validation_meta["reply_available"] = True
+        validation_meta.pop("genie_error", None)
+        return raw, validation_meta
+
+    validation_meta["genie_error"] = "reply_failed_metric_validation"
+    return None, validation_meta
+
+
 def _compose_agent_reply(
     call_id: str,
     customer_id: str | None,
     customer_message: str,
     resolution: dict,
     account: dict[str, object] | None,
+    action_plan: ReplyActionPlan,
     genie_insight: str | None = None,
     language: str | None = None,
 ) -> tuple[str | None, dict[str, object]]:
@@ -285,6 +341,7 @@ def _compose_agent_reply(
         else ""
     )
     validation_meta["genie_insight_used"] = bool(genie_insight)
+    customer_name = str(((account or {}).get("customer") or {}).get("full_name") or "").strip() or None
 
     if issue_closed:
         genie_question = f"""You are a customer-facing billing support agent on call {call_id}.
@@ -308,21 +365,41 @@ Write a warm 3-4 sentence reply that:
 Do NOT mention SQL, field names, backticks, or ask them to proceed again.
 Do NOT cite overdue balances that contradict the validated facts above."""
     else:
+        deterministic = render_deterministic_reply(
+            action_plan,
+            language=lang.code,
+            opener=opener,
+            customer_name=customer_name,
+        )
+        if deterministic:
+            validated, validation_meta = _validate_and_localize_agent_reply(
+                deterministic,
+                lang=lang,
+                metrics=metrics,
+                issue_closed=False,
+                settings=get_settings(),
+                validation_meta=validation_meta,
+            )
+            if validated:
+                return validated, validation_meta
+
+        action_block = compose_action_instructions(action_plan)
         genie_question = f"""You are a customer-facing billing support agent on call {call_id}.
 Customer ({cust_label}) said: "{customer_message}"
 
 {language_context}
+
+{action_block}
 
 {genie_block}VALIDATED ACCOUNT FACTS for THIS customer only (use ONLY these numbers):
 {metrics_block}
 
 {context}
 
-Write a 3-4 sentence reply:
-1) empathy,
-2) what the account shows in plain language (use the validated facts exactly),
-3) one concrete action you can take now,
-4) a confirmation question.
+Write a 3-4 sentence reply that follows AGENT_ACTION_TITLE and AGENT_ACTION_DETAIL.
+The analytics engine already selected the action — phrase it warmly; do NOT pick a different action.
+Do NOT offer autopay retries, payment-method updates, or unrelated account reports unless that is the selected action.
+End with a confirmation question when offering waiver, payment plan, or refund steps.
 
 Start with: "{opener}..."
 {lang.reply_instruction}
@@ -330,50 +407,33 @@ Do NOT use SQL, table/column names, backticks, or portfolio-wide aggregates."""
 
     try:
         t0 = time.perf_counter()
-        from genie_voice.enrich.fm import fm_compose_agent_reply, fm_rewrite_in_language
-        from genie_voice.config import get_settings
+        from genie_voice.enrich.fm import fm_compose_agent_reply
 
         settings = get_settings()
-        raw = fm_compose_agent_reply(genie_question, settings=settings).strip()
+        raw = fm_compose_agent_reply(genie_question, settings=settings, language=lang.code).strip()
+        validated, validation_meta = _validate_and_localize_agent_reply(
+            raw,
+            lang=lang,
+            metrics=metrics,
+            issue_closed=issue_closed,
+            settings=settings,
+            validation_meta=validation_meta,
+        )
+        if validated:
+            log.info(
+                "assist fm prose call_id=%s elapsed_ms=%.0f closed=%s",
+                call_id,
+                (time.perf_counter() - t0) * 1000,
+                issue_closed,
+            )
+            return validated, validation_meta
         log.info(
-            "assist fm prose call_id=%s elapsed_ms=%.0f closed=%s",
+            "assist fm prose call_id=%s elapsed_ms=%.0f closed=%s validated=%s",
             call_id,
             (time.perf_counter() - t0) * 1000,
             issue_closed,
+            False,
         )
-        if raw and not _looks_like_bad_agent_reply(raw):
-            language_check = generated_text_language_check(raw, lang.code)
-            repaired = False
-            if lang.code != "en-US" or (
-                language_check.get("checked") and not language_check.get("matches")
-            ):
-                try:
-                    raw = fm_rewrite_in_language(
-                        raw,
-                        lang.code,
-                        settings=settings,
-                        purpose="customer-facing agent reply",
-                    )
-                    repaired = True
-                    language_check = generated_text_language_check(raw, lang.code)
-                except Exception as repair_exc:  # noqa: BLE001
-                    validation_meta["language_repair_error"] = str(repair_exc)
-            validation_meta["language_repaired"] = repaired
-            validation_meta["language_validation"] = language_check
-            ok, issues = validate_reply_against_metrics(
-                raw,
-                metrics,
-                issue_closed=issue_closed,
-            )
-            if language_check.get("checked") and not language_check.get("matches"):
-                ok = False
-                issues = [*issues, f"language_mismatch:{lang.code}"]
-            validation_meta["output_validated"] = ok
-            validation_meta["output_issues"] = issues
-            if ok:
-                validation_meta["reply_available"] = True
-                return raw, validation_meta
-            validation_meta["genie_error"] = "reply_failed_metric_validation"
     except Exception as exc:  # noqa: BLE001
         validation_meta["genie_error"] = str(exc)
 
@@ -400,15 +460,20 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
     nudge is returned with `available=False` (no heuristic fallback) so the agent
     UI degrades gracefully instead of faking an answer."""
     from genie_voice.enrich.engine import enrich_utterance
+    from genie_voice.serve.lakebase import _apply_billing_adjustments, _apply_resolution_status_overlay
 
     s = get_settings()
-    language = normalize_language(body.language)
+    route_language = normalize_language(body.language)
+    language = content_language(body.language)
     t_start = time.perf_counter()
     pipeline_steps: list[dict[str, object]] = []
     existing = serving().get_call_state(call_id) or {}
     inner = existing.get("state") or {}
     previous_resolution = dict(inner.get("resolution") or {})
     current_status = str(previous_resolution.get("status") or "open")
+
+    customer_id = existing.get("customer_id")
+    cached = inner.get("genie_insight") or {}
 
     t_fm = time.perf_counter()
     nudge = enrich_utterance(
@@ -420,10 +485,9 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
 
     inner["live"] = nudge
     utterances = list(inner.get("utterances") or [])
-    utterances.append({"text": body.text, "speaker": body.speaker, "language": language})
+    utterances.append({"text": body.text, "speaker": body.speaker, "language": route_language})
     inner["utterances"] = utterances
 
-    customer_id = existing.get("customer_id")
     t_resolution = time.perf_counter()
     account_source = serving().load_account_facts_source(customer_id) if customer_id else None
     resolution = evaluate_resolution(
@@ -459,8 +523,10 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
                 _apply_billing_adjustments(copy.deepcopy(account_source), [pending_adjustment]),
                 reply_resolution,
             )
-        cached = inner.get("genie_insight") or {}
         cached_insight = cached.get("text") if cached.get("language") == language else None
+        action_plan = build_reply_action_plan(
+            nudge, reply_account, reply_resolution, customer_message=body.text
+        )
         t_genie = time.perf_counter()
         agent_reply, agent_validation = _compose_agent_reply(
             call_id,
@@ -468,6 +534,7 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
             body.text,
             reply_resolution,
             reply_account,
+            action_plan,
             genie_insight=cached_insight,
             language=language,
         )
@@ -481,10 +548,11 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
             _pipeline_step("genie_reply", "Genie agent reply", t_genie, detail=genie_detail)
         )
         log.info(
-            "assist agent_reply call_id=%s elapsed_ms=%.0f reply=%s",
+            "assist agent_reply call_id=%s elapsed_ms=%.0f reply=%s nba=%s",
             call_id,
             (time.perf_counter() - t_genie) * 1000,
             bool(agent_reply),
+            action_plan.next_best_action,
         )
         if agent_reply:
             utterances.append({"text": agent_reply, "speaker": 0, "language": language})
@@ -495,8 +563,6 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
         t_billing = time.perf_counter()
         if not pending_adjustment:
             billing_result = {"applied": False, "reason": "no_overdue_invoice"}
-        elif body.speaker == 1 and not agent_reply:
-            billing_result = {"applied": False, "reason": "agent_reply_unavailable"}
         else:
             billing_result = serving().apply_billing_resolution(
                 call_id,
@@ -541,7 +607,7 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
     return {
         "call_id": call_id,
         "model": s.enrichment.model_endpoint,
-        "language": language,
+        "language": route_language,
         "live": nudge,
         "resolution": resolution,
         "agent_reply": agent_reply,
@@ -557,7 +623,8 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
 def post_mic_transcribe(call_id: str, body: MicAudioIn) -> dict:
     """Transcribe browser mic audio with Deepgram and route into the same assist flow."""
     s = get_settings()
-    language = normalize_language(body.language)
+    route_language = normalize_language(body.language)
+    language = content_language(body.language)
     try:
         audio_bytes = base64.b64decode(body.audio_b64)
     except Exception as exc:
@@ -567,16 +634,37 @@ def post_mic_transcribe(call_id: str, body: MicAudioIn) -> dict:
     text, postprocessing = postprocess_transcript_for_call(call_id, raw_text, s, language=language)
 
     # Reuse existing assist behavior so the app workflow remains unchanged.
-    nudge = post_assist(call_id, UtteranceIn(text=text, speaker=body.speaker, language=language))
+    nudge = post_assist(call_id, UtteranceIn(text=text, speaker=body.speaker, language=route_language))
+    comparison_id: str | None = None
+    if is_zh_asr_compare_language(route_language) and s.providers.stt.active == "databricks":
+        comparison_id = schedule_zh_asr_comparison(
+            call_id=call_id,
+            audio_b64=body.audio_b64,
+            mime_type=body.mime_type or "audio/webm",
+            speaker=body.speaker,
+            selected_language=route_language,
+            primary_transcript=raw_text,
+            settings=s,
+            browser_caption=body.browser_caption,
+        )
     return {
         **nudge,
         "transcript": text,
         "raw_transcript": raw_text,
         "canonical_transcript": text,
-        "language": language,
+        "language": route_language,
+        "content_language": language,
         "asr_provider": s.providers.stt.active,
         "asr_postprocessing": postprocessing,
+        "zh_asr_comparison_id": comparison_id,
     }
+
+
+@router.get("/zh-asr-comparisons")
+def get_zh_asr_comparisons(call_id: str | None = None, limit: int = 20) -> dict:
+    """Recent side-by-side zh ASR comparisons from background mic replay."""
+    items = list_recent_comparisons(call_id=call_id, limit=limit)
+    return {"count": len(items), "comparisons": items}
 
 
 @router.post("/{call_id}/genie-insight")
@@ -591,7 +679,7 @@ def post_genie_insight(call_id: str, body: GenieInsightIn | None = None) -> dict
     state = serving().get_call_state(call_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"No state for call {call_id}")
-    language = normalize_language(body.language if body else None)
+    language = content_language(body.language if body else None)
     customer_id = state.get("customer_id")
     inner = state.get("state") or {}
     text = genie_account_insight(genie(), customer_id, language=language)

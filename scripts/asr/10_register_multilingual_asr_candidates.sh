@@ -98,12 +98,17 @@ candidate_ids() {
   printf '%s\n' \
     th_oss_pathumma_whisper_large_v3 \
     id_oss_qwen3_asr_0_6b \
-    zh_oss_qwen3_asr_0_6b
+    zh_oss_qwen3_asr_0_6b \
+    zh_oss_sensevoice_small \
+    zh_oss_paraformer_8k
 }
 
 load_candidate() {
   local candidate="$1"
   CANDIDATE_ID="$candidate"
+  FUNASR_HUB=""
+  FUNASR_VAD_MODEL=""
+  FUNASR_VARIANT=""
   case "$candidate" in
     th_oss_pathumma_whisper_large_v3)
       FAMILY=whisper; BASE_MODEL="nectec/Pathumma-whisper-th-large-v3"; LANGUAGE_CODE=th; LANGUAGE_NAME=Thai ;;
@@ -111,6 +116,21 @@ load_candidate() {
       FAMILY=qwen3; BASE_MODEL="Qwen/Qwen3-ASR-0.6B"; LANGUAGE_CODE=id; LANGUAGE_NAME=Indonesian ;;
     zh_oss_qwen3_asr_0_6b)
       FAMILY=qwen3; BASE_MODEL="Qwen/Qwen3-ASR-0.6B"; LANGUAGE_CODE=zh; LANGUAGE_NAME=Chinese ;;
+    zh_oss_sensevoice_small)
+      FAMILY=funasr
+      BASE_MODEL="iic/SenseVoiceSmall"
+      LANGUAGE_CODE=zh
+      LANGUAGE_NAME=Chinese
+      FUNASR_HUB=ms
+      FUNASR_VAD_MODEL="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
+      FUNASR_VARIANT=sensevoice ;;
+    zh_oss_paraformer_8k)
+      FAMILY=funasr
+      BASE_MODEL="damo/speech_paraformer_asr_nat-zh-cn-8k-common-vocab8358-tensorflow1"
+      LANGUAGE_CODE=zh
+      LANGUAGE_NAME=Chinese
+      FUNASR_HUB=ms
+      FUNASR_VARIANT=paraformer_8k ;;
     *)
       err "Unknown candidate: $candidate"
       candidate_ids >&2
@@ -147,6 +167,7 @@ copy_runners() {
   "${DBX[@]}" fs cp "$ROOT/scripts/asr/databricks_register_multilingual_asr_candidate.py" "dbfs:$remote_jobs_dir/databricks_register_multilingual_asr_candidate.py" --overwrite
   "${DBX[@]}" fs cp "$ROOT/scripts/asr/databricks_eval_registered_multilingual_asr_candidate.py" "dbfs:$remote_jobs_dir/databricks_eval_registered_multilingual_asr_candidate.py" --overwrite
   "${DBX[@]}" fs cp "$ROOT/scripts/asr/mlflow_multilingual_asr_pyfunc.py" "dbfs:$remote_jobs_dir/mlflow_multilingual_asr_pyfunc.py" --overwrite
+  "${DBX[@]}" fs cp "$ROOT/scripts/asr/funasr_serving_requirements.txt" "dbfs:$remote_jobs_dir/funasr_serving_requirements.txt" --overwrite
 }
 
 submit_job() {
@@ -224,6 +245,12 @@ parameters = [
     "--wrapper-path", "${ASR_ML_REGISTER_REMOTE_ROOT}/jobs/mlflow_multilingual_asr_pyfunc.py",
     "--output-json", "${output_json_remote}",
 ]
+if "${FAMILY}" == "funasr":
+    parameters.extend(["--funasr-hub", "${FUNASR_HUB:-ms}"])
+    if "${FUNASR_VAD_MODEL:-}":
+        parameters.extend(["--funasr-vad-model", "${FUNASR_VAD_MODEL}"])
+    if "${FUNASR_VARIANT:-}":
+        parameters.extend(["--funasr-variant", "${FUNASR_VARIANT}"])
 if "${ASR_ML_REGISTER_FORCE_DOWNLOAD}" == "true":
     parameters.append("--force-download")
 
@@ -253,7 +280,9 @@ job = {
                     "qwen-asr",
                     "librosa",
                     "soundfile",
-                    "pandas"
+                    "pandas",
+                    "funasr",
+                    "modelscope"
                 ],
             },
         }

@@ -1,18 +1,50 @@
 import { API_BASE_URL } from "../config";
 
-export type InteractionLanguage = "en-US" | "th-TH" | "id-ID" | "zh-CN";
+export type InteractionLanguage =
+  | "en-US"
+  | "th-TH"
+  | "id-ID"
+  | "zh-CN"
+  | "zh-CN-sensevoice"
+  | "zh-CN-paraformer";
 
 export const INTERACTION_LANGUAGES: { code: InteractionLanguage; label: string }[] = [
   { code: "en-US", label: "English" },
   { code: "th-TH", label: "Thai" },
   { code: "id-ID", label: "Indonesian" },
-  { code: "zh-CN", label: "Chinese" },
+  { code: "zh-CN", label: "Chinese (Qwen3)" },
+  { code: "zh-CN-sensevoice", label: "Chinese (SenseVoice)" },
+  { code: "zh-CN-paraformer", label: "Chinese (Paraformer)" },
 ];
 
 export interface InteractionLanguageOption {
   code: InteractionLanguage;
   label: string;
   english_name?: string;
+  stt_endpoint?: string;
+}
+
+export interface ZhAsrComparisonModel {
+  key: string;
+  label: string;
+  endpoint: string;
+  transcript: string;
+  error?: string | null;
+  elapsed_ms?: number | null;
+  selected?: boolean;
+}
+
+export interface ZhAsrComparison {
+  comparison_id: string;
+  call_id: string;
+  created_at: string;
+  selected_language: InteractionLanguage;
+  primary_transcript: string;
+  browser_caption?: string | null;
+  mime_type?: string | null;
+  status: string;
+  models: ZhAsrComparisonModel[];
+  notes?: string[];
 }
 
 export interface Stage {
@@ -68,7 +100,7 @@ export interface CustomerWithIssue {
 export interface AssistPipelineStep {
   key: string;
   label: string;
-  status: "pending" | "active" | "done" | "error" | "skipped";
+  status: "pending" | "active" | "done" | "error" | "skipped" | "complete";
   detail?: string;
   elapsed_ms?: number;
 }
@@ -135,6 +167,9 @@ export interface LiveNudge {
   };
   pipeline_steps?: AssistPipelineStep[];
   total_elapsed_ms?: number;
+  zh_asr_comparison_id?: string | null;
+  content_language?: InteractionLanguage;
+  asr_provider?: string;
 }
 
 export interface AccountFacts {
@@ -410,14 +445,30 @@ export const api = {
     audioBase64: string,
     mimeType: string,
     speaker = 1,
-    language?: InteractionLanguage
+    language?: InteractionLanguage,
+    browserCaption?: string
   ): Promise<LiveNudge> => {
     const res = await fetch(`${API_BASE_URL}/calls/${callId}/mic-transcribe`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ audio_b64: audioBase64, mime_type: mimeType, speaker, language }),
+      body: JSON.stringify({
+        audio_b64: audioBase64,
+        mime_type: mimeType,
+        speaker,
+        language,
+        browser_caption: browserCaption,
+      }),
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
+  },
+  zhAsrComparisons: (callId?: string, limit = 10) => {
+    const params = new URLSearchParams();
+    if (callId) params.set("call_id", callId);
+    params.set("limit", String(limit));
+    const query = params.toString();
+    return getJSON<{ count: number; comparisons: ZhAsrComparison[] }>(
+      `/calls/zh-asr-comparisons${query ? `?${query}` : ""}`
+    );
   },
 };

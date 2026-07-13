@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 from genie_voice.config import Settings, get_settings
-from genie_voice.i18n import normalize_language
+from genie_voice.i18n import content_language, normalize_language
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def summarize_call(
     utterances: list[dict[str, Any]], settings: Settings | None = None, *, language: str | None = None
 ) -> dict[str, Any]:
     settings = settings or get_settings()
-    language_code = normalize_language(language)
+    language_code = content_language(language)
     try:
         from genie_voice.enrich.fm import fm_summarize_call
 
@@ -67,7 +67,7 @@ def enrich_utterance(
     language: str | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
-    language_code = normalize_language(language)
+    language_code = content_language(language)
     try:
         if speaker == 1:
             from genie_voice.enrich.fm import fm_enrich_customer_utterance

@@ -141,14 +141,14 @@ stop_pid_file "$RUN_DIR/frontend.pid"
 
 API_PORT="${GENIE_API_PORT:-8000}"
 log "starting API on :$API_PORT"
-( cd "$ROOT/api" && "$ROOT/.venv/bin/uvicorn" app.main:app --host 0.0.0.0 --port "$API_PORT" \
-    > "$RUN_DIR/api.log" 2>&1 ) &
-echo $! > "$RUN_DIR/api.pid"
+( cd "$ROOT/api" && nohup "$ROOT/.venv/bin/uvicorn" app.main:app --host 0.0.0.0 --port "$API_PORT" \
+  > "$RUN_DIR/api.log" 2>&1 & echo $! > "$RUN_DIR/api.pid" )
+disown "$(tr -d '[:space:]' < "$RUN_DIR/api.pid")" 2>/dev/null || true
 
 log "starting frontend on :5173"
-( cd "$ROOT/frontend" && VITE_API_BASE_URL="http://localhost:$API_PORT" npm run dev -- --host 0.0.0.0 --port 5173 \
-    > "$RUN_DIR/frontend.log" 2>&1 ) &
-echo $! > "$RUN_DIR/frontend.pid"
+( cd "$ROOT/frontend" && nohup env VITE_API_BASE_URL="http://localhost:$API_PORT" npx vite --host 0.0.0.0 --port 5173 --strictPort \
+  > "$RUN_DIR/frontend.log" 2>&1 & echo $! > "$RUN_DIR/frontend.pid" )
+disown "$(tr -d '[:space:]' < "$RUN_DIR/frontend.pid")" 2>/dev/null || true
 
 wait_http_ok() {
   local url="$1"

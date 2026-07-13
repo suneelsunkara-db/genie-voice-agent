@@ -1,9 +1,4 @@
-"""MLflow pyfunc wrapper for multilingual ASR candidates.
-
-The registered model loads model weights from MLflow artifacts, not directly
-from Hugging Face during evaluation. That keeps quality tests aligned with the
-candidate artifact that would later be served.
-"""
+"""MLflow pyfunc wrapper for ml_asr OSS ASR candidates."""
 from __future__ import annotations
 
 import base64
@@ -15,7 +10,6 @@ from typing import Any
 import mlflow.pyfunc
 
 SENSEVOICE_TAG_RE = re.compile(r"<\|[^|]+\|>")
-
 
 MODEL_LANGUAGE_NAMES = {
     "th": "Thai",

@@ -5,7 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from genie_voice.ml_asr.serving.catalog import ServingSpec, get_serving_spec, load_serving_specs
+from genie_voice.ml_asr.serving.catalog import get_serving_spec, load_serving_specs
+from genie_voice.ml_asr.serving.register_oss import register_oss
 
 
 def list_registrations(*, config_path: str | None = None) -> list[dict[str, Any]]:
@@ -28,20 +29,12 @@ def list_registrations(*, config_path: str | None = None) -> list[dict[str, Any]
 def register(model_id: str, *, config_path: str | None = None, wait: bool = True) -> dict[str, Any]:
     spec = get_serving_spec(model_id, config_path=config_path)
     if spec.register_type == "oss":
-        if not spec.register_candidate_id:
-            raise ValueError(f"{model_id} is missing model_serving.models.{model_id}.register.candidate_id")
-        return _run_repo_script(
-            "scripts/asr/10_register_multilingual_asr_candidates.sh",
-            ["register-one"],
-            {"ASR_ML_REGISTER_CANDIDATE": spec.register_candidate_id},
-            wait=wait,
-        )
+        return register_oss(model_id, config_path=config_path, wait=wait)
     if spec.register_type == "finetuned_whisper":
-        leaf = spec.registered_model_fqdn.rsplit(".", 1)[-1]
-        return _run_repo_script(
+        return _run_legacy_script(
             "scripts/asr/05_register_asr_model_candidate.sh",
             ["register-candidate"],
-            {"ASR_REGISTERED_MODEL_NAME": leaf},
+            {"ASR_REGISTERED_MODEL_NAME": spec.registered_model_fqdn.rsplit(".", 1)[-1]},
             wait=wait,
         )
     raise ValueError(f"{model_id} has no register.type in config/ml_asr_eval.yaml model_serving.models")
@@ -56,13 +49,14 @@ def register_all(*, config_path: str | None = None, wait: bool = True) -> list[d
     return results
 
 
-def _run_repo_script(
+def _run_legacy_script(
     script_relpath: str,
     args: list[str],
     env: dict[str, str],
     *,
     wait: bool,
 ) -> dict[str, Any]:
+    """Temporary bridge for finetuned EN until that path is migrated off scripts/asr."""
     root = Path(__file__).resolve().parents[4]
     script = root / script_relpath
     if not script.is_file():
@@ -72,7 +66,6 @@ def _run_repo_script(
     profile = merged.get("ML_ASR_DATABRICKS_PROFILE") or merged.get("DATABRICKS_CONFIG_PROFILE")
     if profile:
         merged.setdefault("ASR_DATABRICKS_PROFILE", profile)
-        merged.setdefault("ASR_ML_REGISTER_PROFILE", profile)
         merged.setdefault("DATABRICKS_CONFIG_PROFILE", profile)
     cmd = [str(script), *args]
     if wait:

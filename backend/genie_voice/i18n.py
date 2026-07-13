@@ -10,10 +10,27 @@ from dataclasses import dataclass
 from typing import Any, Literal
 import re
 
-LanguageCode = Literal["en-US", "th-TH", "id-ID", "zh-CN"]
+LanguageCode = Literal[
+    "en-US",
+    "th-TH",
+    "id-ID",
+    "zh-CN",
+    "zh-CN-sensevoice",
+    "zh-CN-paraformer",
+]
 
 DEFAULT_LANGUAGE: LanguageCode = "en-US"
-SUPPORTED_LANGUAGES: tuple[LanguageCode, ...] = ("en-US", "th-TH", "id-ID", "zh-CN")
+SUPPORTED_LANGUAGES: tuple[LanguageCode, ...] = (
+    "en-US",
+    "th-TH",
+    "id-ID",
+    "zh-CN",
+    "zh-CN-sensevoice",
+    "zh-CN-paraformer",
+)
+_ZH_REPLY_INSTRUCTION = (
+    "Reply in natural Simplified Chinese while preserving invoice IDs, customer IDs, and USD amounts exactly."
+)
 
 
 @dataclass(frozen=True)
@@ -53,11 +70,27 @@ LANGUAGE_SPECS: dict[LanguageCode, LanguageSpec] = {
     ),
     "zh-CN": LanguageSpec(
         code="zh-CN",
-        label="Chinese",
-        english_name="Mandarin Chinese",
+        label="Chinese (Qwen3)",
+        english_name="Mandarin Chinese (Qwen3)",
         deepgram_language="zh",
         whisper_language="chinese",
-        reply_instruction="Reply in natural Simplified Chinese while preserving invoice IDs, customer IDs, and USD amounts exactly.",
+        reply_instruction=_ZH_REPLY_INSTRUCTION,
+    ),
+    "zh-CN-sensevoice": LanguageSpec(
+        code="zh-CN-sensevoice",
+        label="Chinese (SenseVoice)",
+        english_name="Mandarin Chinese (SenseVoice)",
+        deepgram_language="zh",
+        whisper_language="chinese",
+        reply_instruction=_ZH_REPLY_INSTRUCTION,
+    ),
+    "zh-CN-paraformer": LanguageSpec(
+        code="zh-CN-paraformer",
+        label="Chinese (Paraformer)",
+        english_name="Mandarin Chinese (Paraformer 8k)",
+        deepgram_language="zh",
+        whisper_language="chinese",
+        reply_instruction=_ZH_REPLY_INSTRUCTION,
     ),
 }
 
@@ -75,12 +108,40 @@ def normalize_language(language: str | None) -> LanguageCode:
         "zh-cn": "zh-CN",
         "chinese": "zh-CN",
         "mandarin": "zh-CN",
+        "zh-cn-sensevoice": "zh-CN-sensevoice",
+        "sensevoice": "zh-CN-sensevoice",
+        "zh-cn-paraformer": "zh-CN-paraformer",
+        "paraformer": "zh-CN-paraformer",
     }
     canonical = aliases.get(value.lower(), value)
     if canonical not in SUPPORTED_LANGUAGES:
         supported = ", ".join(SUPPORTED_LANGUAGES)
         raise ValueError(f"Unsupported language {value!r}; supported: {supported}")
     return canonical  # type: ignore[return-value]
+
+
+def is_chinese_language(language: str | None) -> bool:
+    return normalize_language(language).startswith("zh-CN")
+
+
+def content_language(language: str | None) -> LanguageCode:
+    """Map zh-CN ASR variants to zh-CN for replies, Genie, and UI copy."""
+    code = normalize_language(language)
+    if code.startswith("zh-CN"):
+        return "zh-CN"
+    return code
+
+
+def asr_model_language(language: str | None) -> str:
+    """Language token sent to Databricks ASR models."""
+    code = normalize_language(language)
+    if code.startswith("zh-CN"):
+        return "zh"
+    return code
+
+
+def is_zh_asr_compare_language(language: str | None) -> bool:
+    return is_chinese_language(language)
 
 
 def language_spec(language: str | None) -> LanguageSpec:
@@ -124,7 +185,7 @@ def canonical_business_context_instruction(language: str | None) -> str:
 
 
 def localized_reply_opener(language: str | None, *, genie_insight: bool) -> str:
-    language_code = normalize_language(language)
+    language_code = content_language(language)
     if language_code == "th-TH":
         return "จากข้อมูลของ Genie " if genie_insight else "จากข้อมูลบัญชีของคุณ "
     if language_code == "id-ID":
@@ -175,6 +236,20 @@ def sanitize_generated_display_text(text: str | None) -> str:
     return value.strip()
 
 
+_CANONICAL_BUSINESS_TOKEN_RE = re.compile(
+    r"(?:INV|CUST|CALL)-[\w-]+|\$[\d,]+(?:\.\d{1,2})?|\bUSD\b",
+    re.IGNORECASE,
+)
+
+
+def prose_for_language_check(text: str | None) -> str:
+    """Strip canonical IDs/amounts so script-ratio checks focus on spoken prose."""
+    value = (text or "").strip()
+    if not value:
+        return value
+    return _CANONICAL_BUSINESS_TOKEN_RE.sub(" ", value)
+
+
 def generated_text_language_check(text: str | None, language: str | None) -> dict[str, Any]:
     """Best-effort guardrail for customer-facing generated prose.
 
@@ -182,8 +257,8 @@ def generated_text_language_check(text: str | None, language: str | None) -> dic
     language misses for scripts where we can be reliable (Thai/Chinese) while
     preserving canonical IDs, SQL fragments, and USD amounts.
     """
-    language_code = normalize_language(language)
-    value = (text or "").strip()
+    language_code = content_language(language)
+    value = prose_for_language_check(text)
     if not value:
         return {"checked": False, "expected_language": language_code, "matches": False, "reason": "empty"}
 

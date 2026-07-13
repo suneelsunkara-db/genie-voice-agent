@@ -18,7 +18,7 @@ Step 3 — register Databricks UC models (not Deepgram).
   ./scripts/ml_asr/03_register.sh one databricks_th_pathumma_whisper_large_v3
   ./scripts/ml_asr/03_register.sh all
 
-Delegates to scripts/asr/05_register* (finetuned EN) and 10_register* (OSS baselines).
+Delegates to `genie_voice.ml_asr.serving` (OSS via scripts/ml_asr; EN finetuned still uses scripts/asr until migrated).
 Config: config/ml_asr_eval.yaml -> model_serving.models (databricks_* only)
 EOF
 }

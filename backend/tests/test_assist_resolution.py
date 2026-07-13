@@ -92,8 +92,61 @@ def test_evaluate_resolution_accepts_chinese_proceed_confirmation():
         "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0},
         "invoices": [{"status": "overdue", "late_fee": "40.00"}],
     }
-    out = evaluate_resolution(inner, "继续", 1, account, nudge)
-    assert out["actions"]["pending_close"] is True
+    for text in ("继续", "好", "好的"):
+        out = evaluate_resolution(inner, text, 1, account, nudge)
+        assert out["actions"]["pending_close"] is True
+
+
+def test_evaluate_resolution_does_not_confirm_on_chinese_greeting():
+    inner = {
+        "resolution": {
+            "status": "in_progress",
+            "actions": {"payment_plan_requested": True, "waiver_requested": True},
+        }
+    }
+    nudge = {"available": True, "customer_signal": "neutral"}
+    account = {
+        "found": True,
+        "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0},
+        "invoices": [{"status": "overdue", "late_fee": "40.00"}],
+    }
+    out = evaluate_resolution(
+        inner,
+        "您好，我看到滞纳金和逾期余额。可以免除滞纳金并设置付款计划吗？",
+        1,
+        account,
+        nudge,
+    )
+    assert "pending_close" not in out["actions"]
+
+
+def test_evaluate_resolution_ignores_fm_confirm_without_offer_flags():
+    inner = {"resolution": {"status": "in_progress", "actions": {}}}
+    nudge = {"available": True, "customer_signal": "confirm_proceed"}
+    account = {
+        "found": True,
+        "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0},
+        "invoices": [{"status": "overdue", "late_fee": "40.00"}],
+    }
+    out = evaluate_resolution(inner, "好的", 1, account, nudge)
+    assert "pending_close" not in out["actions"]
+
+
+def test_evaluate_resolution_ignores_fm_confirm_when_status_open():
+    inner = {
+        "resolution": {
+            "status": "open",
+            "actions": {"payment_plan_requested": True, "waiver_requested": True},
+        }
+    }
+    nudge = {"available": True, "customer_signal": "confirm_proceed"}
+    account = {
+        "found": True,
+        "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0},
+        "invoices": [{"status": "overdue", "late_fee": "40.00"}],
+    }
+    out = evaluate_resolution(inner, "好的", 1, account, nudge)
+    assert "pending_close" not in out["actions"]
 
 
 def test_evaluate_resolution_accepts_thai_and_indonesian_proceed_confirmation():

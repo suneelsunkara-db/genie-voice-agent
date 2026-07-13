@@ -46,7 +46,7 @@ Five steps for dataset prep, deployment, and eval. Settings live in `config/ml_a
 ./scripts/ml_asr.sh status
 ```
 
-`03_register.sh` delegates to `scripts/asr/05_register_asr_model_candidate.sh` (finetuned EN) and `scripts/asr/10_register_multilingual_asr_candidates.sh` (OSS baselines th/id/zh hosted on Databricks).
+`03_register.sh` uses `genie_voice.ml_asr.serving` — OSS models register via `scripts/ml_asr/` on Databricks serverless; EN finetuned Whisper still bridges to `scripts/asr/05_register*` until migrated.
 
 `04_serve.sh` uses `genie_voice.ml_asr.serving` with the Databricks Python SDK from your laptop.
 
@@ -85,4 +85,5 @@ Use the **Eval tier** dropdown for business (entity readiness) vs acoustic (WER/
 - Overview: [scripts/README.md](../README.md)
 - Config: `config/ml_asr_eval.yaml`
 - Python: `backend/genie_voice/ml_asr/`
-- Legacy ASR bake-off: `scripts/asr/` (registration/deploy implementation reused, not copied)
+- OSS register/serve assets: `scripts/ml_asr/`
+- Legacy ASR bake-off: `scripts/asr/` (EN finetuned register only; scheduled for decommission)

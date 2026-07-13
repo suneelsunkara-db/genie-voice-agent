@@ -20,7 +20,13 @@ import time
 from fastapi import APIRouter
 
 from genie_voice.config import get_settings
-from genie_voice.i18n import DEFAULT_LANGUAGE, LANGUAGE_SPECS, SUPPORTED_LANGUAGES
+from genie_voice.i18n import (
+    DEFAULT_LANGUAGE,
+    LANGUAGE_SPECS,
+    SUPPORTED_LANGUAGES,
+    content_language,
+    normalize_language,
+)
 
 from ..deps import serving
 
@@ -34,6 +40,27 @@ router = APIRouter(prefix="/status", tags=["status"])
 _META_TTL_S = 8.0
 _meta_lock = threading.Lock()
 _meta_cache: dict[str, object] = {"ts": 0.0, "value": None, "refreshing": False}
+
+
+def _supported_language_options(settings) -> list[dict[str, str]]:
+    routes = {}
+    if settings.providers.stt.active == "databricks":
+        options = settings.providers.stt.active_options()
+        routes = options.get("routes") or options.get("language_routes") or {}
+    out: list[dict[str, str]] = []
+    for code in SUPPORTED_LANGUAGES:
+        spec = LANGUAGE_SPECS[code]
+        item = {
+            "code": code,
+            "label": spec.label,
+            "english_name": spec.english_name,
+        }
+        route = routes.get(code) or {}
+        endpoint = route.get("endpoint") if isinstance(route, dict) else None
+        if endpoint:
+            item["stt_endpoint"] = str(endpoint)
+        out.append(item)
+    return out
 
 
 @router.get("")
@@ -89,14 +116,7 @@ def status() -> dict:
         "enrichment": {"model_endpoint": s.enrichment.model_endpoint},
         "languages": {
             "default": DEFAULT_LANGUAGE,
-            "supported": [
-                {
-                    "code": code,
-                    "label": LANGUAGE_SPECS[code].label,
-                    "english_name": LANGUAGE_SPECS[code].english_name,
-                }
-                for code in SUPPORTED_LANGUAGES
-            ],
+            "supported": _supported_language_options(s),
         },
         "jobs": jobs,
         "stages": stages,

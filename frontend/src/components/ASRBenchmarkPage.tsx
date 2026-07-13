@@ -6,6 +6,7 @@ import {
   ASRBenchmarkOverviewResponse,
   ASRBenchmarkTierOverview,
 } from "../api/client";
+import { SentientHCol } from "./sentient/Sentient";
 
 type BenchmarkTier = "business" | "acoustic";
 type MetricKey = "wer" | "cer" | "critical_entity_accuracy" | "unsafe_for_resolution_rate" | "p95_latency_ms";
@@ -58,13 +59,9 @@ function isWinner(modelId: string, _metric: MetricKey, winner?: ASRBenchmarkMetr
 function WinnerBadge({ winner }: { winner?: ASRBenchmarkMetricWinner }) {
   if (!winner) return null;
   if (winner.tie) {
-    return <span className="benchmark-winner tie">Tie</span>;
+    return <span className="sentient-badge">Tie</span>;
   }
-  return (
-    <span className={`benchmark-winner ${winner.provider ?? "tie"}`}>
-      {winner.model_label}
-    </span>
-  );
+  return <span className="sentient-badge">{winner.model_label}</span>;
 }
 
 const entityLabels: Record<string, { label: string; why: string }> = {
@@ -104,32 +101,28 @@ function EntityWinnersByLanguage({ languages }: { languages: ASRBenchmarkLanguag
   if (!groups.length) return null;
 
   return (
-    <div className="benchmark-panel">
-      <div className="benchmark-section-head">
-        <div>
-          <h2>Business entity winners</h2>
-          <p>Best model per entity group within each language. Higher accuracy is better.</p>
-        </div>
-      </div>
-      <div className="benchmark-matrix-scroll">
+    <div className="sentient-glass sentient-section">
+      <h2>Business entity winners</h2>
+      <p className="sentient-muted-text">Best model per entity group within each language.</p>
+      <div className="sentient-matrix-scroll">
         <div
-          className="benchmark-matrix-table scoreboard"
+          className="sentient-matrix"
           style={{ gridTemplateColumns: scoreboardColumns(languages.length) }}
         >
-        <div className="benchmark-table-head">Entity</div>
+        <div className="head">Entity</div>
         {languages.map((language) => (
-          <div className="benchmark-table-head" key={language.code}>
+          <div className="head" key={language.code}>
             {language.label}
           </div>
         ))}
         {groups.map((group) => (
-          <div className="benchmark-table-row" key={group}>
-            <div className="benchmark-metric-name">
+          <div className="row" key={group}>
+            <div className="metric">
               {entityLabels[group]?.label ?? group.split("_").join(" ")}
               <small>{entityLabels[group]?.why ?? "business-critical phrase preservation"}</small>
             </div>
             {languages.map((language) => (
-              <div className="benchmark-scoreboard-cell" key={`${language.code}-${group}`}>
+              <div key={`${language.code}-${group}`}>
                 <WinnerBadge winner={language.entity_winners?.[group]} />
               </div>
             ))}
@@ -150,25 +143,21 @@ function EntityAccuracyMatrix({ languages }: { languages: ASRBenchmarkLanguageOv
   );
 
   return (
-    <div className="benchmark-panel">
-      <div className="benchmark-section-head">
-        <div>
-          <h2>Business entity accuracy</h2>
-          <p>
+    <div className="sentient-glass sentient-section">
+      <h2>Business entity accuracy</h2>
+      <p className="sentient-muted-text">
             Per-entity preservation rates across models and languages.
-            {hasLegacySource && " Entity columns from legacy multilingual_gold holdout where ml_asr clip results are not synced locally."}
+            {hasLegacySource && " Entity columns from legacy holdout where ml_asr clips are not synced locally."}
           </p>
-        </div>
-      </div>
-      <div className="benchmark-matrix-scroll">
+      <div className="sentient-matrix-scroll">
         <div
-          className="benchmark-matrix-table holistic entity-matrix"
+          className="sentient-matrix"
           style={{ gridTemplateColumns: `minmax(110px, 0.9fr) minmax(180px, 1.8fr) repeat(${groups.length}, minmax(88px, 0.85fr))` }}
         >
-        <div className="benchmark-table-head">Language</div>
-        <div className="benchmark-table-head">Model</div>
+        <div className="head">Language</div>
+        <div className="head">Model</div>
         {groups.map((group) => (
-          <div className="benchmark-table-head" key={group}>
+          <div className="head" key={group}>
             {entityLabels[group]?.label ?? group.split("_").join(" ")}
           </div>
         ))}
@@ -179,8 +168,8 @@ function EntityAccuracyMatrix({ languages }: { languages: ASRBenchmarkLanguageOv
             return a.model_label.localeCompare(b.model_label);
           });
           return modelList.map((model, index) => (
-            <div className="benchmark-table-row" key={`${language.code}-${model.model_id}-entities`}>
-              <div className={index === 0 ? "benchmark-language-cell" : "benchmark-language-cell muted"}>
+            <div className="row" key={`${language.code}-${model.model_id}-entities`}>
+              <div className={index === 0 ? "" : "sentient-muted-text"}>
                 {index === 0 ? (
                   <>
                     <strong>{language.label}</strong>
@@ -188,17 +177,17 @@ function EntityAccuracyMatrix({ languages }: { languages: ASRBenchmarkLanguageOv
                   </>
                 ) : null}
               </div>
-              <div className="benchmark-model-cell">
-                <span className={`benchmark-provider-tag ${model.provider}`}>{model.provider}</span>
+              <div>
+                <span className="sentient-badge">{model.provider}</span>{" "}
                 <span>{model.model_label}</span>
                 {model.entity_groups_source && (
-                  <small className="benchmark-entity-source">{model.entity_groups_source}</small>
+                  <small className="sentient-muted-text"> {model.entity_groups_source}</small>
                 )}
               </div>
               {groups.map((group) => {
                 const accuracy = model.entity_groups?.[group]?.accuracy;
                 const winner = language.entity_winners?.[group];
-                const winnerClass = isEntityWinner(model.model_id, winner) ? `winner ${model.provider}` : "";
+                const winnerClass = isEntityWinner(model.model_id, winner) ? "winner" : "";
                 return (
                   <div key={group} className={winnerClass}>
                     {pct(accuracy)}
@@ -225,32 +214,28 @@ function Scoreboard({
 }) {
   const specs = METRIC_SPECS[tier];
   return (
-    <div className="benchmark-panel">
-      <div className="benchmark-section-head">
-        <div>
-          <h2>Winners by language</h2>
-          <p>Best model per metric in each language. Green = Databricks route, amber = Deepgram Nova-3.</p>
-        </div>
-      </div>
-      <div className="benchmark-matrix-scroll">
+    <div className="sentient-glass sentient-section">
+      <h2>Winners by language</h2>
+      <p className="sentient-muted-text">Best model per metric in each language.</p>
+      <div className="sentient-matrix-scroll">
         <div
-          className="benchmark-matrix-table scoreboard"
+          className="sentient-matrix"
           style={{ gridTemplateColumns: scoreboardColumns(languages.length) }}
         >
-          <div className="benchmark-table-head">Metric</div>
+          <div className="head">Metric</div>
           {languages.map((language) => (
-            <div className="benchmark-table-head" key={language.code}>
+            <div className="head" key={language.code}>
               {language.label}
             </div>
           ))}
           {specs.map((spec) => (
-            <div className="benchmark-table-row" key={spec.key}>
-              <div className="benchmark-metric-name">
+            <div className="row" key={spec.key}>
+              <div className="metric">
                 {spec.label}
                 <small>{spec.lowerIsBetter ? "lower is better" : "higher is better"}</small>
               </div>
               {languages.map((language) => (
-                <div className="benchmark-scoreboard-cell" key={`${language.code}-${spec.key}`}>
+                <div key={`${language.code}-${spec.key}`}>
                   <WinnerBadge winner={language.winners[spec.key]} />
                 </div>
               ))}
@@ -259,7 +244,7 @@ function Scoreboard({
         </div>
       </div>
       {Object.keys(tierData.scoreboard).length > 0 && (
-        <div className="benchmark-scoreboard-totals">
+        <div className="sentient-info-grid">
           {specs.map((spec) => {
             const counts = tierData.scoreboard[spec.key] ?? [];
             if (!counts.length) return null;
@@ -296,23 +281,19 @@ function HolisticMatrix({
   const specs = METRIC_SPECS[tier];
 
   return (
-    <div className="benchmark-panel">
-      <div className="benchmark-section-head">
-        <div>
-          <h2>All models · all languages</h2>
-          <p>Highlighted cells are best for that metric within the language group.</p>
-        </div>
-      </div>
-      <div className="benchmark-matrix-scroll">
+    <div className="sentient-glass sentient-section">
+      <h2>All models · all languages</h2>
+      <p className="sentient-muted-text">Highlighted cells are best for that metric within the language group.</p>
+      <div className="sentient-matrix-scroll">
         <div
-          className="benchmark-matrix-table holistic"
+          className="sentient-matrix"
           style={{ gridTemplateColumns: `minmax(110px, 0.9fr) minmax(180px, 1.8fr) minmax(56px, 0.6fr) repeat(${specs.length}, minmax(88px, 0.85fr))` }}
         >
-        <div className="benchmark-table-head">Language</div>
-        <div className="benchmark-table-head">Model</div>
-        <div className="benchmark-table-head">Clips</div>
+        <div className="head">Language</div>
+        <div className="head">Model</div>
+        <div className="head">Clips</div>
         {specs.map((spec) => (
-          <div className="benchmark-table-head" key={spec.key}>
+          <div className="head" key={spec.key}>
             {spec.label}
           </div>
         ))}
@@ -323,8 +304,8 @@ function HolisticMatrix({
             return a.model_label.localeCompare(b.model_label);
           });
           return modelList.map((model, index) => (
-            <div className="benchmark-table-row" key={`${language.code}-${model.model_id}`}>
-              <div className={index === 0 ? "benchmark-language-cell" : "benchmark-language-cell muted"}>
+            <div className="row" key={`${language.code}-${model.model_id}`}>
+              <div className={index === 0 ? "" : "sentient-muted-text"}>
                 {index === 0 ? (
                   <>
                     <strong>{language.label}</strong>
@@ -332,15 +313,15 @@ function HolisticMatrix({
                   </>
                 ) : null}
               </div>
-              <div className="benchmark-model-cell">
-                <span className={`benchmark-provider-tag ${model.provider}`}>{model.provider}</span>
+              <div>
+                <span className="sentient-badge">{model.provider}</span>{" "}
                 <span>{model.model_label}</span>
               </div>
               <div>{model.clips}</div>
               {specs.map((spec) => {
                 const winner = language.winners[spec.key];
                 const value = model[spec.key];
-                const winnerClass = isWinner(model.model_id, spec.key, winner) ? `winner ${model.provider}` : "";
+                const winnerClass = isWinner(model.model_id, spec.key, winner) ? "winner" : "";
                 return (
                   <div key={spec.key} className={winnerClass}>
                     {formatMetric(spec.key, value)}
@@ -363,9 +344,9 @@ function MixedEntityDataNotice({ languages }: { languages: ASRBenchmarkLanguageO
   if (!usesLegacyEntities) return null;
 
   return (
-    <div className="benchmark-mixed-source">
+    <div className="sentient-glass sentient-section">
       <strong>Entity columns use legacy holdout data</strong>
-      <p>
+      <p className="sentient-muted-text">
         Aggregate WER/CER/latency above come from the current ml_asr FLEURS smoke eval (small clip counts).
         Per-entity accuracy below is filled from packaged multilingual_gold holdout (~420 clips/lang) until local
         ml_asr results.jsonl files are synced.
@@ -385,14 +366,10 @@ function TierSection({
   if (!languages.length) return null;
 
   return (
-    <section className="benchmark-tier-section">
-      <div className="benchmark-tier-head">
-        <div>
-          <div className="eyebrow">{tier === "business" ? "Business tier" : "Acoustic tier"}</div>
-          <h2>{tier === "business" ? "Entity readiness + transcript quality" : "Read-speech WER/CER"}</h2>
-          <p>Dataset: {tierData.dataset_id}</p>
-        </div>
-      </div>
+    <section className="sentient-section">
+      <div className="sentient-kicker">{tier === "business" ? "Business tier" : "Acoustic tier"}</div>
+      <h2>{tier === "business" ? "Entity readiness + transcript quality" : "Read-speech WER/CER"}</h2>
+      <p className="sentient-muted-text">Dataset: {tierData.dataset_id}</p>
       <Scoreboard tier={tier} tierData={tierData} languages={languages} />
       {tier === "business" && (
         <>
@@ -409,9 +386,11 @@ function TierSection({
 export function ASRBenchmarkPage() {
   const [data, setData] = useState<ASRBenchmarkOverviewResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
     setData(null);
     setErr(null);
     api
@@ -424,6 +403,9 @@ export function ASRBenchmarkPage() {
       })
       .catch((e) => {
         if (active) setErr(String(e));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
@@ -433,39 +415,28 @@ export function ASRBenchmarkPage() {
   const dataSource = data?.source ?? "legacy";
 
   return (
-    <section className="benchmark-page benchmark-page-holistic">
-      <div className="benchmark-page-head">
-        <div>
-          <div className="eyebrow">ASR Model Evaluation</div>
-          <h1>Holistic ASR benchmark</h1>
-          <p>
-            All languages and models side by side. Highlighted cells show the best route per metric; badges name the
-            winning Deepgram or Databricks model.
-          </p>
-        </div>
-        <div className="benchmark-head-actions">
-          <a className="benchmark-back-link" href="#/">Back to cockpit</a>
-        </div>
-      </div>
-
-      {err && <div className="error">ASR benchmark API error: {err}</div>}
-      {data && !data.available && (
-        <div className="benchmark-empty">
-          <strong>No benchmark results found.</strong>
-          <p>{data.message}</p>
-          <code>./scripts/ml_asr.sh eval && ./scripts/ml_asr/05_eval.sh sync-index</code>
-        </div>
-      )}
-
-      {data?.available && data.tiers && (
-        <>
-          <div className="benchmark-reading-guide">
+    <div className="sentient-h-flow sentient-h-flow-benchmark">
+      <SentientHCol
+        step={1}
+        title="ASR benchmark"
+        description="Holistic model comparison"
+      >
+        {loading && !data && !err && (
+          <p className="sentient-muted-text">Loading…</p>
+        )}
+        {err && <div className="error">ASR benchmark API error: {err}</div>}
+        {data && !data.available && (
+          <div className="sentient-glass sentient-h-panel">
+            <strong>No benchmark results found.</strong>
+            <p className="sentient-muted-text">{data.message}</p>
+          </div>
+        )}
+        {data?.available && (
+          <div className="sentient-info-grid sentient-info-grid-tight">
             <div>
               <strong>Data source</strong>
               <span>
-                {dataSource === "ml_asr"
-                  ? "ml_asr FLEURS smoke eval (config/ml_asr_eval.yaml)"
-                  : "Legacy multilingual_gold holdout (~420 clips/lang)"}
+                {dataSource === "ml_asr" ? "ml_asr FLEURS smoke" : "Legacy holdout"}
               </span>
             </div>
             <div>
@@ -473,30 +444,20 @@ export function ASRBenchmarkPage() {
               <span>{shortPath(data.index_path)}</span>
             </div>
           </div>
+        )}
+      </SentientHCol>
 
-          <div className="benchmark-glossary">
-            <div>
-              <strong>WER / CER</strong>
-              <span>Transcript error rates — lower is better.</span>
-            </div>
-            <div>
-              <strong>Critical entities</strong>
-              <span>Invoice IDs, amounts, confirmations preserved — higher is better (business tier).</span>
-            </div>
-            <div>
-              <strong>Unsafe</strong>
-              <span>Transcripts missing signals needed for auto-resolution — lower is better.</span>
-            </div>
-            <div>
-              <strong>P95 latency</strong>
-              <span>Post-stop transcription time — lower is better.</span>
-            </div>
-          </div>
-
-          {data.tiers.business && <TierSection tier="business" tierData={data.tiers.business} />}
-          {data.tiers.acoustic && <TierSection tier="acoustic" tierData={data.tiers.acoustic} />}
-        </>
+      {data?.available && data.tiers?.business && (
+        <SentientHCol step={2} title="Business tier" description="Entity + transcript quality">
+          <TierSection tier="business" tierData={data.tiers.business} />
+        </SentientHCol>
       )}
-    </section>
+
+      {data?.available && data.tiers?.acoustic && (
+        <SentientHCol step={3} title="Acoustic tier" description="WER / CER / latency">
+          <TierSection tier="acoustic" tierData={data.tiers.acoustic} />
+        </SentientHCol>
+      )}
+    </div>
   );
 }

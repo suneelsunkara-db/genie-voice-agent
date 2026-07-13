@@ -296,10 +296,6 @@ def validate_reply_against_metrics(
             issues.append(
                 f"reply amounts {amounts} do not match overdue_amount {metrics.overdue_amount:.2f}"
             )
-    if amounts and issue_closed and metrics.overdue_amount <= 0:
-        large = [a for a in amounts if a >= 50]
-        if large:
-            issues.append(f"closed issue but reply cites large balance {large}")
 
     return len(issues) == 0, issues
 

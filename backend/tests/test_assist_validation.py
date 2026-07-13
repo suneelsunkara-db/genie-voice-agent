@@ -68,6 +68,17 @@ def test_validate_reply_accepts_matching_numbers():
     assert not issues
 
 
+def test_validate_reply_allows_closed_confirmation_with_waived_amounts():
+    metrics = AccountMetrics(0, 0.0, 1)
+    ok, issues = validate_reply_against_metrics(
+        "感谢您的确认。我们已为 INV-90114 免除 $239.00 滞纳金并设置付款计划。",
+        metrics,
+        issue_closed=True,
+    )
+    assert ok is True
+    assert not issues
+
+
 def test_validate_close_requires_requested_actions():
     ok, reason = validate_close_eligible({}, None)
     assert ok is False

@@ -127,6 +127,10 @@ providers:
             endpoint: voice_asr_id_oss_qwen3_asr_0_6b
           zh-CN:
             endpoint: voice_asr_zh_oss_qwen3_asr_0_6b
+          zh-CN-sensevoice:
+            endpoint: voice_asr_zh_oss_sensevoice_small
+          zh-CN-paraformer:
+            endpoint: voice_asr_zh_oss_paraformer_8k
   tts:
     adapters:
       elevenlabs: "genie_voice.providers.tts.elevenlabs:ElevenLabsTTS"
