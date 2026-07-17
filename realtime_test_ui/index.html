@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Realtime Voice — Test</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #262b36; --text: #e6e9ef;
+    --muted: #9aa4b2; --accent: #5b9dff; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; justify-content: center; padding: 32px 16px;
+  }
+  .app { width: 100%; max-width: 760px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .langs { color: var(--muted); font-size: 12px; margin-bottom: 20px; line-height: 1.5; }
+  .langs b { color: var(--fg); }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+  select, button {
+    font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 14px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.danger { border-color: var(--err); color: var(--err); background: transparent; }
+  .badge { font-size: 13px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; }
+  .status { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ready { background: var(--ok); } .dot.listening { background: var(--accent); }
+  .dot.processing { background: var(--warn); } .dot.speaking { background: var(--ok); }
+  .dot.error { background: var(--err); }
+  .meter { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; max-width: 200px; }
+  .meter > div { height: 100%; width: 0%; background: var(--accent); transition: width .06s linear; }
+  .latency { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
+  .lat { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--panel); text-align: center; }
+  .lat .lv { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .lat .lv.pending { color: var(--warn); }
+  .lat .ll { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 3px; }
+  .lat.total .lv { color: var(--accent); }
+  .latnote { font-size: 12px; color: var(--muted); margin: -8px 0 18px; font-variant-numeric: tabular-nums; }
+  .srvlat { margin: -8px 0 18px; }
+  .srvhead { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 8px; }
+  .srvrow { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+  .chip { font-size: 13px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: var(--panel); font-variant-numeric: tabular-nums; }
+  .chip b { color: var(--fg); font-weight: 600; }
+  .chip.total b { color: var(--accent); }
+  .bubbles { display: flex; flex-direction: column; gap: 12px; }
+  .bubble { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--panel); }
+  .bubble .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; }
+  .bubble.user { border-left: 3px solid var(--accent); }
+  .bubble.bot { border-left: 3px solid var(--ok); }
+  .log { margin-top: 20px; font-size: 12px; color: var(--muted); white-space: pre-wrap;
+    max-height: 160px; overflow: auto; border-top: 1px solid var(--border); padding-top: 10px; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Realtime Voice — Test</h1>
+  <div class="sub">Just talk in any language — it detects the language, repeats back what you said, and shows the detected language. No setup needed.</div>
+  <div class="langs" id="langsLine">Supported languages load when you start a session.</div>
+
+  <div class="controls">
+    <button id="toggleBtn" class="primary">Start listening</button>
+    <span id="langBadge" class="badge" style="display:none">Detected: —</span>
+  </div>
+
+  <div class="status">
+    <span id="dot" class="dot"></span>
+    <span id="statusText">Idle — click “Start listening”.</span>
+    <div class="meter"><div id="level"></div></div>
+  </div>
+
+  <div class="latency">
+    <div class="lat"><div class="lv" id="latStt">—</div><div class="ll">Understanding your words</div></div>
+    <div class="lat"><div class="lv" id="latLlm">—</div><div class="ll">Thinking of a reply</div></div>
+    <div class="lat"><div class="lv" id="latTts">—</div><div class="ll">Starting to speak</div></div>
+    <div class="lat total"><div class="lv" id="latTotal">—</div><div class="ll">Total wait to first sound</div></div>
+  </div>
+  <div class="latnote" id="latNote">Timing details appear here after the first reply.</div>
+  <div class="srvlat" id="srvLat" style="display:none">
+    <div class="srvhead">Inside the Realtime API — per endpoint</div>
+    <div class="srvrow">
+      <span class="chip"><b id="srvStt">—</b> STT (Qwen3-ASR)</span>
+      <span class="chip"><b id="srvLlm">—</b> LLM (Qwen3-Next)</span>
+      <span class="chip"><b id="srvTts">—</b> TTS 1st audio (VoxCPM2)</span>
+      <span class="chip total"><b id="srvTotal">—</b> server total</span>
+    </div>
+    <div class="latnote" id="srvNote"></div>
+  </div>
+
+  <div class="bubbles">
+    <div class="bubble user"><div class="label">You said</div><div id="transcript">—</div></div>
+    <div class="bubble bot"><div class="label">Assistant</div><div id="reply">—</div></div>
+  </div>
+
+  <div class="hint">Tip: click once to grant the mic (browsers require it), then just talk. When you pause (~1s) it replies — it won't cut in while you're mid-sentence. To interrupt its reply, keep talking for a moment. Use headphones so it doesn't hear its own voice.</div>
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+const TARGET_SR = 16000;
+const els = {
+  toggle: document.getElementById("toggleBtn"),
+  langBadge: document.getElementById("langBadge"),
+  dot: document.getElementById("dot"),
+  status: document.getElementById("statusText"),
+  level: document.getElementById("level"),
+  transcript: document.getElementById("transcript"),
+  reply: document.getElementById("reply"),
+  log: document.getElementById("log"),
+  latStt: document.getElementById("latStt"),
+  latLlm: document.getElementById("latLlm"),
+  latTts: document.getElementById("latTts"),
+  latTotal: document.getElementById("latTotal"),
+  latNote: document.getElementById("latNote"),
+  srvLat: document.getElementById("srvLat"),
+  srvStt: document.getElementById("srvStt"),
+  srvLlm: document.getElementById("srvLlm"),
+  srvTts: document.getElementById("srvTts"),
+  srvTotal: document.getElementById("srvTotal"),
+  srvNote: document.getElementById("srvNote"),
+  langsLine: document.getElementById("langsLine"),
+};
+
+// BCP 47 primary subtag -> human-readable name (for the supported-languages line).
+const LANG_NAMES = {
+  en: "English", zh: "Chinese", ja: "Japanese", ko: "Korean", es: "Spanish",
+  fr: "French", de: "German", it: "Italian", pt: "Portuguese", ru: "Russian",
+  ar: "Arabic", hi: "Hindi", th: "Thai", id: "Indonesian", vi: "Vietnamese",
+  yue: "Cantonese", nl: "Dutch", pl: "Polish", tr: "Turkish", sv: "Swedish",
+  ro: "Romanian", el: "Greek", cs: "Czech", da: "Danish", fi: "Finnish",
+  hu: "Hungarian", fa: "Persian", fil: "Filipino", ms: "Malay",
+};
+function renderSupportedLanguages(codes) {
+  if (!Array.isArray(codes) || !codes.length) return;
+  const names = codes.map((c) => LANG_NAMES[c] || c.toUpperCase());
+  els.langsLine.innerHTML =
+    `<b>Supports ${codes.length} languages:</b> ` + names.join(", ");
+}
+
+// Per-turn latency timers (client-observed, measured from turn.started).
+// sttMs/llmMs/ttsFirstMs are server-reported per-endpoint durations.
+let timer = { t0: 0, transcriptAt: 0, replyAt: 0, gotAudio: false, firstAudioAt: 0, ttsClient: 0, sttMs: null, llmMs: null, ttsFirstMs: null };
+const fmt = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(2) + " s" : Math.round(ms) + " ms");
+function resetLatency() {
+  timer = { t0: performance.now(), transcriptAt: 0, replyAt: 0, gotAudio: false, firstAudioAt: 0, ttsClient: 0, sttMs: null, llmMs: null, ttsFirstMs: null };
+  [els.latStt, els.latLlm, els.latTts, els.latTotal].forEach((el) => {
+    el.textContent = "…"; el.classList.add("pending");
+  });
+  els.latNote.textContent = "Measuring…";
+}
+function renderServerLatency() {
+  const { sttMs, llmMs, ttsFirstMs } = timer;
+  els.srvStt.textContent = sttMs == null ? "—" : fmt(sttMs);
+  els.srvLlm.textContent = llmMs == null ? "—" : fmt(llmMs);
+  els.srvTts.textContent = ttsFirstMs == null ? "—" : fmt(ttsFirstMs);
+  const parts = [sttMs, llmMs, ttsFirstMs].filter((v) => typeof v === "number");
+  const serverTotal = parts.reduce((a, b) => a + b, 0);
+  els.srvTotal.textContent = parts.length ? fmt(serverTotal) : "—";
+  els.srvLat.style.display = "";
+  // Reconcile with the client "total wait to first sound": the gap is the
+  // browser<->API network/queueing overhead outside the model endpoints.
+  const clientTotal = timer.firstAudioAt ? Math.round(timer.firstAudioAt - timer.t0) : null;
+  if (clientTotal != null && parts.length) {
+    const overhead = Math.max(0, clientTotal - serverTotal);
+    els.srvNote.textContent =
+      `Server endpoints ${fmt(serverTotal)} + network/queue ${fmt(overhead)} ≈ total ${fmt(clientTotal)}`;
+  } else {
+    els.srvNote.textContent = "";
+  }
+}
+function markLatency(el, ms) { el.textContent = fmt(ms); el.classList.remove("pending"); }
+
+let ws = null, micCtx = null, micStream = null, processor = null, source = null, zeroGain = null;
+let playCtx = null, nextTime = 0, scheduled = [], botSpeaking = false;
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  els.log.textContent = `[${t}] ${msg}\n` + els.log.textContent;
+}
+function setStatus(text, cls) {
+  els.status.textContent = text;
+  els.dot.className = "dot" + (cls ? " " + cls : "");
+}
+
+// ---------- playback (streamed PCM16 chunks) ----------
+function ensurePlayCtx() {
+  if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (playCtx.state === "suspended") playCtx.resume();
+}
+function b64ToBytes(b64) {
+  const bin = atob(b64), len = bin.length, out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function pcm16ToFloat32(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const n = Math.floor(bytes.byteLength / 2), out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = view.getInt16(i * 2, true) / 32768;
+  return out;
+}
+function playPCM(float32, sr) {
+  ensurePlayCtx();
+  const buf = playCtx.createBuffer(1, float32.length, sr);
+  buf.getChannelData(0).set(float32);
+  const src = playCtx.createBufferSource();
+  src.buffer = buf; src.connect(playCtx.destination);
+  const now = playCtx.currentTime;
+  if (nextTime < now) nextTime = now + 0.03;
+  src.start(nextTime); nextTime += buf.duration;
+  scheduled.push(src);
+  src.onended = () => { scheduled = scheduled.filter(s => s !== src); };
+}
+function playWav(bytes) {
+  ensurePlayCtx();
+  playCtx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
+    .then(buf => {
+      const src = playCtx.createBufferSource();
+      src.buffer = buf; src.connect(playCtx.destination);
+      const now = playCtx.currentTime;
+      if (nextTime < now) nextTime = now + 0.03;
+      src.start(nextTime); nextTime += buf.duration;
+      scheduled.push(src);
+      src.onended = () => { scheduled = scheduled.filter(s => s !== src); };
+    }).catch(e => log("decode error: " + e));
+}
+function stopPlayback() {
+  scheduled.forEach(s => { try { s.stop(); } catch (e) {} });
+  scheduled = []; nextTime = 0;
+}
+function onAudioEvent(ev) {
+  const bytes = b64ToBytes(ev.audio_b64 || "");
+  if (!bytes.byteLength) return;
+  if ((ev.mime_type || "").includes("wav")) playWav(bytes);
+  else playPCM(pcm16ToFloat32(bytes), ev.sample_rate_hz || 48000);
+}
+
+// ---------- mic capture (downsample to 16 kHz PCM16) ----------
+// Box-average decimation (not point-sampling). Averaging over each input window
+// is a cheap anti-aliasing low-pass; naive linear/point decimation aliases and
+// was collapsing long utterances to a few garbled words (the GenieCanTalk team
+// hit the same issue and moved to anti-aliased resampling).
+function downsample(input, inRate, outRate) {
+  if (outRate >= inRate) return input;
+  const ratio = inRate / outRate, outLen = Math.floor(input.length / ratio), out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const start = Math.floor(i * ratio), end = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let sum = 0, count = 0;
+    for (let j = start; j < end; j++) { sum += input[j]; count++; }
+    out[i] = count ? sum / count : (input[start] || 0);
+  }
+  return out;
+}
+function floatToPCM16(float32) {
+  const out = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    let s = Math.max(-1, Math.min(1, float32[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+async function startMic() {
+  // Lesson from the production GenieCanTalk UI (frontend/src/lib/micStream.ts):
+  // the Databricks ASR models are DISTORTED by browser AEC / noise-suppression /
+  // auto-gain. Turn them all OFF so the model receives clean, unprocessed speech.
+  // (Echo is handled server-side by the busy-gate + barge-in; use headphones.)
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  });
+  micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  source = micCtx.createMediaStreamSource(micStream);
+  processor = micCtx.createScriptProcessor(4096, 1, 1);
+  zeroGain = micCtx.createGain(); zeroGain.gain.value = 0;
+  source.connect(processor); processor.connect(zeroGain); zeroGain.connect(micCtx.destination);
+  processor.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const input = e.inputBuffer.getChannelData(0);
+    let peak = 0; for (let i = 0; i < input.length; i++) peak = Math.max(peak, Math.abs(input[i]));
+    els.level.style.width = Math.min(100, peak * 180) + "%";
+    const ds = downsample(input, micCtx.sampleRate, TARGET_SR);
+    ws.send(floatToPCM16(ds).buffer);
+  };
+}
+function stopMic() {
+  if (processor) processor.disconnect();
+  if (source) source.disconnect();
+  if (zeroGain) zeroGain.disconnect();
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (micCtx) micCtx.close();
+  processor = source = zeroGain = micStream = micCtx = null;
+  els.level.style.width = "0%";
+}
+
+// ---------- websocket session ----------
+// The API is a separate service. Resolve host + base path in priority order:
+//   1. ?api=host:port and ?apiPrefix=/prefix query params
+//   2. window.REALTIME_API_HOST / window.REALTIME_API_PREFIX
+//   3. same origin. When served by the Databricks app under /realtime-test, the
+//      realtime API is mounted at /realtime, so default the prefix accordingly.
+const _params = new URLSearchParams(location.search);
+const API_HOST =
+  _params.get("api") ||
+  window.REALTIME_API_HOST ||
+  location.host ||
+  "localhost:8001";
+const API_PREFIX = (
+  _params.get("apiPrefix") ||
+  window.REALTIME_API_PREFIX ||
+  (location.pathname.includes("/realtime-test") ? "/realtime" : "")
+).replace(/\/$/, "");
+
+// Fetch the supported languages on page load so they show before starting.
+(function loadLanguages() {
+  const proto = location.protocol === "https:" ? "https" : "http";
+  fetch(`${proto}://${API_HOST}${API_PREFIX}/v1/languages`)
+    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then((data) => renderSupportedLanguages(data.languages))
+    .catch(() => { els.langsLine.textContent = "Supported languages load when you start a session."; });
+})();
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${API_HOST}${API_PREFIX}/v1/realtime/voice`);
+  ws.binaryType = "arraybuffer";
+  setStatus("Connecting…");
+  ws.onopen = () => {
+    // Always auto-detect; the detected language is shown in the badge per turn.
+    ws.send(JSON.stringify({ type: "session.start", language: "auto", sample_rate_hz: TARGET_SR, encoding: "pcm_s16le" }));
+    log("connected, session.start sent (auto-detect)");
+  };
+  ws.onmessage = (e) => {
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    switch (msg.type) {
+      case "session.ready":
+        renderSupportedLanguages(msg.supported_languages);
+        setStatus("Listening — just talk.", "listening");
+        startMic().catch(err => { setStatus("Mic error: " + err.message, "error"); log(err); stopListening(); });
+        break;
+      case "speech.started":
+        // The server now owns barge-in (sustained talk-over). The client no
+        // longer sends barge_in on every speech.started (that fired on echo).
+        setStatus("Got you — keep going.", "listening");
+        break;
+      case "turn.started":
+        stopPlayback(); botSpeaking = false;
+        resetLatency();
+        setStatus("Got it — thinking…", "processing");
+        els.transcript.textContent = "…"; els.reply.textContent = "…";
+        break;
+      case "transcript.final":
+        els.transcript.textContent = msg.text || "—";
+        if (msg.language) {
+          els.langBadge.textContent = "Detected: " + msg.language;
+          els.langBadge.style.display = "";
+        }
+        timer.transcriptAt = performance.now();
+        if (typeof msg.stt_ms === "number") timer.sttMs = msg.stt_ms;
+        markLatency(els.latStt, timer.transcriptAt - timer.t0);
+        setStatus("Thinking of a reply…", "processing");
+        break;
+      case "response.text":
+        els.reply.textContent = msg.text || "—";
+        timer.replyAt = performance.now();
+        if (typeof msg.llm_ms === "number") timer.llmMs = msg.llm_ms;
+        markLatency(els.latLlm, timer.replyAt - (timer.transcriptAt || timer.t0));
+        setStatus("Reply ready — speaking now…", "speaking"); botSpeaking = true;
+        break;
+      case "response.audio":
+        if (typeof msg.tts_first_ms === "number" && timer.ttsFirstMs == null) timer.ttsFirstMs = msg.tts_first_ms;
+        if (!timer.gotAudio) {
+          timer.gotAudio = true;
+          const now = performance.now();
+          timer.firstAudioAt = now;
+          timer.ttsClient = now - (timer.replyAt || timer.t0);
+          markLatency(els.latTts, timer.ttsClient);
+          markLatency(els.latTotal, now - timer.t0);
+          renderServerLatency();
+        }
+        onAudioEvent(msg);
+        if (msg.final) {
+          if (typeof msg.server_ttfb_ms === "number") {
+            const overhead = Math.max(0, timer.ttsClient - msg.server_ttfb_ms);
+            const gen = typeof msg.server_gen_ms === "number" ? ` · full voice ready in ${fmt(msg.server_gen_ms)}` : "";
+            els.latNote.textContent =
+              `Voice ready on server in ${fmt(msg.server_ttfb_ms)}${gen}  ·  reached you in ${fmt(timer.ttsClient)}  ·  network delay ≈ ${fmt(overhead)}`;
+          } else {
+            els.latNote.textContent = "Timing details not reported for this turn.";
+          }
+          setStatus("Your turn — go ahead.", "listening"); botSpeaking = false;
+        }
+        break;
+      case "playback.stop":
+        stopPlayback(); botSpeaking = false;
+        setStatus("Go ahead — I'm listening.", "listening");
+        break;
+      case "error":
+        setStatus("Error: " + (msg.message || msg.code), "error");
+        log("error: " + JSON.stringify(msg));
+        break;
+    }
+  };
+  ws.onclose = () => {
+    log("websocket closed");
+    if (listening) {
+      listening = false; stopMic(); stopPlayback(); botSpeaking = false;
+      els.toggle.textContent = "Start listening"; els.toggle.classList.add("primary"); els.toggle.classList.remove("danger");
+    }
+  };
+  ws.onerror = () => { setStatus("WebSocket error", "error"); };
+}
+
+let listening = false;
+function startListening() {
+  ensurePlayCtx(); // unlock audio playback on the user gesture
+  listening = true;
+  els.toggle.textContent = "Stop"; els.toggle.classList.remove("primary"); els.toggle.classList.add("danger");
+  connect();
+}
+function stopListening() {
+  listening = false;
+  try { if (ws) ws.send(JSON.stringify({ type: "session.stop" })); } catch (e) {}
+  if (ws) ws.close();
+  stopMic(); stopPlayback(); botSpeaking = false;
+  els.toggle.textContent = "Start listening"; els.toggle.classList.add("primary"); els.toggle.classList.remove("danger");
+  setStatus("Stopped.");
+}
+els.toggle.onclick = () => (listening ? stopListening() : startListening());
+</script>
+</body>
+</html>

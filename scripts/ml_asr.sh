@@ -38,7 +38,7 @@ ML ASR pipeline (config/ml_asr_eval.yaml). Serverless unless noted.
 Deepgram Nova-3 is a commercial API baseline (API key) — not UC/OSS.
 Steps 3–4 apply only to databricks_* models in model_serving.
 
-See scripts/README.md
+See README.md (repo root) -> "ML ASR pipeline & model serving"
 EOF
     ;;
   *)

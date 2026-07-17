@@ -126,8 +126,53 @@ done
 ASR_ENDPOINTS="$_FILTERED"
 log "ASR endpoints to attach: $ASR_ENDPOINTS"
 
+# ---- 3a. realtime voice endpoints (STT/LLM/TTS) as app resources ------------
+# The Realtime Voice API is mounted at /realtime in the app; its Databricks
+# serving endpoints (from the realtime_voice: block in config/config.yaml) need
+# CAN_QUERY granted to the app service principal. Read from the DEPLOYED config
+# (never config.local.yaml, which is not synced). Missing endpoints are skipped
+# so a partial realtime rollout can't block the whole app deploy.
+REALTIME_ENDPOINTS="${REALTIME_ENDPOINTS:-}"
+if [[ -z "$REALTIME_ENDPOINTS" ]]; then
+  REALTIME_ENDPOINTS="$(
+    CONFIG_YAML="$ROOT/config/config.yaml" "$PYBIN" - <<'PY' 2>/dev/null || true
+import os, yaml
+with open(os.environ["CONFIG_YAML"]) as fh:
+    cfg = yaml.safe_load(fh) or {}
+rv = cfg.get("realtime_voice") or {}
+endpoints = []
+if rv.get("llm_endpoint"):
+    endpoints.append(rv["llm_endpoint"])
+for group in ("stt_candidates", "tts_candidates"):
+    for cand in (rv.get(group) or {}).values():
+        if isinstance(cand, dict) and cand.get("endpoint"):
+            endpoints.append(cand["endpoint"])
+seen = []
+for e in endpoints:
+    if e and e not in seen:
+        seen.append(e)
+print(",".join(seen))
+PY
+  )"
+fi
+_RT_FILTERED=""
+IFS=',' read -ra _RT_EPS <<< "$REALTIME_ENDPOINTS"
+for _ep in "${_RT_EPS[@]}"; do
+  _ep="$(printf '%s' "$_ep" | xargs)"
+  [[ -z "$_ep" ]] && continue
+  if dbx serving-endpoints get "$_ep" >/dev/null 2>&1; then
+    _RT_FILTERED="${_RT_FILTERED:+$_RT_FILTERED,}$_ep"
+  else
+    warn "Realtime endpoint '$_ep' not found - skipping (realtime API will fail until it exists)."
+  fi
+done
+REALTIME_ENDPOINTS="$_RT_FILTERED"
+[[ -n "$REALTIME_ENDPOINTS" ]] && log "Realtime endpoints to attach: $REALTIME_ENDPOINTS" \
+  || warn "No realtime voice endpoints attached (deploy them, then re-run to grant CAN_QUERY)."
+
 APP_NAME="$APP_NAME" SECRET_SCOPE="$SECRET_SCOPE" SQL_WAREHOUSE_ID="$SQL_WAREHOUSE_ID" \
-CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" INCLUDE_EL="$INCLUDE_EL" \
+CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" \
+REALTIME_ENDPOINTS="$REALTIME_ENDPOINTS" INCLUDE_EL="$INCLUDE_EL" \
 "$PYBIN" - > "$APP_JSON" <<'PY'
 import json, os
 res = [
@@ -143,6 +188,15 @@ for idx, endpoint in enumerate(os.environ["ASR_ENDPOINTS"].split(","), start=1):
     seen.add(endpoint)
     res.append({
         "name": f"asr-endpoint-{idx}",
+        "serving_endpoint": {"name": endpoint, "permission": "CAN_QUERY"},
+    })
+for idx, endpoint in enumerate(os.environ.get("REALTIME_ENDPOINTS", "").split(","), start=1):
+    endpoint = endpoint.strip()
+    if not endpoint or endpoint in seen:
+        continue
+    seen.add(endpoint)
+    res.append({
+        "name": f"realtime-endpoint-{idx}",
         "serving_endpoint": {"name": endpoint, "permission": "CAN_QUERY"},
     })
 if os.environ.get("INCLUDE_EL") == "1":

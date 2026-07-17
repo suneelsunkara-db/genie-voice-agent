@@ -9,7 +9,8 @@
 #   - `command` is an array; env vars are NOT expanded except via a /bin/sh -c
 #     wrapper. We also pin GENIE_CONFIG to an absolute path so the config loader
 #     finds config/config.yaml regardless of the package install location, and
-#     add api/ to PYTHONPATH so `app.main:app` resolves from the source root.
+#     add api/ + repo root to PYTHONPATH so `app.main:app` and the mounted
+#     `realtime_api` package both resolve from the source root.
 #   - The app MUST listen on 0.0.0.0:$DATABRICKS_APP_PORT.
 #   - Secret values (DEEPGRAM/ELEVENLABS keys, warehouse id) come from declared
 #     app resources via `valueFrom` - never hardcode secrets here. deploy_app.sh
@@ -17,7 +18,7 @@
 command:
   - "/bin/sh"
   - "-c"
-  - 'export GENIE_CONFIG="$(pwd)/config/config.yaml"; PYTHONPATH="$(pwd)/api:$(pwd)/backend" exec uvicorn app.main:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT'
+  - 'export GENIE_CONFIG="$(pwd)/config/config.yaml"; PYTHONPATH="$(pwd)/api:$(pwd)/backend:$(pwd)" exec uvicorn app.main:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT'
 
 env:
   # Real vendor capture (Deepgram/ElevenLabs) rather than the synthetic producer.

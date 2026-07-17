@@ -193,6 +193,73 @@ datagen:
   num_calls: 60
   months_history: 4         # months of invoices per customer
 
+# Standalone realtime voice API (new API + new UI; independent of the sections
+# above). STT/TTS are packaged as MLflow ResponsesAgent (Databricks Agent
+# Framework, task = agent/v1/responses) and deployed as agent Model Serving
+# endpoints; audio rides the Responses custom_inputs/custom_outputs channel.
+# Catalog/schema/profile are inherited from the `databricks:` block above.
+realtime_voice:
+  # Middle stage of the voice loop: a Databricks foundation-model chat endpoint.
+  # Benchmarked across en/th/id/zh (6 reps): Qwen3-Next 80B A3B is the fastest
+  # option that also accepts `temperature` and `tools` -- ~1.17s median / 1.34s
+  # p95 vs ~2.63s / 3.58s for claude-sonnet-5 (which rejects `temperature`).
+  llm_endpoint: databricks-qwen3-next-80b-a3b-instruct
+  # LLM sampling + tool-calling knobs for the middle stage.
+  llm_defaults:
+    temperature: 0.4
+    max_tokens: 512
+    # Enables the generic tool-calling loop (currently a get_current_time tool).
+    tools_enabled: true
+    max_tool_iterations: 3
+  # TTS latency/quality knobs forwarded to the VoxCPM agent per request.
+  # inference_timesteps was profiled across 4/6/8/10 on GPU_MEDIUM: latency is
+  # flat across that range (~2.4-3.3s/sentence, rtf<1), but 4 steps degrades
+  # Thai quality (STT-roundtrip similarity 0.76). 6 gives full similarity (1.0)
+  # across en/th/id/zh at the lowest safe latency.
+  tts_defaults:
+    inference_timesteps: 6
+    cfg_value: 2.0
+  serving:
+    workload_type: GPU_MEDIUM
+    workload_size: Small
+    scale_to_zero: false
+    # Ephemeral scratch on the serverless registration job for HF snapshots
+    # before they are uploaded into the UC model (not a persistent Volume).
+    package_dir: /tmp/realtime_voice_packages
+    # Serverless workspace dir where the launcher stages agent code for jobs.
+    code_dir: ""   # empty -> /Users/<run_as>/realtime_voice_agents
+  stt_candidates:
+    qwen3_asr_1_7b_multilingual:
+      status: candidate
+      modality: stt
+      endpoint: realtime_voice_stt_qwen3_asr_1_7b
+      registered_model: realtime_voice_stt_qwen3_asr_1_7b
+      family: qwen3_asr
+      base_model: Qwen/Qwen3-ASR-1.7B
+      wrapper_path: scripts/ml_asr/realtime_stt_agent.py
+      wrapper_class: RealtimeSTTAgent
+      # Qwen3-ASR-1.7B official language set (30), per the HF model card.
+      supported_languages:
+        [zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi,
+         ms, nl, sv, da, fi, pl, cs, fil, fa, el, hu, mk, ro]
+      initial_validation_languages: [en-US, th-TH, id-ID, zh-CN]
+  tts_candidates:
+    voxcpm2_multilingual:
+      status: candidate
+      modality: tts
+      endpoint: realtime_voice_tts_voxcpm2
+      registered_model: realtime_voice_tts_voxcpm2
+      family: voxcpm2
+      base_model: openbmb/VoxCPM2
+      wrapper_path: scripts/ml_asr/realtime_tts_agent.py
+      wrapper_class: RealtimeTTSAgent
+      # VoxCPM2 official language set (30), per the HF model card. Tagalog is
+      # coded `fil` so it intersects Qwen3-ASR's Filipino tag.
+      supported_languages:
+        [ar, my, zh, da, nl, en, fi, fr, de, el, he, hi, id, it, ja, km, ko,
+         lo, ms, no, pl, pt, ru, es, sw, sv, fil, th, tr, vi]
+      initial_validation_languages: [en-US, th-TH, id-ID, zh-CN]
+
 # Vendor API keys for live STT/TTS (deployment: live).
 # Set real values in gitignored config/config.local.yaml (overrides these).
 # Environment variables (DEEPGRAM_API_KEY, etc.) override YAML when set.

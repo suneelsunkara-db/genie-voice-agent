@@ -1,11 +1,38 @@
 # Databricks Genie Voice Agent
 
 Contact-center voice intelligence on Databricks. Captures agent↔customer calls,
-serves live agent assist from **Lakebase**, and publishes governed analytics to
-Unity Catalog for **AI/BI Genie**.
+serves live agent assist from **Lakebase**, publishes governed analytics to
+Unity Catalog for **AI/BI Genie**, and includes a standalone **Realtime Voice API**
+(OSS STT → LLM → TTS on Databricks Model Serving) with a browser test UI.
 
 See [`docs/PRD.md`](docs/PRD.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and
 [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) (entities, relationships, Genie sample questions).
+Future/optional work is tracked in [`ROADMAP.md`](ROADMAP.md).
+
+This is the **single source of truth** README for the repo. Component-level docs
+that used to live in subfolders have been merged here (see the table of contents).
+
+## Contents
+
+- [Problem statement](#problem-statement-genie-for-voice-use-cases)
+- [Today's tools and gaps](#todays-tools-and-gaps)
+- [Proposed approach](#proposed-approach-streaming-genie-and-lakebase)
+- [Impact](#impact)
+- [Architecture (Lakebase first)](#architecture-lakebase-first)
+- [Repository layout](#repository-layout)
+- [Authentication & permissions](#authentication--permissions)
+- [Running the app: two setups](#running-the-app-two-setups)
+- [Setup A — Local (dev)](#setup-a--local-dev)
+- [Setup B — Databricks App (hosted)](#setup-b--databricks-app-hosted)
+- [Agent-assist API endpoints](#agent-assist-api-endpoints)
+- [Swapping a provider](#swapping-a-provider-no-code-changes)
+- [Capture mode: local vs live](#capture-mode-local-vs-live-data-producer)
+- [Realtime Voice API + UI](#realtime-voice-api--ui)
+- [ML ASR pipeline & model serving](#ml-asr-pipeline--model-serving)
+- [ASR model-training harness](#asr-model-training-harness)
+- [Lakebase (Autoscaling) serving layer](#lakebase-autoscaling-serving-layer)
+- [Serverless orchestration job](#serverless-orchestration-job)
+- [Genie space](#genie-space-created-dynamically-by-name)
 
 ## Problem statement: Genie for voice use cases
 
@@ -88,31 +115,38 @@ appears in core code.
 ## Repository layout
 
 ```
-config/         config.yaml (non-secret) + .env.example (secrets)
-backend/        genie_voice package (core library)
+config/            config.yaml (non-secret) + config.local.yaml (gitignored) + .env.example
+backend/           genie_voice package (core library)
   genie_voice/
-    config/       settings loader (all tunables)
-    models/       canonical vendor-neutral contracts
-    providers/    swappable STT/TTS adapters + dynamic registry
-    mock/         call scripts (sourced from the data generator)
-    datagen/      enterprise dataset generator (schema, relationships, file producer)
-    ingest/       voice producer + Volume writer
-    databricks/   SDK client + UC bootstrap (schema/volume/DDL/grants)
-    pipeline/     wheel task CLI
-    lakebase/     Lakebase-first seed/load helpers
-    enrich/       Foundation Model enrichment (utterance + call summary; no heuristic fallback)
-    assist/       Live resolution, billing, Genie validation, alignment checks
-    serve/        Lakebase autoscaling serving (call state, resolution events, billing adjustments)
-    genie/        Genie Conversation API client
-api/            FastAPI service (health, agent-assist, accounts, genie, status)
-  app/static/   built React SPA served by FastAPI (populated by deploy_app.sh)
-frontend/       Vite/React agent-assist cockpit (customers with issues, resolution journey, Genie panel)
-infra/lakebase/ Lakebase Autoscaling provisioning
-infra/apps/     grant_app_sp.py — grants UC + Lakebase + Genie to the app service principal
-local-deploy.sh end-to-end local deploy (U2M, runs as your user)
-start_app.sh    one-command local start (API + UI)
-deploy_app.sh   one-command deploy to Databricks Apps (builds UI, secrets, grants, deploy)
-app.yaml        Databricks Apps runtime config (command + env + resource wiring)
+    config/          settings loader (all tunables)
+    models/          canonical vendor-neutral contracts
+    providers/       swappable STT/TTS adapters + dynamic registry
+    mock/            call scripts (sourced from the data generator)
+    datagen/         enterprise dataset generator (schema, relationships, file producer)
+    ingest/          voice producer + Volume writer
+    databricks/      SDK client + UC bootstrap (schema/volume/DDL/grants)
+    pipeline/        wheel task CLI
+    lakebase/        Lakebase-first seed/load helpers
+    enrich/          Foundation Model enrichment (utterance + call summary)
+    assist/          Live resolution, billing, Genie validation, alignment checks
+    serve/           Lakebase autoscaling serving
+    genie/           Genie Conversation API client
+    ml_asr/          multilingual ASR bake-off library (serving, eval, jobs)
+    asr_eval/        ASR model-training/benchmark harness
+api/               FastAPI service (health, agent-assist, accounts, genie, status)
+  app/static/      built React SPA served by FastAPI (populated by deploy_app.sh)
+frontend/          Vite/React agent-assist cockpit
+realtime_api/      standalone Realtime Voice API (WebSocket STT→LLM→TTS) — see below
+realtime_test_ui/  standalone browser test client for the Realtime Voice API — see below
+scripts/ml_asr/    OSS model register/deploy + realtime-voice agent packaging
+scripts/asr/       legacy EN-centric training + registration jobs
+infra/lakebase/    Lakebase Autoscaling provisioning
+infra/jobs/        serverless orchestration job deploy
+infra/apps/        grant_app_sp.py — grants UC + Lakebase + Genie to the app service principal
+local-deploy.sh    end-to-end local deploy (U2M, runs as your user)
+start_app.sh       one-command local start (API + UI)
+deploy_app.sh      one-command deploy to Databricks Apps
+app.yaml           Databricks Apps runtime config
 ```
 
 ## Authentication & permissions
@@ -269,7 +303,7 @@ dev sets a real email in `config.local.yaml`).
 - **Egress:** the app calls `api.deepgram.com` directly over the serverless egress
   plane (validated); no proxy/warehouse round-trip for STT.
 
-## API endpoints
+## Agent-assist API endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -343,36 +377,396 @@ Independent of *where* the app runs (Setup A/B above), one flag — `deployment`
 The serving and analytics flow is identical for both; only the capture source
 changes.
 
-## Serverless Orchestration
+---
 
-`infra/jobs/deploy_pipeline.py` builds the `genie_voice` wheel, copies it +
-`config.yaml` into the workspace, uploads the runtime wheel to a stable UC Volume
-path, and creates/updates:
+# Realtime Voice API + UI
 
-- `pipeline.orchestration_job_name`: reference UC ingest + Lakebase call ingest
-  in parallel → CDF freshness check → gold refresh → UC constraints → data
-  quality → Genie reconcile.
+A **standalone** realtime voice loop, independent of the contact-center app above.
+It is a thin orchestration layer over OSS models on Databricks Model Serving:
+
+```text
+browser PCM frames → STT endpoint → LLM endpoint → TTS endpoint → browser audio
+     (16 kHz)        Qwen3-ASR      Qwen3-Next       VoxCPM2       (streamed)
+```
+
+It does **not** import or expose the existing app's call, billing, provider, or UI
+routes. All API code lives in `realtime_api/`; the browser test client lives in
+`realtime_test_ui/`. Model packaging/registration/deployment lives in
+`scripts/ml_asr/`. Model-serving settings live in the shared `realtime_voice:`
+block of `config/config.yaml` (+ `config/config.local.yaml`).
+
+### Two ways to run
+
+1. **Standalone** (local dev) — run `realtime_api.server` and serve
+   `realtime_test_ui/` from any static server (below).
+2. **Inside the Databricks app** — `api/app/main.py` additively **mounts** the
+   realtime API at **`/realtime`** and serves the test client at **`/realtime-test`**,
+   so `deploy_app.sh` ships them alongside the contact-center cockpit without
+   touching it. In the app the pipeline authenticates as the injected service
+   principal (OAuth). Endpoints become:
+   - `WS /realtime/v1/realtime/voice`, `GET /realtime/v1/languages`
+   - Test UI: `https://<app-host>/realtime-test/` (auto-targets the `/realtime` mount)
+
+   `deploy_app.sh` attaches the realtime STT/LLM/TTS serving endpoints (from the
+   `realtime_voice:` config block) as app resources so the service principal gets
+   `CAN_QUERY`. Missing endpoints are skipped with a warning.
+
+## Capabilities
+
+- **Auto language detection** — Qwen3-ASR detects the spoken language per turn; the
+  LLM and TTS follow it. No language picker required.
+- **End-to-end language coverage: 24 languages** — the round-trippable set is the
+  **intersection of STT (Qwen3-ASR, 30) and TTS (VoxCPM2, 30)**. A language must be
+  supported by both to work end to end. The API computes this dynamically and exposes
+  it at `GET /v1/languages`; the UI shows it on page load.
+  Current 24: Arabic, Chinese, Danish, Dutch, English, Finnish, French, German,
+  Greek, Hindi, Indonesian, Italian, Japanese, Korean, Malay, Polish, Portuguese,
+  Russian, Spanish, Swedish, Filipino, Thai, Turkish, Vietnamese.
+- **Streaming TTS** — VoxCPM2 chunks are streamed as generated (`predict_stream`),
+  cutting time-to-first-audio ~3.5–4.5× vs full-sentence synthesis.
+- **LLM with tools + temperature** — the middle stage is a Databricks foundation-model
+  chat endpoint (default `qwen3-next-80b`) that supports `temperature` and tool
+  calling (a generic `get_current_time` tool is wired as an example).
+- **Verification mode** (`VOICE_VERIFY_MODE=1`, default on) — instead of answering,
+  the assistant echoes the verbatim transcript and detected language, for confirming
+  STT/language ID. Set `VOICE_VERIFY_MODE=0` for the normal assistant.
+- **Server-side VAD/endpointing + barge-in** — the API owns turn-taking; the UI never
+  reimplements it. Barge-in is opt-in (`VOICE_ALLOW_BARGE_IN=1`, needs headphones/AEC).
+- **Per-endpoint latency** — the API reports `stt_ms`, `llm_ms`, and `tts_first_ms`
+  per turn; the UI shows both client-observed and server endpoint timings.
+
+## Run the API
+
+```bash
+pip install -r realtime_api/requirements.txt
+# Endpoints come from the realtime_voice: config block by default. To override:
+export VOICE_API_STT_ENDPOINT=realtime_voice_stt_qwen3_asr_1_7b
+export VOICE_API_LLM_ENDPOINT=qwen3-next-80b
+export VOICE_API_TTS_ENDPOINT=realtime_voice_tts_voxcpm2
+python -m realtime_api.server            # ws://localhost:8001/v1/realtime/voice
+# PORT=9000 python -m realtime_api.server
+```
+
+Auth uses the Databricks SDK serving client (no local mlflow needed), authenticating
+with the profile from config (`databricks.profile`) or `DATABRICKS_CONFIG_PROFILE`.
+
+HTTP endpoints: `GET /healthz`, `GET /v1/languages` (end-to-end supported languages).
+
+## Run the UI (standalone client)
+
+The UI is a single-file browser client that only speaks the WebSocket protocol, so
+it can be hosted anywhere and pointed at any API host.
+
+```bash
+python -m http.server 8000 -d realtime_test_ui
+# open:
+#   http://localhost:8000/index.html?api=localhost:8001
+```
+
+API host + base-path resolution (priority order, see `connect()` in `index.html`):
+
+1. `?api=host:port` and `?apiPrefix=/prefix` query params
+2. `window.REALTIME_API_HOST` / `window.REALTIME_API_PREFIX`
+3. same origin — and when served from the app under `/realtime-test`, the base
+   path defaults to `/realtime` (the app mount), so no query params are needed
+
+**UI responsibilities (and nothing more):** microphone capture + downsample to
+16 kHz PCM16, streaming PCM frames over the WebSocket, rendering server events,
+playing back streamed audio chunks, and presentation (status, language badge,
+latency panel). All turn-taking, VAD/endpointing, barge-in, language handling, and
+STT→LLM→TTS orchestration live in the **API**.
+
+> Mic tips: the UI disables browser `echoCancellation`/`noiseSuppression`/`autoGainControl`
+> (they degrade ASR) and downsamples with anti-aliased box-averaging. Use headphones
+> if you enable barge-in, so the assistant doesn't hear its own voice.
+
+## WebSocket protocol
+
+Connect to `WS /v1/realtime/voice`, send `session.start`, then binary mono
+`pcm_s16le` frames (8/16/24/48 kHz accepted; 16 kHz recommended). The service
+finalizes a turn automatically after configured speech silence or maximum duration;
+`audio.end` remains available for push-to-talk clients.
+
+Server → client events:
+
+- `session.ready` (includes `supported_languages`)
+- `speech.started`
+- `turn.started`
+- `transcript.final` (includes `stt_ms`)
+- `response.text` (includes `llm_ms`)
+- `response.audio` (streamed chunks; first carries `tts_first_ms`; last is `final`)
+- `playback.stop`
+- `error`
+
+`barge_in` immediately cancels the current turn and increments the turn ID,
+preventing late inference responses from reaching the client.
+
+## Tuning (env overrides)
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `VOICE_VERIFY_MODE` | `1` | Echo transcript/language instead of answering |
+| `VOICE_ALLOW_BARGE_IN` | `0` | Allow sustained talk-over to interrupt the reply |
+| `VOICE_API_STT/LLM/TTS_ENDPOINT` | from config | Override serving endpoints |
+| `VOICE_DEBUG_AUDIO` | unset | Save each finalized turn's PCM to WAV for inspection |
+
+Other VAD/LLM/TTS knobs (silence window, min speech, temperature, diffusion steps)
+are in `realtime_api/config.py` and the `realtime_voice:` config block.
+
+## Realtime voice model serving (candidates)
+
+Every realtime candidate is packaged as an MLflow **`ResponsesAgent`** (Databricks
+Agent Framework, `task = agent/v1/responses`) and deployed as an agent Model Serving
+endpoint — the raw `dataframe_records` pyfunc path is intentionally **not** used.
+Audio travels through the Responses `custom_inputs`/`custom_outputs` channel.
+
+Registration/deployment code (`scripts/ml_asr/`):
+
+- `realtime_stt_agent.py` — `RealtimeSTTAgent`, the OSS ASR (Qwen3-ASR) wrapper.
+- `realtime_tts_agent.py` — `RealtimeTTSAgent`, the OSS TTS (VoxCPM2) wrapper.
+- `register_realtime_voice_agent.py` — registers a UC candidate alias per modality
+  (`--modality stt|tts`).
+- `deploy_realtime_voice_models.py` — promotes a `candidate` alias to its agent
+  Model Serving endpoint.
+- `submit_realtime_voice_jobs.py` — stages the agents to a UC Volume and submits
+  **serverless** register→deploy jobs (run locally against the configured profile).
+- `smoke_realtime_voice_agents.py` — exercises deployed endpoints with the Responses
+  contract + latency.
+
+The initial models are **candidates**, not active routes. Promote them only after
+isolated latency and multilingual-quality testing (see [`ROADMAP.md`](ROADMAP.md)).
+
+---
+
+# ML ASR pipeline & model serving
+
+Config-driven multilingual ASR bake-off. All artifacts live on a UC Volume; dataset
+and eval steps run on **serverless** by default. Entry point: **`scripts/ml_asr.sh`**.
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| 1 | `./scripts/ml_asr.sh datasets` | Build FLEURS holdouts (business + acoustic) on a UC Volume |
+| 2 | `./scripts/ml_asr.sh quality` | Semantic dataset quality gates |
+| 3 | `./scripts/ml_asr.sh register all` | UC registration (**Databricks models only**) |
+| 4 | `./scripts/ml_asr.sh serve deploy-all` | Deploy Model Serving endpoints (SDK from laptop) |
+| 5 | `./scripts/ml_asr.sh eval` | Score all eval routes (serverless) |
+|   | `./scripts/ml_asr.sh status` | Eval pipeline state |
+
+```bash
+./scripts/ml_asr.sh datasets
+./scripts/ml_asr.sh quality
+./scripts/ml_asr.sh register all
+./scripts/ml_asr.sh serve deploy-all
+./scripts/ml_asr/04_serve.sh smoke databricks_en_finetuned_whisper_lora
+./scripts/ml_asr.sh eval
+./scripts/ml_asr.sh status
+```
+
+**Config:** `config/ml_asr_eval.yaml` · **Python:** `backend/genie_voice/ml_asr/`
+
+### Model routes
+
+| Route prefix | Kind | Register / serve? |
+|--------------|------|-------------------|
+| `deepgram_nova3` | Commercial API (Deepgram Nova-3) | No — API key only, eval in step 5 |
+| `databricks_*` | UC-registered models on Model Serving | Yes — steps 3–4, then eval in step 5 |
+
+`eval_matrix` in config lists every route scored at eval time. `model_serving` lists
+only `databricks_*` models for register/deploy, mapping each to:
+
+- `registered_model_leaf` — UC model name
+- `register.type` — `oss` (OSS baseline) or `finetuned_whisper`
+- `serve.workload_type` / `workload_size` — endpoint compute
+
+Endpoint names come from `models.*.endpoint` (same names `05_eval.sh` uses).
+`03_register.sh` uses `genie_voice.ml_asr.serving` (OSS models register on serverless;
+EN finetuned Whisper bridges to `scripts/asr/05_register*` until migrated).
+
+### Benchmark UI
+
+After eval completes, sync the Volume index for the cockpit ASR benchmark page:
+
+```bash
+./scripts/ml_asr/05_eval.sh sync-index    # or: ./scripts/ml_asr/sync_benchmark_index.sh
+```
+
+Open **http://localhost:5173/#/asr-benchmark** — prefers `ml_asr` FLEURS results when
+`.run/ml_asr_eval/index.json` exists; falls back to legacy `voice_model_deep_eval`
+holdout. Use the **Eval tier** dropdown for business (entity readiness) vs acoustic
+(WER/CER). Optional API: `?source=ml_asr|legacy|auto&tier=business|acoustic`.
+
+### Dev-only local runs
+
+```bash
+./scripts/ml_asr/01_datasets.sh local
+./scripts/ml_asr/02_quality.sh local
+```
+
+### Legacy ASR scripts (`scripts/asr/`)
+
+Lower-level training, registration, and bake-off scripts from the original EN-centric
+workflow. The ML ASR pipeline **reuses** some for UC registration; you normally do not
+run the full legacy sequence for eval.
+
+| Script | Purpose |
+|--------|---------|
+| `01_asr_model_training.sh` | Data prep, manifests, GPU cluster lifecycle, baseline runs |
+| `02_asr_baseline_runs.sh` | Candidate evaluation (Deepgram, Whisper baselines) |
+| `03_asr_model_finetuning.sh` | Whisper LoRA fine-tuning |
+| `04_asr_real_audio_holdout.sh` | Realistic held-out evaluation gate |
+| `05_register_asr_model_candidate.sh` | Register EN finetuned Whisper LoRA in UC |
+| `06_deploy_asr_model_serving_endpoint.sh` | Deploy a single ASR serving endpoint |
+| `07_deep_voice_model_eval.sh` | Deepgram vs serving endpoint eval |
+| `10_register_multilingual_asr_candidates.sh` | Register multilingual OSS baselines in UC |
+| `11_multilingual_asr_finetuning.sh` | Multilingual LoRA fine-tuning |
+| `12_multilingual_business_holdout_loop.sh` | Business holdout build + base vs LoRA loop |
+| `13_multilingual_asr_promotion_gate.sh` | Read-only promotion decision report |
+
+**When to use legacy vs ML ASR:**
+
+- **Multilingual FLEURS bake-off** → `scripts/ml_asr.sh` (steps 1–5).
+- **EN LoRA training from a custom manifest** → `scripts/asr/01` → `03` → `05` → `06`.
+- **Promotion gate after multilingual fine-tune** → `scripts/asr/13`.
+
+---
+
+# ASR model-training harness
+
+`backend/genie_voice/asr_eval/` prepares and benchmarks the utterance-level ASR
+dataset used for Whisper fine-tuning and model selection. The first benchmark is
+Deepgram Nova-3 on a locked training/evaluation manifest; Whisper and Databricks
+model-serving baselines use the same manifest and scoring functions for fair
+comparison.
+
+### Manifest
+
+JSONL, one utterance-level clip per line. Required: `clip_id`, `audio_path`,
+`reference_transcript`. Recommended: `call_id`, `speaker`, `audio_format`,
+`sample_rate_hz`, `duration_seconds`, `scenario`, `split`, `dataset_version`,
+`expected_entities`. See `docs/asr_model_training_manifest.example.jsonl`.
+
+### Workflow
+
+```bash
+scripts/asr/01_asr_model_training.sh        # data prep, manifest, Volume layout, GPU lifecycle
+scripts/asr/02_asr_baseline_runs.sh whisper-full   # full-manifest Whisper baseline (no training)
+scripts/asr/02_asr_baseline_runs.sh fair-compare   # rescore + Deepgram Nova-3 on same manifest
+scripts/asr/03_asr_model_finetuning.sh preflight
+scripts/asr/03_asr_model_finetuning.sh dry-run
+scripts/asr/03_asr_model_finetuning.sh train-lora  # only after dry-run succeeds
+```
+
+`01_asr_model_training.sh` with no arguments runs all safe repeatable steps and stops
+when it needs real audio or corrected transcripts. Useful subcommands: `next`,
+`volume`, `prepare`, `validate`, `augment`, `deepgram`, `whisper`, `whisper-db`,
+`gpu-status`, `gpu-start`, `gpu-stop`, `summarize`, `all`.
+
+External acoustic data: Common Voice (if a Mozilla archive is placed under
+`/Volumes/<catalog>/<schema>/<streaming_volume>/asr_model_training/external_raw/common_voice`),
+otherwise LibriSpeech `dev-clean` from OpenSLR is used automatically.
+
+### Scoring
+
+`score_transcript()` computes WER, CER, invoice-ID accuracy, amount accuracy, date
+accuracy, billing-action phrase accuracy, and confirmation/refusal phrase accuracy.
+**Business entity accuracy is the main promotion signal**; generic WER is supporting
+evidence only.
+
+---
+
+# Lakebase (Autoscaling) serving layer
+
+Lakebase Autoscaling is a **serverless Postgres** project (scale-to-zero, instant
+restore, Unity Catalog governed), used for the low-latency reads the Agent Assist UI
+needs:
+
+- **`call_state`** — live enrichment per call, upserted by `genie_voice.serve.LakebaseServing`.
+- **operational call tables** — `call_facts` and `live_call_utterances`.
+- **Lakebase CDF** — started in the Lakebase UI to publish `lb_<table>_history` into
+  Unity Catalog for task-based analytics refresh.
+
+### Provisioning
+
+```bash
+python infra/lakebase/setup_lakebase.py
+```
+
+Resolves the Autoscaling project and ensures the configured Postgres schema exists.
+If the project does not exist, create it in the UI, then re-run setup.
+
+### Connecting (U2M — default)
+
+No password needed. With OAuth U2M the serving layer **mints a short-lived Postgres
+token at runtime** via `/api/2.0/postgres/credentials` and connects as
+`databricks.run_as`. Set `lakebase.enabled: true` in `config/config.yaml`.
+
+To pin a static connection instead, set these in `.env` (overrides the minted token):
+
+```
+LAKEBASE_HOST=...
+LAKEBASE_PORT=5432
+LAKEBASE_DATABASE=databricks_postgres
+LAKEBASE_USER=...
+LAKEBASE_PASSWORD=...
+```
+
+With `lakebase.enabled: false` the serving layer falls back to an in-process store so
+the local end-to-end flow still works offline.
+
+> New Lakebase instances are **Autoscaling** projects by default (2026+). UC analytics
+> reads Lakebase CDF history; this repo does not create duplicate UC-to-Lakebase
+> managed synced tables.
+
+---
+
+# Serverless orchestration job
+
+`infra/jobs/deploy_pipeline.py` deploys one serverless orchestration job running as
+your U2M identity:
+
+- **Reference UC ingest** — reads `raw_batch_data` files into UC reference Delta tables.
+- **Lakebase ingest** — reads `raw_streaming_data` files and upserts primary Lakebase
+  call tables (runs in parallel with reference UC ingest).
+- **Lakebase CDF sync check** — resolves project/branch, verifies `REPLICA IDENTITY FULL`,
+  requires `wal2delta.tables` status `STREAMING`/`SNAPSHOTTING`, then waits for
+  `lb_<table>_history` tables in UC.
+- **Gold insights refresh** — creates UC Delta `gold_call_insights` from Lakebase call
+  and utterance history.
+- **UC constraints** — adds informational PK/FK metadata so Genie sees relationships.
+- **Data quality** — validates PK/FK metadata, integrity, vocabularies, call consistency.
+- **Genie reconcile** — recreates the Genie space only after DQ passes.
 
 ```bash
 python infra/jobs/deploy_pipeline.py                 # deploy + run orchestration
 python infra/jobs/deploy_pipeline.py --full-refresh  # accepted for compatibility
 python infra/jobs/deploy_pipeline.py --no-run        # deploy only
+python infra/jobs/deploy_pipeline.py --paused        # create paused
 ```
 
-`local-deploy.sh` runs this automatically online. See
-[`infra/jobs/README.md`](infra/jobs/README.md). Provision serving with
-`infra/lakebase/setup_lakebase.py`.
+Wheel tasks run on **serverless** compute: a job environment whose only dependency is
+the `genie_voice` wheel installed from a stable UC Volume path (`pyspark`/`pandas` are
+preinstalled). The task reads config from the `config.yaml` copied into the same
+workspace folder (`--config /Workspace/.../config.yaml`; workspace files are
+FUSE-mounted). `GENIE_<SECTION>__<KEY>` overrides still apply.
 
-## Genie space (created dynamically by name)
+**Prerequisites:** the UC schema + Volume + typed tables exist
+(`genie_voice.databricks.bootstrap`, which `local-deploy.sh` runs); `pip` can build the
+wheel; your identity can create serverless jobs and write to its workspace home.
 
-No hardcoded space id. The space is recreated by `databricks.genie_space_name`
-after the data quality gate passes, with entity matching on categorical columns,
-example SQL, instructions, and benchmark questions. Joins are inferred from the
-post-refresh UC PK/FK metadata task.
+`local-deploy.sh` runs this automatically online.
+
+---
+
+# Genie space (created dynamically by name)
+
+No hardcoded space id. The space is recreated by `databricks.genie_space_name` after
+the data quality gate passes, with entity matching on categorical columns, example SQL,
+instructions, and benchmark questions. Joins are inferred from the post-refresh UC
+PK/FK metadata task.
 
 ```bash
 python -m genie_voice.genie.space     # runs DQ, recreates by name, prints the URL
 ```
 
-The orchestration job runs this automatically online after constraints and DQ.
-At query time `GenieClient` just resolves the space by name.
+The orchestration job runs this automatically online after constraints and DQ. At
+query time `GenieClient` just resolves the space by name.

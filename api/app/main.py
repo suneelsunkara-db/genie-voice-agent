@@ -97,8 +97,59 @@ def create_app() -> FastAPI:
 
         threading.Thread(target=_work, daemon=True, name="api-warm").start()
 
+    _mount_realtime(app)
+    _mount_realtime_test_ui(app)
     _mount_frontend(app)
     return app
+
+
+def _mount_realtime(app: FastAPI) -> None:
+    """Additively mount the standalone Realtime Voice API under ``/realtime``.
+
+    This is fully isolated from the contact-center routes: it only exposes
+    ``/realtime/v1/realtime/voice`` (WebSocket) and ``/realtime/v1/languages``.
+    In the Databricks app the pipeline must authenticate as the injected service
+    principal (OAuth), so we build the SDK serving client with ``profile=None``
+    rather than the CLI profile from config. No-op (logged) if the realtime
+    package or its config is unavailable, so the main app still boots.
+    """
+    try:
+        from realtime_api.app import create_app as create_realtime_app
+        from realtime_api.config import RealtimeSettings
+        from realtime_api.services import DatabricksServing
+        from realtime_api.session import VoicePipeline
+
+        rt_settings = RealtimeSettings.resolve()
+
+        def _factory(s: RealtimeSettings) -> VoicePipeline:
+            serving = DatabricksServing.from_sdk(
+                stt_endpoint=s.stt_endpoint,
+                llm_endpoint=s.llm_endpoint,
+                tts_endpoint=s.tts_endpoint,
+                profile=None,  # in-app: use the injected SP OAuth creds, not a CLI profile
+                llm_temperature=s.llm_temperature,
+                llm_max_tokens=s.llm_max_tokens,
+                llm_tools_enabled=s.llm_tools_enabled,
+                llm_max_tool_iterations=s.llm_max_tool_iterations,
+                tts_inference_timesteps=s.tts_inference_timesteps,
+                tts_cfg_value=s.tts_cfg_value,
+            )
+            return VoicePipeline(stt=serving, llm=serving, tts=serving, verify_mode=s.verify_mode)
+
+        app.mount("/realtime", create_realtime_app(settings=rt_settings, pipeline_factory=_factory))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[api-startup] realtime API mount skipped: {exc}")
+
+
+def _mount_realtime_test_ui(app: FastAPI) -> None:
+    """Serve the standalone realtime test client at ``/realtime-test`` (optional).
+
+    The page auto-targets the ``/realtime`` mount above when served from here.
+    No-op when the folder is absent.
+    """
+    ui_dir = Path(__file__).resolve().parents[2] / "realtime_test_ui"
+    if ui_dir.is_dir():
+        app.mount("/realtime-test", StaticFiles(directory=ui_dir, html=True), name="realtime-test")
 
 
 def _mount_frontend(app: FastAPI) -> None:
