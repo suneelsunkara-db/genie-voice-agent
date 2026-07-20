@@ -24,13 +24,21 @@ from mlflow.tracking import MlflowClient
 
 # The Databricks GPU serving base ships torch 2.13.0+cu13, but only the cu118
 # runtime wheels load on these nodes. The (working) STT env resolved to
-# torch 2.7.1+cu118 via qwen-asr; pin both models to that exact build so an
-# unpinned resolution can't pull a cu12/cu13 variant whose libcudart is absent.
+# torch 2.7.1+cu118 via qwen-asr; pin the whole torch stack to that exact build so
+# an unpinned resolution can't pull a cu12/cu13 variant whose libcudart is absent.
+#
+# torchvision must be pinned to the build that matches torch 2.7.1 (0.22.1).
+# transformers imports torchvision at inference (image/feature processors), and an
+# unpinned torchvision drifts to a wheel compiled against a different torch, which
+# fails at predict time with "operator torchvision::nms does not exist" /
+# "torchvision has no attribute 'extension'". Pinning makes the env reproducible.
 _PIP_REQUIREMENTS = {
     "stt": ["mlflow>=2.20", "pydantic>=2", "torch==2.7.1", "torchaudio==2.7.1",
-            "transformers", "accelerate", "qwen-asr", "numpy", "soundfile"],
+            "torchvision==0.22.1", "transformers", "accelerate", "qwen-asr",
+            "numpy", "soundfile"],
     "tts": ["mlflow>=2.20", "pydantic>=2", "torch==2.7.1", "torchaudio==2.7.1",
-            "transformers", "accelerate", "voxcpm", "numpy", "soundfile"],
+            "torchvision==0.22.1", "transformers", "accelerate", "voxcpm",
+            "numpy", "soundfile"],
 }
 
 
