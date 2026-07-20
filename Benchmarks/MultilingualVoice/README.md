@@ -18,10 +18,13 @@ the API's own `tts_first_ms`) and **round-trip intelligibility** — the API's
 synthesized speech is fed back through its own STT and the re-heard text is
 compared to what it meant to say (`tts_roundtrip_wer`/`_cer`).
 
-> **Note on Belebele:** passages + question + 4 options are long. This API
-> finalizes a turn on VAD silence / `max_turn_seconds`, so audio is capped
-> (`--max-audio-seconds`, default 18s). For faithful Belebele scores, raise the
-> server's `max_turn_seconds`. FLEURS and CCFQA fit a normal turn.
+> **Note on Belebele:** the dataset ships the passage as audio but the question
+> and 4 options as text only. So the full passage AUDIO is streamed through STT
+> and the exact question + options are handed to the LLM as `session.start`
+> `context` (no self-TTS of text we already have). The turn carries per-session
+> `max_turn_seconds` / `vad_silence_ms` overrides so the long passage isn't
+> finalized mid-stream; it ends on `audio.end`. `--max-audio-seconds` (default
+> 120s) is only a safety ceiling. FLEURS and CCFQA fit a normal turn.
 
 ## Quick start
 

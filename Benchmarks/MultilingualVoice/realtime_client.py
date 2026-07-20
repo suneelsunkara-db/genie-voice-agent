@@ -266,9 +266,13 @@ class WebSocketRealtimeClient:
             return resolve_capability(requested, self.available_capabilities)
         return requested
 
-    def run_turn(self, pcm_s16le, *, sample_rate_hz, language=None, capability=None):
+    def run_turn(self, pcm_s16le, *, sample_rate_hz, language=None, capability=None,
+                 context=None, max_turn_seconds=None, vad_silence_ms=None):
         cap = self._effective(capability)
-        return _run_async(self._run_audio_turn(pcm_s16le, sample_rate_hz, language or self.language, cap))
+        return _run_async(self._run_audio_turn(
+            pcm_s16le, sample_rate_hz, language or self.language, cap,
+            context=context, max_turn_seconds=max_turn_seconds, vad_silence_ms=vad_silence_ms,
+        ))
 
     def synthesize(self, text, *, language=None, capability=None):
         cap = self._effective(capability or "text-to-speech")
@@ -288,7 +292,8 @@ class WebSocketRealtimeClient:
         }
         return result
 
-    async def _run_audio_turn(self, pcm_s16le, sample_rate_hz, language, capability):
+    async def _run_audio_turn(self, pcm_s16le, sample_rate_hz, language, capability,
+                              *, context=None, max_turn_seconds=None, vad_silence_ms=None):
         import websockets
 
         url = self._url(capability)
@@ -297,17 +302,27 @@ class WebSocketRealtimeClient:
         if token:
             headers["Authorization"] = "Bearer " + str(token)
         result = TurnResult()
+        # Batch mode: when the caller sets turn-endpointing overrides it manages
+        # the boundary via audio.end, so stream without real-time pacing (VAD is
+        # effectively disabled server-side) for a much faster benchmark.
+        batch = max_turn_seconds is not None or vad_silence_ms is not None
         try:
             async with websockets.connect(url, **_ws_connect_kwargs(headers, self.timeout_s)) as ws:
-                start_msg = json.dumps({
+                start = {
                     "type": "session.start",
                     "language": language,
                     "sample_rate_hz": sample_rate_hz,
                     "encoding": "pcm_s16le",
-                })
-                await ws.send(start_msg)
+                }
+                if context:
+                    start["context"] = context
+                if max_turn_seconds is not None:
+                    start["max_turn_seconds"] = max_turn_seconds
+                if vad_silence_ms is not None:
+                    start["vad_silence_ms"] = vad_silence_ms
+                await ws.send(json.dumps(start))
                 await self._await_type(ws, "session.ready")
-                await self._stream_audio(ws, pcm_s16le, sample_rate_hz)
+                await self._stream_audio(ws, pcm_s16le, sample_rate_hz, pace=not batch)
                 end_msg = json.dumps({"type": "audio.end"})
                 await ws.send(end_msg)
                 await self._collect(ws, result, stop_after_transcript=(capability == "speech-to-text"))
@@ -341,12 +356,13 @@ class WebSocketRealtimeClient:
             result.error = type(exc).__name__ + ": " + str(exc)
         return result
 
-    async def _stream_audio(self, ws, pcm, sample_rate_hz):
+    async def _stream_audio(self, ws, pcm, sample_rate_hz, *, pace=True):
         bytes_per_chunk = max(2, int(sample_rate_hz * self.chunk_ms / 1000) * 2)
         chunk_interval = self.chunk_ms / 1000.0
         for offset in range(0, len(pcm), bytes_per_chunk):
             await ws.send(pcm[offset:offset + bytes_per_chunk])
-            await asyncio.sleep(chunk_interval)
+            if pace:
+                await asyncio.sleep(chunk_interval)
 
     async def _await_type(self, ws, want):
         while True:
@@ -419,16 +435,24 @@ class InProcessRealtimeClient:
     def _path(self, capability):
         return CAPABILITY_PATHS[capability]
 
-    def run_turn(self, pcm_s16le, *, sample_rate_hz, language=None, capability=None):
+    def run_turn(self, pcm_s16le, *, sample_rate_hz, language=None, capability=None,
+                 context=None, max_turn_seconds=None, vad_silence_ms=None):
         cap = capability or DATASET_CAPABILITIES.get("ccfqa", "speech-llm-toolassist-speech")
         result = TurnResult()
         lang = language or self.language
         try:
             with self._client.websocket_connect(self._path(cap)) as ws:
-                ws.send_json({
+                start = {
                     "type": "session.start", "language": lang,
                     "sample_rate_hz": sample_rate_hz, "encoding": "pcm_s16le",
-                })
+                }
+                if context:
+                    start["context"] = context
+                if max_turn_seconds is not None:
+                    start["max_turn_seconds"] = max_turn_seconds
+                if vad_silence_ms is not None:
+                    start["vad_silence_ms"] = vad_silence_ms
+                ws.send_json(start)
                 self._await_type(ws, "session.ready")
                 bpc = max(2, int(sample_rate_hz * self.chunk_ms / 1000) * 2)
                 for off in range(0, len(pcm_s16le), bpc):

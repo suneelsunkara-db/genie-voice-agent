@@ -18,7 +18,7 @@ class FakeServices:
     def transcribe(self, audio: bytes, *, language: str | None, sample_rate_hz: int) -> tuple[str, str | None]:
         return "hello world", "en-US"
 
-    def respond(self, transcript: str, *, language: str) -> str:
+    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
         return f"you said {transcript}"
 
     def synthesize(self, text: str, *, language: str) -> AudioResponse:
@@ -141,7 +141,7 @@ def test_text_to_speech_synthesize() -> None:
 
 
 class MultiSentenceServices(FakeServices):
-    def respond(self, transcript: str, *, language: str) -> str:
+    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
         return "First sentence. Second sentence! Third one?"
 
 
@@ -277,3 +277,80 @@ def test_voice_session_finalizes_after_vad_silence() -> None:
     for _ in range(60):
         session.add_audio(silence)
     assert session.should_finalize(silence_ms=700, max_turn_seconds=20)
+
+
+def test_session_start_parses_turn_overrides_and_context() -> None:
+    start = SessionStart.from_event(
+        {
+            "language": "en-US",
+            "sample_rate_hz": 16000,
+            "max_turn_seconds": 150,
+            "vad_silence_ms": 600000,
+            "context": "  Question: X  ",
+        }
+    )
+    assert start.max_turn_seconds == 150
+    assert start.vad_silence_ms == 600000
+    assert start.context == "Question: X"
+
+
+def test_session_start_defaults_have_no_overrides() -> None:
+    start = SessionStart.from_event({"language": "en-US", "sample_rate_hz": 16000})
+    assert start.max_turn_seconds is None
+    assert start.vad_silence_ms is None
+    assert start.context is None
+
+
+def test_session_start_rejects_nonpositive_turn_override() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        SessionStart.from_event(
+            {"language": "en-US", "sample_rate_hz": 16000, "max_turn_seconds": 0}
+        )
+
+
+class ContextEchoServices(FakeServices):
+    """Echoes the grounding context so the assist route can be asserted on."""
+
+    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
+        return f"ctx:{context}"
+
+
+def test_session_context_reaches_assist_llm() -> None:
+    fake = ContextEchoServices()
+    app = create_app(
+        settings=_settings(),
+        bundle_factory=lambda _s: ServingBundle(stt=fake, llm=fake, tts=fake),
+    )
+    with TestClient(app) as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language": "en-US",
+                "sample_rate_hz": 16000,
+                "context": "Question: capital of France?\n1. Paris\n2. Rome",
+            }
+        )
+        assert ws.receive_json()["type"] == "session.ready"
+        _drive_turn(ws)
+        assert ws.receive_json()["type"] == "transcript.final"
+        response_text = ws.receive_json()
+        assert response_text["type"] == "response.text"
+        assert "Question: capital of France?" in response_text["text"]
+
+
+def test_respond_appends_context_to_user_message() -> None:
+    from realtime_api.services import DatabricksServing
+
+    client = FakeDeployClient([{"choices": [{"message": {"content": "2"}}]}])
+    serving = DatabricksServing(
+        client=client, stt_endpoint="s", llm_endpoint="llm", tts_endpoint="t", llm_tools_enabled=False
+    )
+
+    out = serving.respond("the spoken passage", language="en-US", context="Question: Q?\n1. a\n2. b")
+
+    assert out == "2"
+    user_content = client.calls[0]["messages"][-1]["content"]
+    assert "the spoken passage" in user_content
+    assert "Question: Q?" in user_content

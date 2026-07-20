@@ -13,7 +13,8 @@ Responses ``custom_inputs`` channel:
       "custom_inputs": {
         "audio_b64": "<base64 pcm_s16le or wav>",
         "language": "en-US",       # optional; None => auto-detect
-        "sample_rate_hz": 16000
+        "sample_rate_hz": 16000,
+        "max_new_tokens": 1024     # optional per-request override (per audio chunk)
       }
     }
 
@@ -51,6 +52,16 @@ _LANGUAGE_NAMES = {
     "sv": "Swedish",
 }
 
+# Qwen3-ASR splits long audio into ~30 s chunks and generates up to
+# ``max_new_tokens`` PER CHUNK (see qwen_asr transcribe -> generate), stopping at
+# EOS. 256 (our old value) is below the package's own default of 512 and
+# truncated dense chunks, clipping long-audio transcripts. Because generation
+# stops at EOS, a higher ceiling is nearly free for normal speech — it only
+# removes the truncation cap. 1024 sits well above any real 30 s transcript
+# (even fast/dense CJK) while still bounding runaway generation on silence/noise
+# chunks. Callers can override per request via ``custom_inputs.max_new_tokens``.
+_DEFAULT_MAX_NEW_TOKENS = 1024
+
 
 class RealtimeSTTAgent(ResponsesAgent):
     """OSS Qwen3-ASR served through the Responses Agent contract."""
@@ -75,7 +86,7 @@ class RealtimeSTTAgent(ResponsesAgent):
                 dtype=torch.bfloat16,
                 device_map="cuda:0",
                 max_inference_batch_size=8,
-                max_new_tokens=256,
+                max_new_tokens=_DEFAULT_MAX_NEW_TOKENS,
             )
             self.inference_device = "cuda:0"
         else:
@@ -83,7 +94,7 @@ class RealtimeSTTAgent(ResponsesAgent):
                 self._model_dir,
                 dtype=torch.float32,
                 device_map="cpu",
-                max_new_tokens=256,
+                max_new_tokens=_DEFAULT_MAX_NEW_TOKENS,
             )
             self.inference_device = "cpu"
 
@@ -103,6 +114,12 @@ class RealtimeSTTAgent(ResponsesAgent):
             raise ValueError("custom_inputs.audio_b64 is required for the STT agent")
         requested_language = ci.get("language")
         sample_rate_hz = int(ci.get("sample_rate_hz") or 16_000)
+
+        # Optional per-request ceiling (per audio chunk). Stored on the model and
+        # read by transcribe()'s generate() call, so it applies to this call.
+        max_new_tokens = ci.get("max_new_tokens")
+        if max_new_tokens is not None:
+            self.model.max_new_tokens = int(max_new_tokens)
 
         samples, sample_rate = _decode_audio(base64.b64decode(audio_b64), sample_rate_hz)
         forced = _forced_language(requested_language)

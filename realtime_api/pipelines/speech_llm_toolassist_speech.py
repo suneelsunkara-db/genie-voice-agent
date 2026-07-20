@@ -15,6 +15,8 @@ async def process_turn(
     session: VoiceSession,
     turn_id: int,
     audio: bytes,
+    *,
+    context: str | None = None,
 ) -> AsyncIterator[dict]:
     transcript, detected, stt_ms = await transcribe(bundle, session, audio)
     if turn_id != session.turn_id:
@@ -31,7 +33,9 @@ async def process_turn(
     }
 
     t = time.perf_counter()
-    response_text = await asyncio.to_thread(bundle.llm.respond, transcript, language=language)
+    response_text = await asyncio.to_thread(
+        bundle.llm.respond, transcript, language=language, context=context
+    )
     llm_ms = round((time.perf_counter() - t) * 1000)
     if turn_id != session.turn_id:
         return

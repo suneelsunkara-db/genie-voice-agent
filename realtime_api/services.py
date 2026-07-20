@@ -65,7 +65,7 @@ class SpeechToText(Protocol):
 
 
 class LanguageModel(Protocol):
-    def respond(self, transcript: str, *, language: str) -> str: ...
+    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str: ...
 
 
 class TextToSpeech(Protocol):
@@ -214,7 +214,7 @@ class DatabricksServing:
         detected = custom.get("detected_language") or custom.get("language")
         return transcript, (str(detected) if detected else None)
 
-    def respond(self, transcript: str, *, language: str) -> str:
+    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
         # The middle stage is a Databricks foundation-model chat endpoint
         # (databricks-qwen3-next-80b-a3b-instruct), queried with ChatCompletions
         # shape, not the Responses Agent contract used by STT/TTS. Qwen3-Next
@@ -230,7 +230,7 @@ class DatabricksServing:
         )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
-            {"role": "user", "content": transcript},
+            {"role": "user", "content": _compose_user_content(transcript, context)},
         ]
         tools = _TOOLS_SPEC if self.llm_tools_enabled else None
 
@@ -347,6 +347,21 @@ class DatabricksServing:
                 server_ttfb_ms=server_ttfb_ms,
                 server_gen_ms=server_gen_ms,
             )
+
+
+def _compose_user_content(transcript: str, context: str | None) -> str:
+    """Combine the spoken transcript with optional textual grounding context.
+
+    The transcript is what the caller said (for Belebele, the spoken passage);
+    the context carries any non-spoken grounding the caller supplied (for
+    Belebele, the question + answer options + how to respond). Kept as a labelled
+    single user message so the model treats the context as part of the request.
+    """
+    if not context:
+        return transcript
+    if not transcript.strip():
+        return context
+    return f"{transcript}\n\n{context}"
 
 
 def _message_text(message: dict[str, Any]) -> str:

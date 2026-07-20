@@ -27,11 +27,20 @@ from paths import benchmark_results_dir
 from volume_io import read_text, volume_exists, write_text
 
 # Metadata keys carried through from the loaders (everything except the PCM).
-_META_KEYS = ("sample_rate", "reference", "correct_choice", "question")
+# ``context`` carries Belebele's question + options grounding for the LLM turn.
+_META_KEYS = ("sample_rate", "reference", "correct_choice", "question", "context")
+
+# Staged-artifact schema version. Bump whenever the loader output or staging
+# format changes so artifacts from an older format are never silently reused:
+# ``is_staged`` looks under the versioned path, so old artifacts simply aren't
+# found and the pair is re-staged fresh. v2: Belebele now stages the FULL passage
+# audio plus the question/options ``context`` (v1 staged an 18 s passage slice
+# with no context, which scored ~0%).
+_STAGING_VERSION = "v2"
 
 
 def staged_file(dataset: str, lang: str, limit: int, *, out_dir: Path | None = None) -> Path:
-    root = (out_dir or benchmark_results_dir()) / "_staged" / f"limit{limit}"
+    root = (out_dir or benchmark_results_dir()) / "_staged" / _STAGING_VERSION / f"limit{limit}"
     return root / dataset / f"{lang}.jsonl"
 
 

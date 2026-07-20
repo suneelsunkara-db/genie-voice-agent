@@ -53,6 +53,17 @@ _RESULTS = _BENCHMARK_DIR / "results"
 
 DATASET_EVALUATOR = {"fleurs": "asr", "belebele": "mcq", "ccfqa": "qa"}
 
+# Belebele sends a full spoken passage (mean ~71 s, max ~98 s) as one turn and
+# marks the end with audio.end. These overrides stop server-side VAD from
+# finalizing the turn mid-passage: max_turn_seconds is an audio-duration ceiling
+# above the longest passage, and vad_silence_ms is set high so inter-sentence
+# pauses in the concatenated FLEURS audio don't end the turn early.
+BELEBELE_MAX_TURN_SECONDS = 150
+BELEBELE_VAD_SILENCE_MS = 600_000
+# STT of a ~100 s passage plus LLM + TTS needs a longer per-message wait than the
+# short FLEURS/CCFQA turns.
+BELEBELE_TIMEOUT_S = 300.0
+
 
 def _percentiles(values: list[int]) -> dict[str, int]:
     if not values:
@@ -126,6 +137,7 @@ def build_client(args: argparse.Namespace, lang: str, *, dataset: str):
     available = detect_capabilities(args.api_host, prefix=args.api_prefix, auth_token=token_provider)
     log.info("API capabilities available: %s", {k: v for k, v in available.items() if v})
     default_capability = DATASET_CAPABILITIES.get(dataset or "", "speech-llm-toolassist-speech")
+    timeout_s = BELEBELE_TIMEOUT_S if dataset == "belebele" else 180.0
     return WebSocketRealtimeClient(
         args.api_host,
         prefix=args.api_prefix,
@@ -133,6 +145,7 @@ def build_client(args: argparse.Namespace, lang: str, *, dataset: str):
         auth_token=token_provider,
         default_capability=default_capability,
         available_capabilities=available,
+        timeout_s=timeout_s,
     )
 
 
@@ -179,6 +192,15 @@ def run_one(
     sample_count = 0
     stt_capability = DATASET_CAPABILITIES.get(dataset, "speech-llm-toolassist-speech")
 
+    turn_overrides: dict = {}
+    if dataset == "belebele":
+        # Full passage as audio; question + options handed to the LLM as text
+        # context; VAD held off so the long turn ends only on audio.end.
+        turn_overrides = {
+            "max_turn_seconds": BELEBELE_MAX_TURN_SECONDS,
+            "vad_silence_ms": BELEBELE_VAD_SILENCE_MS,
+        }
+
     for i, sample in enumerate(load_staged(dataset, lang, args.limit, out_dir=staged_dir)):
         sample_count += 1
         result = None
@@ -186,6 +208,7 @@ def run_one(
             result = client.run_turn(
                 sample["pcm"], sample_rate_hz=sample["sample_rate"],
                 language=lang, capability=stt_capability,
+                context=sample.get("context"), **turn_overrides,
             )
             if not result.error:
                 break
@@ -202,8 +225,6 @@ def run_one(
             errors += 1
             log.warning("turn %d error: %s", i, result.error)
         _log_turn_issues(tracker, dataset=dataset, lang=lang, index=i, result=result)
-        if dataset == "belebele":
-            result.response_text = result.response_text or result.transcript
 
         if dataset == "fleurs" and args.tts_roundtrip:
             reference = str(sample.get("reference") or "").strip()
@@ -350,7 +371,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--auth-token", default=None)
     p.add_argument("--databricks-profile", default=os.getenv("DATABRICKS_PROFILE", ""))
     p.add_argument("--tts-roundtrip", action="store_true")
-    p.add_argument("--max-audio-seconds", type=float, default=18.0)
+    p.add_argument(
+        "--max-audio-seconds", type=float, default=120.0,
+        help="Belebele passage safety ceiling (passages max ~98s; full passage is sent)",
+    )
     p.add_argument("--fixture", action="store_true")
     p.add_argument("--out-dir", default=None)
     p.add_argument("--run-label", default=os.getenv("MLV_RUN_LABEL", ""))

@@ -138,8 +138,8 @@ async def handle_voice_ws(
                     log_event("speech.started", session_id=session_id, turn_id=session.turn_id + 1)
                     await websocket.send_json({"type": "speech.started", "turn_id": session.turn_id + 1})
                 if session.should_finalize(
-                    silence_ms=settings.vad_silence_ms,
-                    max_turn_seconds=settings.max_turn_seconds,
+                    silence_ms=session.config.vad_silence_ms or settings.vad_silence_ms,
+                    max_turn_seconds=session.config.max_turn_seconds or settings.max_turn_seconds,
                     min_speech_ms=settings.min_speech_ms,
                 ):
                     task = await _start_audio_turn(
@@ -379,7 +379,9 @@ async def _audio_pipeline(
         async for event in stt_pipeline.process_turn(bundle, session, turn_id, audio):
             yield event
     elif spec.capability == SPEECH_LLM_TOOLASSIST_SPEECH:
-        async for event in assist_pipeline.process_turn(bundle, session, turn_id, audio):
+        async for event in assist_pipeline.process_turn(
+            bundle, session, turn_id, audio, context=session.config.context
+        ):
             yield event
     else:
         raise RuntimeError(f"audio pipeline not supported for {spec.capability}")

@@ -175,11 +175,25 @@ def load_fleurs(lang: str, limit: int) -> Iterator[dict[str, Any]]:
 
 
 def load_belebele(lang: str, limit: int, max_audio_seconds: float) -> Iterator[dict[str, Any]]:
+    """Spoken reading-comprehension MCQ (2M-Belebele).
+
+    The dataset ships the passage as audio (``audio_segments``, FLEURS-matched
+    sentence recordings) but the question and the four options as TEXT only
+    (their ``*_audio`` columns are null). To score the voice pipeline faithfully
+    we send the full passage AUDIO through STT and hand the exact question +
+    options to the LLM as textual context (see ``session.start.context``) — no
+    self-TTS of text we already have, which would only add re-transcription
+    noise. The whole passage is captured (comprehension needs it), bounded only
+    by ``max_audio_seconds`` as a safety ceiling.
+    """
     from languages import BELEBELE
 
     code = BELEBELE[lang]
     path = f"data/lang={code}/{code}.parquet"
-    cols = ["has_matched_audio", "audio_segments", "correct_answer_num"]
+    cols = [
+        "has_matched_audio", "audio_segments", "correct_answer_num",
+        "question", "mc_answer1", "mc_answer2", "mc_answer3", "mc_answer4",
+    ]
     seen = 0
     for row in _parquet_rows("facebook/2M-Belebele", path, columns=cols):
         if not row.get("has_matched_audio"):
@@ -188,10 +202,10 @@ def load_belebele(lang: str, limit: int, max_audio_seconds: float) -> Iterator[d
         chunks: list[np.ndarray] = []
         sr = 16_000
         total = 0
+        # Safety ceiling only: passages max out ~98 s, so the full passage is
+        # normally captured. Stop decoding past the cap so a pathological row
+        # can't materialise unbounded float arrays in memory.
         cap = int(max_audio_seconds * sr)
-        # Passages are minutes long but the API only consumes ~max_audio_seconds;
-        # stop decoding once we have enough so we never materialise the full
-        # passage's float arrays in memory.
         for group in segments:
             if not isinstance(group, list):
                 continue
@@ -214,10 +228,26 @@ def load_belebele(lang: str, limit: int, max_audio_seconds: float) -> Iterator[d
             "pcm": pcm,
             "sample_rate": pcm_sr,
             "correct_choice": row.get("correct_answer_num"),
+            "context": _belebele_context(row),
         }
         seen += 1
         if seen >= limit:
             return
+
+
+def _belebele_context(row: dict[str, Any]) -> str:
+    """Build the textual grounding for a Belebele item: question + options + task.
+
+    The passage arrives as audio (transcribed by STT); this supplies the parts
+    the dataset only provides as text. The final instruction pins the answer to a
+    parseable single digit regardless of the assistant's conversational style.
+    """
+    question = str(row.get("question") or "").strip()
+    options = [str(row.get(f"mc_answer{i}") or "").strip() for i in range(1, 5)]
+    lines = [f"Question: {question}", "Options:"]
+    lines += [f"{i}. {opt}" for i, opt in enumerate(options, start=1)]
+    lines.append("Answer with only the number (1, 2, 3, or 4) of the correct option.")
+    return "\n".join(lines)
 
 
 def load_ccfqa(lang: str, limit: int) -> Iterator[dict[str, Any]]:

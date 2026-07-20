@@ -250,7 +250,7 @@ def main() -> None:
         benchmark_dir=benchmark_ws,
         api_host=api_host, api_prefix=api_prefix, results_dir=results_dir,
         host=host, client_id=client_id, run_id=run_id, hf_token=hf_token,
-        limit=args.limit, tts_roundtrip=True, max_audio_seconds=18.0,
+        limit=args.limit, tts_roundtrip=True, max_audio_seconds=120.0,
         env_version=env_version,
         dataset_sel=args.dataset, languages_sel=args.languages,
         max_parallel=args.max_parallel,
