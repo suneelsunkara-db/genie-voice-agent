@@ -1,0 +1,11 @@
+{
+  "dataset": "belebele",
+  "language": "ja",
+  "latency_ms": {"stt_ms": 280, "llm_ms": 240, "tts_first_ms": 360, "client_ttfa_ms": 700, "total_ms": 1900},
+  "rows": [
+    {"correct_choice": 2, "response": "The answer is 2.", "transcript": "...", "error": null},
+    {"correct_choice": 1, "response": "I think option 1 is correct.", "transcript": "...", "error": null},
+    {"correct_choice": 4, "response": "answer 4", "transcript": "...", "error": null},
+    {"correct_choice": 3, "response": "The correct answer is 2.", "transcript": "...", "error": null}
+  ]
+}

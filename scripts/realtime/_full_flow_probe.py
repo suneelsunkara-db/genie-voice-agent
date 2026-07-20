@@ -14,7 +14,7 @@ import wave
 
 import websockets
 
-WS_URL = "ws://localhost:8001/v1/realtime/voice"
+WS_URL = "ws://localhost:8001/v1/speech-llm-toolassist-speech"
 FRAME_BYTES = 1280  # 40ms @ 16kHz s16le
 
 

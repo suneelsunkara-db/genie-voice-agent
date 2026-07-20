@@ -34,7 +34,7 @@ from _realtime_config import databricks, realtime_voice, find_candidate  # noqa:
 from realtime_api.app import create_app  # noqa: E402
 from realtime_api.config import RealtimeSettings  # noqa: E402
 from realtime_api.services import DatabricksServing  # noqa: E402
-from realtime_api.session import VoicePipeline  # noqa: E402
+from realtime_api.pipelines import ServingBundle  # noqa: E402
 
 _PROMPTS = {
     "en-US": "What time is it right now in Bangkok?",
@@ -93,7 +93,7 @@ def _run_language(app, client, tts_endpoint, language: str) -> dict[str, Any]:
     pcm = _synthesize_16k_pcm(client, tts_endpoint, text, language)
     result: dict[str, Any] = {"language": language, "prompt": text, "input_pcm_bytes": len(pcm)}
 
-    with TestClient(app) as http, http.websocket_connect("/v1/realtime/voice") as ws:
+    with TestClient(app) as http, http.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
         ws.send_json({"type": "session.start", "language": language, "sample_rate_hz": 16_000})
         assert ws.receive_json()["type"] == "session.ready"
 
@@ -155,7 +155,7 @@ def main() -> None:
         tts_inference_timesteps=settings.tts_inference_timesteps,
         tts_cfg_value=settings.tts_cfg_value,
     )
-    app = create_app(settings=settings, pipeline_factory=lambda _s: VoicePipeline(stt=serving, llm=serving, tts=serving))
+    app = create_app(settings=settings, bundle_factory=lambda _s: ServingBundle(stt=serving, llm=serving, tts=serving))
 
     print(f"stt={settings.stt_endpoint}  llm={settings.llm_endpoint}  tts={settings.tts_endpoint}\n")
     for language in languages:

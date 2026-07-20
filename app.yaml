@@ -39,6 +39,9 @@ env:
     value: "partner_demo_catalog"
   - name: GENIE_LAKEBASE__INSTANCE
     value: "genie_voice_lakebase"
+  # Multilingual voice benchmark results (GET /realtime/v1/benchmarks reads summary.json).
+  - name: MLV_RESULTS_DIR
+    value: "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/multilingual_voice_benchmark"
   # ---- Values injected from declared app resources (see deploy_app.sh) ----
   - name: GENIE_DATABRICKS__SQL_WAREHOUSE_ID
     valueFrom: "sql-warehouse"

@@ -1,0 +1,10 @@
+{
+  "dataset": "ccfqa",
+  "language": "zh",
+  "latency_ms": {"stt_ms": 300, "llm_ms": 220, "tts_first_ms": 380, "client_ttfa_ms": 720, "total_ms": 2000},
+  "rows": [
+    {"reference": "北京", "response": "中国的首都是北京。", "transcript": "中国的首都是哪里", "error": null},
+    {"reference": "太阳", "response": "地球围绕太阳运转。", "transcript": "地球围绕什么运转", "error": null},
+    {"reference": "水", "response": "H2O 就是水。", "transcript": "h二o是什么", "error": null}
+  ]
+}

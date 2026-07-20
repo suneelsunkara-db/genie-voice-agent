@@ -7,9 +7,9 @@ from fastapi.testclient import TestClient
 
 from realtime_api.app import create_app
 from realtime_api.config import RealtimeSettings
-from realtime_api.contracts import AudioChunk, AudioResponse
-from realtime_api.session import VoicePipeline, VoiceSession
-from realtime_api.contracts import SessionStart
+from realtime_api.contracts import AudioChunk, AudioResponse, SessionStart
+from realtime_api.pipelines import ServingBundle
+from realtime_api.session import VoiceSession
 
 
 class FakeServices:
@@ -26,20 +26,34 @@ class FakeServices:
 
 
 def _settings() -> RealtimeSettings:
-    return RealtimeSettings(stt_endpoint="stt", llm_endpoint="llm", tts_endpoint="tts")
+    return RealtimeSettings(
+        stt_endpoint="stt",
+        llm_endpoint="llm",
+        tts_endpoint="tts",
+        supported_languages=("en",),
+        stt_languages=("en",),
+        tts_languages=("en",),
+    )
 
 
 def _app() -> TestClient:
     fake = FakeServices()
     app = create_app(
         settings=_settings(),
-        pipeline_factory=lambda _s: VoicePipeline(stt=fake, llm=fake, tts=fake),
+        bundle_factory=lambda _s: ServingBundle(stt=fake, llm=fake, tts=fake),
     )
     return TestClient(app)
 
 
 def _loud_frame(samples: int = 320, amplitude: int = 6000) -> bytes:
     return struct.pack("<" + "h" * samples, *([amplitude, -amplitude] * (samples // 2)))
+
+
+def _drive_turn(ws) -> None:
+    ws.send_bytes(_loud_frame())
+    assert ws.receive_json()["type"] == "speech.started"
+    ws.send_json({"type": "audio.end"})
+    assert ws.receive_json()["type"] == "turn.started"
 
 
 def test_healthz() -> None:
@@ -49,16 +63,32 @@ def test_healthz() -> None:
         assert response.json()["status"] == "ok"
 
 
-def test_websocket_processes_a_finalized_turn() -> None:
-    with _app() as client, client.websocket_connect("/v1/realtime/voice") as ws:
+def test_capabilities_endpoint() -> None:
+    with _app() as client:
+        response = client.get("/v1/capabilities")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["speech-to-text"]["path"] == "/v1/speech-to-text"
+        assert body["speech-llm-toolassist-speech"]["path"] == "/v1/speech-llm-toolassist-speech"
+        assert body["text-to-speech"]["path"] == "/v1/text-to-speech"
+
+
+def test_benchmarks_endpoint() -> None:
+    with _app() as client:
+        response = client.get("/v1/benchmarks")
+        assert response.status_code == 200
+        body = response.json()
+        assert "available" in body
+
+
+def test_speech_llm_toolassist_speech_processes_a_finalized_turn() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
         ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
-        assert ws.receive_json()["type"] == "session.ready"
+        ready = ws.receive_json()
+        assert ready["type"] == "session.ready"
+        assert ready["capability"] == "speech-llm-toolassist-speech"
 
-        ws.send_bytes(_loud_frame())
-        assert ws.receive_json()["type"] == "speech.started"
-
-        ws.send_json({"type": "audio.end"})
-        assert ws.receive_json()["type"] == "turn.started"
+        _drive_turn(ws)
 
         transcript = ws.receive_json()
         assert transcript["type"] == "transcript.final"
@@ -75,6 +105,41 @@ def test_websocket_processes_a_finalized_turn() -> None:
         assert audio["final"] is True
 
 
+def test_legacy_voice_alias_routes_to_speech_llm_toolassist_speech() -> None:
+    with _app() as client, client.websocket_connect("/v1/realtime/voice") as ws:
+        ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
+        ready = ws.receive_json()
+        assert ready["type"] == "session.ready"
+        assert ready["capability"] == "speech-llm-toolassist-speech"
+        _drive_turn(ws)
+        assert ws.receive_json()["type"] == "transcript.final"
+        assert ws.receive_json()["type"] == "response.text"
+        assert ws.receive_json()["type"] == "response.audio"
+
+
+def test_speech_to_text_emits_transcript_only() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-to-text") as ws:
+        ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
+        ready = ws.receive_json()
+        assert ready["capability"] == "speech-to-text"
+        _drive_turn(ws)
+        transcript = ws.receive_json()
+        assert transcript["type"] == "transcript.final"
+        assert transcript["text"] == "hello world"
+
+
+def test_text_to_speech_synthesize() -> None:
+    with _app() as client, client.websocket_connect("/v1/text-to-speech") as ws:
+        ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
+        ready = ws.receive_json()
+        assert ready["capability"] == "text-to-speech"
+        ws.send_json({"type": "synthesize", "text": "Hello there", "language": "en-US"})
+        assert ws.receive_json()["type"] == "turn.started"
+        audio = ws.receive_json()
+        assert audio["type"] == "response.audio"
+        assert audio["final"] is True
+
+
 class MultiSentenceServices(FakeServices):
     def respond(self, transcript: str, *, language: str) -> str:
         return "First sentence. Second sentence! Third one?"
@@ -84,19 +149,15 @@ def test_websocket_streams_one_audio_chunk_per_sentence() -> None:
     fake = MultiSentenceServices()
     app = create_app(
         settings=_settings(),
-        pipeline_factory=lambda _s: VoicePipeline(stt=fake, llm=fake, tts=fake),
+        bundle_factory=lambda _s: ServingBundle(stt=fake, llm=fake, tts=fake),
     )
-    with TestClient(app) as client, client.websocket_connect("/v1/realtime/voice") as ws:
+    with TestClient(app) as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
         ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
         assert ws.receive_json()["type"] == "session.ready"
         ws.send_json({"type": "audio.end"})
-        # No audio buffered -> empty_audio error, so drive a real turn instead.
         assert ws.receive_json()["code"] == "empty_audio"
 
-        ws.send_bytes(_loud_frame())
-        assert ws.receive_json()["type"] == "speech.started"
-        ws.send_json({"type": "audio.end"})
-        assert ws.receive_json()["type"] == "turn.started"
+        _drive_turn(ws)
         assert ws.receive_json()["type"] == "transcript.final"
         assert ws.receive_json()["type"] == "response.text"
 
@@ -118,15 +179,12 @@ def test_websocket_streams_pcm_audio_chunks_when_supported() -> None:
     fake = StreamingServices()
     app = create_app(
         settings=_settings(),
-        pipeline_factory=lambda _s: VoicePipeline(stt=fake, llm=fake, tts=fake),
+        bundle_factory=lambda _s: ServingBundle(stt=fake, llm=fake, tts=fake),
     )
-    with TestClient(app) as client, client.websocket_connect("/v1/realtime/voice") as ws:
+    with TestClient(app) as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
         ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
         assert ws.receive_json()["type"] == "session.ready"
-        ws.send_bytes(_loud_frame())
-        assert ws.receive_json()["type"] == "speech.started"
-        ws.send_json({"type": "audio.end"})
-        assert ws.receive_json()["type"] == "turn.started"
+        _drive_turn(ws)
         assert ws.receive_json()["type"] == "transcript.final"
         assert ws.receive_json()["type"] == "response.text"
 
@@ -135,7 +193,6 @@ def test_websocket_streams_pcm_audio_chunks_when_supported() -> None:
         assert all(c["mime_type"] == "audio/pcm" and c["encoding"] == "pcm_s16le" for c in chunks)
         assert [c["chunk_index"] for c in chunks] == [0, 1, 2]
         assert [c["final"] for c in chunks] == [False, False, True]
-        # First chunk carries the spoken text; later chunks omit it.
         assert chunks[0].get("text")
         assert "text" not in chunks[1]
 
@@ -184,7 +241,6 @@ def test_respond_runs_tool_calling_loop_with_temperature() -> None:
     assert text == "It's just past nine in Bangkok."
     assert client.calls[0]["temperature"] == 0.4
     assert client.calls[0]["tools"]
-    # The tool result was fed back into the follow-up call.
     assert any(m.get("role") == "tool" for m in client.calls[1]["messages"])
 
 
@@ -202,7 +258,7 @@ def test_respond_without_tools_returns_direct_text() -> None:
 
 
 def test_websocket_rejects_audio_before_session_start() -> None:
-    with _app() as client, client.websocket_connect("/v1/realtime/voice") as ws:
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
         ws.send_bytes(_loud_frame())
         error = ws.receive_json()
         assert error["type"] == "error"
@@ -217,7 +273,6 @@ def test_session_accepts_non_validation_language_tags() -> None:
 def test_voice_session_finalizes_after_vad_silence() -> None:
     session = VoiceSession(SessionStart.from_event({"language": "en-US", "sample_rate_hz": 16000}))
     session.add_audio(_loud_frame())
-    # Feed silence until the VAD silence threshold is exceeded.
     silence = struct.pack("<" + "h" * 320, *([0] * 320))
     for _ in range(60):
         session.add_audio(silence)

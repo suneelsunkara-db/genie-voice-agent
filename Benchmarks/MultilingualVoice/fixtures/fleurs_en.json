@@ -1,0 +1,31 @@
+{
+  "dataset": "fleurs",
+  "language": "en",
+  "latency_ms": {"stt_ms": 210, "llm_ms": 180, "tts_first_ms": 320, "client_ttfa_ms": 640, "total_ms": 1450},
+  "rows": [
+    {
+      "reference": "the quick brown fox jumps over the lazy dog",
+      "transcript": "the quick brown fox jumps over the lazy dog",
+      "response": "the quick brown fox jumps over the lazy dog",
+      "tts_audio_bytes": 48000,
+      "tts_roundtrip": {"spoken_text": "the quick brown fox jumps over the lazy dog", "reheard_text": "the quick brown fox jumps over the lazy dog"},
+      "error": null
+    },
+    {
+      "reference": "she sells sea shells by the sea shore",
+      "transcript": "she sells sea shells by the see shore",
+      "response": "she sells sea shells by the sea shore",
+      "tts_audio_bytes": 42000,
+      "tts_roundtrip": {"spoken_text": "she sells sea shells by the sea shore", "reheard_text": "she sells sea shells by the sea shore"},
+      "error": null
+    },
+    {
+      "reference": "artificial intelligence is transforming healthcare",
+      "transcript": "artificial intelligence is transforming health care",
+      "response": "artificial intelligence is transforming healthcare",
+      "tts_audio_bytes": 51000,
+      "tts_roundtrip": {"spoken_text": "artificial intelligence is transforming healthcare", "reheard_text": "artificial intelligence is transforming health care"},
+      "error": null
+    }
+  ]
+}

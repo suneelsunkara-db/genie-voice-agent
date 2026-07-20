@@ -43,10 +43,6 @@ class RealtimeSettings:
     llm_max_tokens: int = 512
     llm_tools_enabled: bool = True
     llm_max_tool_iterations: int = 3
-    # Verification mode: instead of answering, the assistant reports the detected
-    # language + verbatim transcript and speaks it back (to confirm STT/language
-    # ID). Toggle with VOICE_VERIFY_MODE=0/1.
-    verify_mode: bool = True
     # TTS latency/quality knobs forwarded to the VoxCPM agent per request.
     # 6 diffusion steps is the profiled sweet spot: full multilingual quality
     # (incl. Thai) at the lowest safe latency on GPU_MEDIUM.
@@ -55,6 +51,8 @@ class RealtimeSettings:
     # End-to-end supported languages (STT ∩ TTS) as BCP 47 primary subtags,
     # resolved from config. The UI reports these to the user.
     supported_languages: tuple[str, ...] = ()
+    stt_languages: tuple[str, ...] = ()
+    tts_languages: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "RealtimeSettings":
@@ -93,6 +91,8 @@ class RealtimeSettings:
             llm_max_tool_iterations=int(llm_defaults.get("max_tool_iterations", 3)),
             tts_inference_timesteps=int(tts_defaults.get("inference_timesteps", 6)),
             tts_cfg_value=float(tts_defaults.get("cfg_value", 2.0)),
+            stt_languages=tuple(_first_supported(rv.get("stt_candidates"))),
+            tts_languages=tuple(_first_supported(rv.get("tts_candidates"))),
             supported_languages=_supported_languages(rv),
         )
 
@@ -102,9 +102,6 @@ class RealtimeSettings:
         settings = cls.from_env() if os.getenv("VOICE_API_STT_ENDPOINT") else cls.from_config(config_dir)
         import dataclasses
 
-        verify = os.getenv("VOICE_VERIFY_MODE")
-        if verify is not None:
-            settings = dataclasses.replace(settings, verify_mode=verify == "1")
         barge = os.getenv("VOICE_ALLOW_BARGE_IN")
         if barge is not None:
             settings = dataclasses.replace(settings, allow_barge_in=barge == "1")
@@ -138,6 +135,61 @@ def databricks_profile(config_dir: str | Path | None = None) -> str | None:
     """Databricks CLI profile for SDK auth (config block, then env, else default)."""
     profile = (_load_merged(config_dir).get("databricks") or {}).get("profile")
     return profile or os.getenv("DATABRICKS_CONFIG_PROFILE") or None
+
+
+def config_dir_from_env() -> Path | None:
+    """Config directory when ``GENIE_CONFIG`` points at a yaml file (Databricks jobs/apps)."""
+    raw = os.getenv("GENIE_CONFIG")
+    if not raw:
+        return None
+    path = Path(raw)
+    return path.parent if path.is_file() else path
+
+
+def resolve_volume_path(template: str, config_dir: str | Path | None = None) -> str:
+    cfg = _load_merged(config_dir or config_dir_from_env())
+    db = cfg.get("databricks") or {}
+    vol = cfg.get("volume") or {}
+    return template.format(
+        catalog=db.get("catalog", ""),
+        schema=db.get("schema", ""),
+        batch_volume=vol.get("batch_name", "raw_batch_data"),
+        streaming_volume=vol.get("streaming_name", "raw_streaming_data"),
+    )
+
+
+def benchmark_results_dir(config_dir: str | Path | None = None) -> Path:
+    """UC Volume directory for multilingual voice benchmark artifacts."""
+    override = os.getenv("MLV_RESULTS_DIR")
+    if override:
+        return Path(override)
+    cfg = _load_merged(config_dir or config_dir_from_env())
+    template = str((cfg.get("volume") or {}).get("multilingual_voice_benchmark_path") or "").strip()
+    if not template:
+        raise RuntimeError("volume.multilingual_voice_benchmark_path is not configured")
+    return Path(resolve_volume_path(template, config_dir))
+
+
+def benchmark_summary_path(config_dir: str | Path | None = None) -> Path:
+    return benchmark_results_dir(config_dir) / "summary.json"
+
+
+def benchmark_api_host(config_dir: str | Path | None = None) -> str:
+    override = os.getenv("MLV_API_HOST")
+    if override:
+        return override.rstrip("/")
+    block = (_load_merged(config_dir or config_dir_from_env()).get("realtime_voice") or {}).get("benchmark") or {}
+    host = str(block.get("api_host") or "").strip()
+    if host:
+        return host.rstrip("/")
+    raise RuntimeError("Set MLV_API_HOST or realtime_voice.benchmark.api_host")
+
+
+def benchmark_api_prefix(config_dir: str | Path | None = None) -> str:
+    if os.getenv("MLV_API_PREFIX") is not None:
+        return os.getenv("MLV_API_PREFIX", "").strip("/")
+    block = (_load_merged(config_dir or config_dir_from_env()).get("realtime_voice") or {}).get("benchmark") or {}
+    return str(block.get("api_prefix") or "realtime").strip("/")
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,10 @@
+# Multilingual voice benchmark (STT + TTS + spoken QA) on the realtime API.
+datasets>=2.19.0
+huggingface_hub>=0.23.0
+numpy>=1.24
+soundfile>=0.12.1          # HF audio decoding backend
+librosa>=0.10.1            # resampling fallback for odd sample rates
+websockets>=12.0           # WebSocket transport to the live API
+requests>=2.31.0           # health check / auth token calls
+# Optional: GPT-judged CCFQA scoring (only needed with --judge gpt).
+openai>=1.30.0

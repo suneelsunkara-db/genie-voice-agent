@@ -404,7 +404,7 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
    so `deploy_app.sh` ships them alongside the contact-center cockpit without
    touching it. In the app the pipeline authenticates as the injected service
    principal (OAuth). Endpoints become:
-   - `WS /realtime/v1/realtime/voice`, `GET /realtime/v1/languages`
+   - `WS /realtime/v1/speech-to-text`, `WS /realtime/v1/speech-llm-toolassist-speech`, `WS /realtime/v1/text-to-speech`, `GET /realtime/v1/capabilities`, `GET /realtime/v1/languages`
    - Test UI: `https://<app-host>/realtime-test/` (auto-targets the `/realtime` mount)
 
    `deploy_app.sh` attaches the realtime STT/LLM/TTS serving endpoints (from the
@@ -427,9 +427,9 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
 - **LLM with tools + temperature** — the middle stage is a Databricks foundation-model
   chat endpoint (default `qwen3-next-80b`) that supports `temperature` and tool
   calling (a generic `get_current_time` tool is wired as an example).
-- **Verification mode** (`VOICE_VERIFY_MODE=1`, default on) — instead of answering,
-  the assistant echoes the verbatim transcript and detected language, for confirming
-  STT/language ID. Set `VOICE_VERIFY_MODE=0` for the normal assistant.
+- **Three WebSocket capabilities** — `speech-to-text` (STT only), `speech-llm-toolassist-speech`
+  (full dialog with LLM + tools + TTS), and `text-to-speech` (synthesis only). See
+  `GET /v1/capabilities` for paths and per-route language lists.
 - **Server-side VAD/endpointing + barge-in** — the API owns turn-taking; the UI never
   reimplements it. Barge-in is opt-in (`VOICE_ALLOW_BARGE_IN=1`, needs headphones/AEC).
 - **Per-endpoint latency** — the API reports `stt_ms`, `llm_ms`, and `tts_first_ms`
@@ -443,7 +443,7 @@ pip install -r realtime_api/requirements.txt
 export VOICE_API_STT_ENDPOINT=realtime_voice_stt_qwen3_asr_1_7b
 export VOICE_API_LLM_ENDPOINT=qwen3-next-80b
 export VOICE_API_TTS_ENDPOINT=realtime_voice_tts_voxcpm2
-python -m realtime_api.server            # ws://localhost:8001/v1/realtime/voice
+python -m realtime_api.server            # ws://localhost:8001/v1/speech-llm-toolassist-speech
 # PORT=9000 python -m realtime_api.server
 ```
 
@@ -482,7 +482,7 @@ STT→LLM→TTS orchestration live in the **API**.
 
 ## WebSocket protocol
 
-Connect to `WS /v1/realtime/voice`, send `session.start`, then binary mono
+Connect to `WS /v1/speech-llm-toolassist-speech` (or `WS /v1/speech-to-text` / `WS /v1/text-to-speech` for single-capability routes), send `session.start`, then binary mono
 `pcm_s16le` frames (8/16/24/48 kHz accepted; 16 kHz recommended). The service
 finalizes a turn automatically after configured speech silence or maximum duration;
 `audio.end` remains available for push-to-talk clients.

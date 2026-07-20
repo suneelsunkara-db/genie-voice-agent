@@ -106,8 +106,9 @@ def create_app() -> FastAPI:
 def _mount_realtime(app: FastAPI) -> None:
     """Additively mount the standalone Realtime Voice API under ``/realtime``.
 
-    This is fully isolated from the contact-center routes: it only exposes
-    ``/realtime/v1/realtime/voice`` (WebSocket) and ``/realtime/v1/languages``.
+    This is fully isolated from the contact-center routes: it exposes
+    ``/realtime/v1/speech-to-text``, ``/realtime/v1/speech-llm-toolassist-speech``,
+    ``/realtime/v1/text-to-speech``, and ``/realtime/v1/languages``.
     In the Databricks app the pipeline must authenticate as the injected service
     principal (OAuth), so we build the SDK serving client with ``profile=None``
     rather than the CLI profile from config. No-op (logged) if the realtime
@@ -116,12 +117,12 @@ def _mount_realtime(app: FastAPI) -> None:
     try:
         from realtime_api.app import create_app as create_realtime_app
         from realtime_api.config import RealtimeSettings
+        from realtime_api.pipelines import ServingBundle
         from realtime_api.services import DatabricksServing
-        from realtime_api.session import VoicePipeline
 
         rt_settings = RealtimeSettings.resolve()
 
-        def _factory(s: RealtimeSettings) -> VoicePipeline:
+        def _factory(s: RealtimeSettings) -> ServingBundle:
             serving = DatabricksServing.from_sdk(
                 stt_endpoint=s.stt_endpoint,
                 llm_endpoint=s.llm_endpoint,
@@ -134,9 +135,9 @@ def _mount_realtime(app: FastAPI) -> None:
                 tts_inference_timesteps=s.tts_inference_timesteps,
                 tts_cfg_value=s.tts_cfg_value,
             )
-            return VoicePipeline(stt=serving, llm=serving, tts=serving, verify_mode=s.verify_mode)
+            return ServingBundle(stt=serving, llm=serving, tts=serving)
 
-        app.mount("/realtime", create_realtime_app(settings=rt_settings, pipeline_factory=_factory))
+        app.mount("/realtime", create_realtime_app(settings=rt_settings, bundle_factory=_factory))
     except Exception as exc:  # noqa: BLE001
         print(f"[api-startup] realtime API mount skipped: {exc}")
 

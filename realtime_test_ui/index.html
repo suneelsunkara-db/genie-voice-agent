@@ -57,6 +57,17 @@
   .log { margin-top: 20px; font-size: 12px; color: var(--muted); white-space: pre-wrap;
     max-height: 160px; overflow: auto; border-top: 1px solid var(--border); padding-top: 10px; }
   .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .bench { margin-top: 24px; border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--panel); }
+  .bench h2 { font-size: 16px; margin: 0 0 4px; }
+  .bench .bench-sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .bench-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .bench-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; text-align: center; }
+  .bench-card .bv { font-size: 22px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .bench-card .bl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 4px; }
+  .bench-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .bench-table th, .bench-table td { border-bottom: 1px solid var(--border); padding: 8px 6px; text-align: left; vertical-align: top; }
+  .bench-table th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .bench-empty { color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -100,6 +111,14 @@
   </div>
 
   <div class="hint">Tip: click once to grant the mic (browsers require it), then just talk. When you pause (~1s) it replies — it won't cut in while you're mid-sentence. To interrupt its reply, keep talking for a moment. Use headphones so it doesn't hear its own voice.</div>
+
+  <section class="bench" id="benchPanel">
+    <h2>Multilingual voice benchmarks</h2>
+    <div class="bench-sub" id="benchSub">Loading benchmark results…</div>
+    <div class="bench-grid" id="benchGrid"></div>
+    <div id="benchRuns"></div>
+  </section>
+
   <div class="log" id="log"></div>
 </div>
 
@@ -126,6 +145,9 @@ const els = {
   srvTotal: document.getElementById("srvTotal"),
   srvNote: document.getElementById("srvNote"),
   langsLine: document.getElementById("langsLine"),
+  benchSub: document.getElementById("benchSub"),
+  benchGrid: document.getElementById("benchGrid"),
+  benchRuns: document.getElementById("benchRuns"),
 };
 
 // BCP 47 primary subtag -> human-readable name (for the supported-languages line).
@@ -325,9 +347,105 @@ const API_PREFIX = (
     .catch(() => { els.langsLine.textContent = "Supported languages load when you start a session."; });
 })();
 
+// Metric formatting. Rates (WER/CER, 0..1) render as percentages; accuracies
+// (0..100) render as plain percentages too. Lower is better for *_wer/*_cer.
+function benchFmtPct(v) {
+  if (v == null || Number.isNaN(v)) return "—";
+  const pct = v <= 1 ? v * 100 : v;
+  return (Math.round(pct * 10) / 10) + "%";
+}
+function benchFmtMs(v) {
+  if (v == null) return "—";
+  return v >= 1000 ? (v / 1000).toFixed(2) + " s" : Math.round(v) + " ms";
+}
+function benchCard(label, value) {
+  const el = document.createElement("div");
+  el.className = "bench-card";
+  el.innerHTML = `<div class="bv">${value}</div><div class="bl">${label}</div>`;
+  return el;
+}
+// The headline number per evaluator (with the direction that "good" points).
+function benchPrimary(run) {
+  const s = run.scores || {};
+  if (run.evaluator === "asr") return { label: "WER (↓)", value: benchFmtPct(s.wer) };
+  if (run.evaluator === "mcq") return { label: "Accuracy (↑)", value: benchFmtPct(s.acc) };
+  if (run.evaluator === "qa")
+    return { label: s.method === "gpt_judge" ? "GPT correct (↑)" : "Match acc (↑)", value: benchFmtPct(s.gpt_correct != null ? s.gpt_correct : s.match_acc) };
+  return { label: "Score", value: benchFmtPct(run.primary_score) };
+}
+const BENCH_METRIC_KEYS = ["wer", "cer", "acc", "parse_fail_rate", "gpt_correct", "match_acc", "tts_roundtrip_wer", "tts_roundtrip_cer", "tts_audio_rate"];
+function benchMetricStr(scores) {
+  return BENCH_METRIC_KEYS
+    .filter((k) => scores && scores[k] != null)
+    .map((k) => `${k}: ${benchFmtPct(scores[k])}`)
+    .join(" · ") || "—";
+}
+function renderBenchmarks(data) {
+  els.benchGrid.innerHTML = "";
+  els.benchRuns.innerHTML = "";
+  if (!data || !data.available) {
+    els.benchSub.textContent = (data && data.message) || "No benchmark results yet.";
+    return;
+  }
+  const runs = (data.runs && data.runs.length ? data.runs : Object.values(data.latest_by_key || {}));
+  const langs = data.languages || [];
+  const dsets = data.datasets || [];
+  els.benchSub.textContent =
+    `Updated ${data.generated_at || "—"} · ${dsets.join(", ") || "no datasets"} · ${langs.length} language(s)`;
+  if (!runs.length) {
+    els.benchRuns.innerHTML = '<div class="bench-empty">No completed runs in summary.json.</div>';
+    return;
+  }
+  // Headline cards: aggregate the three benchmark families + one latency figure.
+  const byEval = (name) => runs.filter((r) => r.evaluator === name);
+  const avg = (arr, f) => { const v = arr.map(f).filter((x) => typeof x === "number"); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const asr = byEval("asr"), mcq = byEval("mcq"), qa = byEval("qa");
+  els.benchGrid.appendChild(benchCard("FLEURS WER", benchFmtPct(avg(asr, (r) => r.scores && r.scores.wer))));
+  els.benchGrid.appendChild(benchCard("TTS round-trip WER", benchFmtPct(avg(asr, (r) => r.scores && r.scores.tts_roundtrip_wer))));
+  els.benchGrid.appendChild(benchCard("Belebele acc", benchFmtPct(avg(mcq, (r) => r.scores && r.scores.acc))));
+  els.benchGrid.appendChild(benchCard("CCFQA acc", benchFmtPct(avg(qa, (r) => r.scores && (r.scores.gpt_correct != null ? r.scores.gpt_correct : r.scores.match_acc)))));
+  els.benchGrid.appendChild(benchCard("Median TTFA", benchFmtMs(avg(runs, (r) => r.latency_ms && r.latency_ms.client_ttfa_ms))));
+
+  const table = document.createElement("table");
+  table.className = "bench-table";
+  table.innerHTML = `<thead><tr><th>Benchmark</th><th>Lang</th><th>Headline</th><th>Metrics</th><th>Latency</th><th>Samples</th></tr></thead>`;
+  const tbody = document.createElement("tbody");
+  runs
+    .slice()
+    .sort((a, b) => (a.dataset || "").localeCompare(b.dataset || "") || (a.language || "").localeCompare(b.language || ""))
+    .forEach((run) => {
+      const tr = document.createElement("tr");
+      const p = benchPrimary(run);
+      const l = run.latency_ms || {};
+      const latStr = ["stt_ms", "llm_ms", "tts_first_ms", "client_ttfa_ms"]
+        .filter((k) => l[k] != null)
+        .map((k) => `${k.replace("_ms", "")} ${benchFmtMs(l[k])}`)
+        .join(" · ") || "—";
+      tr.innerHTML =
+        `<td>${run.dataset}</td>` +
+        `<td>${run.language || "—"}</td>` +
+        `<td><b>${p.value}</b> <span style="color:var(--muted)">${p.label}</span></td>` +
+        `<td>${benchMetricStr(run.scores)}</td>` +
+        `<td>${latStr}</td>` +
+        `<td>${run.samples ?? "—"}${run.errors ? ` (${run.errors} err)` : ""}</td>`;
+      tbody.appendChild(tr);
+    });
+  table.appendChild(tbody);
+  els.benchRuns.appendChild(table);
+}
+(function loadBenchmarks() {
+  const proto = location.protocol === "https:" ? "https" : "http";
+  fetch(`${proto}://${API_HOST}${API_PREFIX}/v1/benchmarks`)
+    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then(renderBenchmarks)
+    .catch(() => {
+      els.benchSub.textContent = "Could not load benchmark results from the realtime API.";
+    });
+})();
+
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${API_HOST}${API_PREFIX}/v1/realtime/voice`);
+  ws = new WebSocket(`${proto}://${API_HOST}${API_PREFIX}/v1/speech-llm-toolassist-speech`);
   ws.binaryType = "arraybuffer";
   setStatus("Connecting…");
   ws.onopen = () => {

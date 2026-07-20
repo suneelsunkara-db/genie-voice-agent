@@ -1,6 +1,6 @@
 """Run the realtime voice API (backend only; the UI is a separate app).
 
-    python -m realtime_api.server           # ws://localhost:8001/v1/realtime/voice
+    python -m realtime_api.server           # ws://localhost:8001/v1/speech-llm-toolassist-speech
     PORT=9000 python -m realtime_api.server
 
 The browser client lives in ``realtime_test_ui/`` and connects over the WebSocket;
@@ -16,12 +16,12 @@ import os
 
 from .app import create_app
 from .config import RealtimeSettings, databricks_profile
+from .pipelines import ServingBundle
 from .services import DatabricksServing
-from .session import VoicePipeline
 
 
-def _pipeline_factory(profile: str | None):
-    def factory(settings: RealtimeSettings) -> VoicePipeline:
+def _bundle_factory(profile: str | None):
+    def factory(settings: RealtimeSettings) -> ServingBundle:
         serving = DatabricksServing.from_sdk(
             stt_endpoint=settings.stt_endpoint,
             llm_endpoint=settings.llm_endpoint,
@@ -34,7 +34,7 @@ def _pipeline_factory(profile: str | None):
             tts_inference_timesteps=settings.tts_inference_timesteps,
             tts_cfg_value=settings.tts_cfg_value,
         )
-        return VoicePipeline(stt=serving, llm=serving, tts=serving, verify_mode=settings.verify_mode)
+        return ServingBundle(stt=serving, llm=serving, tts=serving)
 
     return factory
 
@@ -43,7 +43,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s
 logging.getLogger("realtime_voice").setLevel(logging.INFO)
 
 settings = RealtimeSettings.resolve()
-app = create_app(settings=settings, pipeline_factory=_pipeline_factory(databricks_profile()))
+app = create_app(settings=settings, bundle_factory=_bundle_factory(databricks_profile()))
 
 
 if __name__ == "__main__":

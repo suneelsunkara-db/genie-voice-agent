@@ -47,6 +47,8 @@ volume:
   audio_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/audio"
   transcript_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/transcripts"
   checkpoint_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/_pipeline_state" # Auto Loader checkpoints/schema (OUTSIDE raw_stt)
+  # Multilingual voice benchmark outputs (summary.json, issues.jsonl, optional per-lang rows).
+  multilingual_voice_benchmark_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/multilingual_voice_benchmark"
 
 # UC analytics tables (created in {catalog}.{schema}). Lakebase is the source
 # and serving store; job tasks derive governed analytics from Lakebase CDF history
@@ -219,6 +221,11 @@ realtime_voice:
   tts_defaults:
     inference_timesteps: 6
     cfg_value: 2.0
+  # Multilingual voice benchmark job targets this app's realtime WebSocket API and
+  # writes scores to ``volume.multilingual_voice_benchmark_path``.
+  benchmark:
+    api_host: ""          # e.g. https://genie-voice-agent-<ws-id>.aws.databricksapps.com
+    api_prefix: realtime  # mounted under /realtime on the Databricks app
   serving:
     workload_type: GPU_MEDIUM
     workload_size: Small
@@ -257,7 +264,7 @@ realtime_voice:
       # coded `fil` so it intersects Qwen3-ASR's Filipino tag.
       supported_languages:
         [ar, my, zh, da, nl, en, fi, fr, de, el, he, hi, id, it, ja, km, ko,
-         lo, ms, no, pl, pt, ru, es, sw, sv, fil, th, tr, vi]
+         lo, ms, "no", pl, pt, ru, es, sw, sv, fil, th, tr, vi]
       initial_validation_languages: [en-US, th-TH, id-ID, zh-CN]
 
 # Vendor API keys for live STT/TTS (deployment: live).
