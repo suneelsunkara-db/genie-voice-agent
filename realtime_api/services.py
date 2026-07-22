@@ -10,10 +10,19 @@ from __future__ import annotations
 import base64
 import datetime
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Iterator, Protocol
 
 from .contracts import AudioChunk, AudioResponse
+
+# Number of STT warm-up passes fired at startup. A cold GPU replica's warm-up
+# spans several inferences, so >1 pass reliably lands the first real turn on the
+# fast path. Override with GENIE_REALTIME_STT_WARMUP_PASSES.
+try:
+    _STT_WARMUP_PASSES = max(1, int(os.getenv("GENIE_REALTIME_STT_WARMUP_PASSES", "3")))
+except ValueError:
+    _STT_WARMUP_PASSES = 3
 
 # Generic, domain-agnostic tool set for the voice assistant. Kept business-free
 # on purpose (new API/UI): a single get_current_time tool is enough to exercise
@@ -184,6 +193,46 @@ class DatabricksServing:
             tts_inference_timesteps=tts_inference_timesteps,
             tts_cfg_value=tts_cfg_value,
         )
+
+    def warmup(self) -> dict[str, Any]:
+        """Best-effort priming of the STT/LLM/TTS serving replicas.
+
+        The GPU replicas pay a one-time warm-up (CUDA/kernel init, first forward
+        pass) on their first inference after (re)deploy or scale-up. Firing one
+        tiny request per endpoint at app startup moves that cost off the first
+        *real* user turn (which otherwise shows up as an inflated STT/LLM/TTS time
+        in the UI). Each ping is independently guarded — a slow or unreachable
+        endpoint degrades warm-up, it never breaks startup.
+        """
+        import time
+
+        results: dict[str, Any] = {}
+
+        def _timed(name: str, fn) -> None:
+            started = time.perf_counter()
+            try:
+                fn()
+                results[name] = {"ok": True, "ms": round((time.perf_counter() - started) * 1000)}
+            except Exception as exc:  # noqa: BLE001
+                results[name] = {
+                    "ok": False,
+                    "ms": round((time.perf_counter() - started) * 1000),
+                    "error": str(exc),
+                }
+
+        # 0.3 s of silence @16 kHz s16le: runs the ASR encoder + a decode step
+        # (empty transcript) to warm the replica without needing real speech.
+        # A freshly (re)deployed GPU replica's warm-up curve spans several
+        # inferences (kernel autotune / graph capture), not just one — observed
+        # ~24s then ~16s then ~1.5s. So drive STT a few passes to push through it,
+        # leaving the first real user turn on the fast path. Off-thread, so the
+        # extra passes never delay startup/readiness.
+        silence = b"\x00\x00" * 4800
+        for i in range(_STT_WARMUP_PASSES):
+            _timed(f"stt{i + 1}", lambda: self.transcribe(silence, language=None, sample_rate_hz=16_000))
+        _timed("llm", lambda: self.respond("hi", language="en"))
+        _timed("tts", lambda: self.synthesize("Hello.", language="en"))
+        return results
 
     def _predict(self, endpoint: str, *, text: str, custom_inputs: dict[str, Any]) -> dict[str, Any]:
         response = self.client.predict(

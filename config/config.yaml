@@ -32,7 +32,7 @@ databricks:
   catalog: "<your-catalog>"             # existing catalog (not created by us)
   create_catalog: false     # never CREATE CATALOG; we use an existing one
   schema: genie_voice_contact_center        # our schema inside the catalog
-  sql_warehouse_id: "<your-sql-warehouse-id>"      # REQUIRED: set for bootstrap / table load / Genie
+  sql_warehouse_id: "d0a0a25efd015c58"      # REQUIRED: bootstrap / table load / Genie / benchmark Delta reads
   # Genie space is created/resolved dynamically by NAME (no hardcoded id).
   genie_space_name: "Genie Voice - Contact Center"
 

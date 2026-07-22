@@ -2,35 +2,76 @@
 from __future__ import annotations
 
 import array
-import json
+import asyncio
+import logging
 import math
 import os
+import threading
+import time
 import wave
 from pathlib import Path
-from typing import Callable
+from typing import Awaitable, Callable
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
+from .benchmarks import load_benchmarks
 from .capabilities import LEGACY_VOICE_PATH, SPEECH_LLM_TOOLASSIST_SPEECH
-from .config import RealtimeSettings, benchmark_summary_path, config_dir_from_env
+from .config import RealtimeSettings
 from .pipelines import ServingBundle
 from .services import DatabricksServing
 from .ws.handler import ROUTES, capabilities_payload, make_ws_handler
+
+logger = logging.getLogger("realtime_voice")
 
 # When VOICE_DEBUG_AUDIO=1, save each finalized turn's PCM to a WAV for inspection.
 _DEBUG_AUDIO = os.getenv("VOICE_DEBUG_AUDIO") == "1"
 _DEBUG_DIR = Path(os.getenv("VOICE_DEBUG_DIR", "/tmp/realtime_audio"))
 
+# Set GENIE_REALTIME_WARMUP=0 to disable startup priming of the serving replicas.
+_WARMUP_ENABLED = os.getenv("GENIE_REALTIME_WARMUP", "1") != "0"
 
-def _benchmark_summary_file() -> Path:
-    try:
-        return benchmark_summary_path(config_dir_from_env())
-    except Exception:
-        override = os.getenv("MLV_RESULTS_DIR")
-        if override:
-            return Path(override) / "summary.json"
-        raise
+
+def warm_serving(
+    settings: RealtimeSettings,
+    bundle_factory: Callable[[RealtimeSettings], "ServingBundle | Awaitable[ServingBundle]"],
+) -> None:
+    """Prime the STT/LLM/TTS replicas off-thread so the first user turn is warm.
+
+    Called from app startup. Builds one bundle and fires ``warmup()`` on a daemon
+    thread so neither startup nor readiness is delayed. No-op when disabled, when
+    the factory is async (the warm path only supports sync factories), or when the
+    bundle's services don't expose ``warmup`` (e.g. test doubles).
+    """
+    if not _WARMUP_ENABLED:
+        return
+
+    def _work() -> None:
+        try:
+            bundle = bundle_factory(settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("realtime warmup: bundle build failed: %s", exc)
+            return
+        if asyncio.iscoroutine(bundle):
+            bundle.close()  # can't drive an async factory from this thread
+            return
+        warmup = getattr(getattr(bundle, "stt", None), "warmup", None)
+        if not callable(warmup):
+            return
+        started = time.perf_counter()
+        try:
+            results = warmup()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("realtime warmup failed: %s", exc)
+            return
+        logger.info(
+            "realtime warmup complete in %.1fs: %s",
+            time.perf_counter() - started,
+            results,
+        )
+
+    threading.Thread(target=_work, daemon=True, name="realtime-warm").start()
 
 
 def _audio_stats(audio: bytes, sample_rate_hz: int) -> dict:
@@ -75,6 +116,14 @@ def create_app(
         allow_headers=["*"],
     )
 
+    @app.on_event("startup")
+    async def _warmup_serving() -> None:
+        # Fires when this app runs standalone (``python -m realtime_api.server``).
+        # When mounted under the main API (Databricks Apps / start_app.sh),
+        # Starlette does NOT run a mounted sub-app's startup events, so the parent
+        # triggers warm-up itself via ``warm_serving`` (see api/app/main.py).
+        warm_serving(settings, bundle_factory)
+
     @app.get("/healthz")
     async def healthz() -> dict:
         return {"status": "ok", "service": "realtime-voice-api"}
@@ -91,35 +140,15 @@ def create_app(
         return capabilities_payload(settings)
 
     @app.get("/v1/benchmarks")
-    async def benchmarks() -> dict:
-        """Latest multilingual voice scores from the UC Volume benchmark path.
+    async def benchmarks(run_id: str | None = None) -> dict:
+        """Latest multilingual voice scores, read straight from the Delta tables.
 
-        Populated by ``Benchmarks/MultilingualVoice/run_benchmark.py`` (Databricks
-        job or ``eval.sh``): FLEURS STT + TTS round-trip, 2M-Belebele MCQ, and
-        CCFQA spoken QA, plus per-stage latency, all measured on this API.
+        Source of truth is ``{catalog}.{schema}.benchmark_runs`` (written by the
+        Databricks job / ``eval.sh``): FLEURS STT + TTS round-trip, 2M-Belebele MCQ,
+        and CCFQA spoken QA, plus per-stage latency, all measured on this API.
+        Returns the latest ``run_id`` unless one is passed explicitly.
         """
-        try:
-            summary_path = _benchmark_summary_file()
-        except Exception:
-            return {
-                "available": False,
-                "message": (
-                    "No benchmark results directory configured. Set "
-                    "volume.multilingual_voice_benchmark_path or MLV_RESULTS_DIR."
-                ),
-            }
-        if not summary_path.exists():
-            return {
-                "available": False,
-                "message": (
-                    "No benchmark summary found. Submit the multilingual voice "
-                    "benchmark Databricks job (Benchmarks/MultilingualVoice/eval.sh)."
-                ),
-            }
-        payload = json.loads(summary_path.read_text(encoding="utf-8"))
-        payload["available"] = True
-        payload["summary_path"] = str(summary_path)
-        return payload
+        return await run_in_threadpool(load_benchmarks, run_id)
 
     def _on_turn_audio(audio: bytes, turn_id: int, sample_rate_hz: int, session_id: str) -> None:
         if not _DEBUG_AUDIO:

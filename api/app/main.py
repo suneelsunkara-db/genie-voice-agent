@@ -5,11 +5,21 @@ All settings (host, port, CORS) come from config. Run:
 """
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
+
+# The standalone ``realtime_api`` package lives at the repo root (not pip-installed).
+# uvicorn is launched with cwd=api/ (start_app.sh), so add the repo root to the
+# import path here; otherwise ``import realtime_api`` fails and the /realtime mount
+# is silently skipped, falling through to the SPA catch-all.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from genie_voice.config import get_settings
@@ -109,25 +119,39 @@ def _mount_realtime(app: FastAPI) -> None:
     This is fully isolated from the contact-center routes: it exposes
     ``/realtime/v1/speech-to-text``, ``/realtime/v1/speech-llm-toolassist-speech``,
     ``/realtime/v1/text-to-speech``, and ``/realtime/v1/languages``.
-    In the Databricks app the pipeline must authenticate as the injected service
-    principal (OAuth), so we build the SDK serving client with ``profile=None``
-    rather than the CLI profile from config. No-op (logged) if the realtime
-    package or its config is unavailable, so the main app still boots.
+    Auth differs by environment: on Databricks Apps the injected service
+    principal creds (``DATABRICKS_CLIENT_ID``/``_SECRET`` + host) are picked up
+    with ``profile=None``; locally there is no injected SP and ``~/.databrickscfg``
+    may hold several profiles for the same host, so ``profile=None`` makes the SDK
+    raise "Use --profile" and the WS handshake fails. We therefore use the
+    configured CLI profile locally and ``profile=None`` only when app SP creds are
+    present. No-op (logged) if the realtime package/config is unavailable.
     """
     try:
         from realtime_api.app import create_app as create_realtime_app
-        from realtime_api.config import RealtimeSettings
+        from realtime_api.app import warm_serving
+        from realtime_api.config import RealtimeSettings, databricks_profile
         from realtime_api.pipelines import ServingBundle
         from realtime_api.services import DatabricksServing
 
         rt_settings = RealtimeSettings.resolve()
+
+        def _serving_profile() -> str | None:
+            # Databricks Apps inject SP OAuth creds via env -> no CLI profile.
+            if os.getenv("DATABRICKS_CLIENT_ID") or os.getenv("DATABRICKS_APP_NAME"):
+                return None
+            profile = databricks_profile()
+            # Ignore an unfilled placeholder like "<your-databricks-profile>".
+            if not profile or profile.startswith("<"):
+                return None
+            return profile
 
         def _factory(s: RealtimeSettings) -> ServingBundle:
             serving = DatabricksServing.from_sdk(
                 stt_endpoint=s.stt_endpoint,
                 llm_endpoint=s.llm_endpoint,
                 tts_endpoint=s.tts_endpoint,
-                profile=None,  # in-app: use the injected SP OAuth creds, not a CLI profile
+                profile=_serving_profile(),  # CLI profile locally; SP OAuth in-app
                 llm_temperature=s.llm_temperature,
                 llm_max_tokens=s.llm_max_tokens,
                 llm_tools_enabled=s.llm_tools_enabled,
@@ -138,6 +162,15 @@ def _mount_realtime(app: FastAPI) -> None:
             return ServingBundle(stt=serving, llm=serving, tts=serving)
 
         app.mount("/realtime", create_realtime_app(settings=rt_settings, bundle_factory=_factory))
+
+        @app.on_event("startup")
+        def _warm_realtime_serving() -> None:
+            # Mounted sub-apps don't get their own startup events from Starlette,
+            # so prime the STT/LLM/TTS replicas from the parent's startup. This is
+            # the path that runs both locally (start_app.sh) and on Databricks
+            # Apps, so the first browser voice turn is never the one paying the
+            # replica warm-up. Off-thread — never delays readiness.
+            warm_serving(rt_settings, _factory)
     except Exception as exc:  # noqa: BLE001
         print(f"[api-startup] realtime API mount skipped: {exc}")
 
@@ -150,6 +183,15 @@ def _mount_realtime_test_ui(app: FastAPI) -> None:
     """
     ui_dir = Path(__file__).resolve().parents[2] / "realtime_test_ui"
     if ui_dir.is_dir():
+        # A bare "/realtime-test" (no trailing slash) is NOT matched by the Mount
+        # below, so without this it falls through to the SPA catch-all in
+        # _mount_frontend and serves the contact-center app instead of the test
+        # client. Registered before the catch-all (this runs before
+        # _mount_frontend), so typing the URL lands on the test UI.
+        @app.get("/realtime-test", include_in_schema=False)
+        def _realtime_test_index() -> RedirectResponse:
+            return RedirectResponse(url="/realtime-test/")
+
         app.mount("/realtime-test", StaticFiles(directory=ui_dir, html=True), name="realtime-test")
 
 

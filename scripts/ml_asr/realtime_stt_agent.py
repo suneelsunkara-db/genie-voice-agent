@@ -115,15 +115,25 @@ class RealtimeSTTAgent(ResponsesAgent):
         requested_language = ci.get("language")
         sample_rate_hz = int(ci.get("sample_rate_hz") or 16_000)
 
-        # Optional per-request ceiling (per audio chunk). Stored on the model and
-        # read by transcribe()'s generate() call, so it applies to this call.
-        max_new_tokens = ci.get("max_new_tokens")
-        if max_new_tokens is not None:
-            self.model.max_new_tokens = int(max_new_tokens)
+        # Optional per-request ceiling (per audio chunk). ``max_new_tokens`` lives
+        # on the shared model object read by transcribe()'s generate() call, so an
+        # override MUST be scoped to this request only — otherwise it leaks onto
+        # the shared replica and silently changes the cap for every later caller
+        # (e.g. a benchmark's long-passage override bleeding into realtime turns).
+        # Set-and-restore keeps the endpoint default (_DEFAULT_MAX_NEW_TOKENS)
+        # steady between requests.
+        override = ci.get("max_new_tokens")
+        previous_max_new_tokens = getattr(self.model, "max_new_tokens", _DEFAULT_MAX_NEW_TOKENS)
+        if override is not None:
+            self.model.max_new_tokens = int(override)
 
         samples, sample_rate = _decode_audio(base64.b64decode(audio_b64), sample_rate_hz)
         forced = _forced_language(requested_language)
-        results = self.model.transcribe(audio=(samples, sample_rate), language=forced)
+        try:
+            results = self.model.transcribe(audio=(samples, sample_rate), language=forced)
+        finally:
+            if override is not None:
+                self.model.max_new_tokens = previous_max_new_tokens
         transcript, detected = _first_result(results)
 
         return ResponsesAgentResponse(

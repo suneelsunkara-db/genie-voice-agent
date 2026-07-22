@@ -137,6 +137,33 @@ def databricks_profile(config_dir: str | Path | None = None) -> str | None:
     return profile or os.getenv("DATABRICKS_CONFIG_PROFILE") or None
 
 
+def _databricks_block(config_dir: str | Path | None = None) -> dict[str, Any]:
+    return _load_merged(config_dir or config_dir_from_env()).get("databricks") or {}
+
+
+def delta_catalog(config_dir: str | Path | None = None) -> str:
+    """UC catalog holding the benchmark result tables (databricks.catalog)."""
+    return str(_databricks_block(config_dir).get("catalog") or "").strip()
+
+
+def delta_schema(config_dir: str | Path | None = None) -> str:
+    """UC schema holding the benchmark result tables (databricks.schema)."""
+    return str(_databricks_block(config_dir).get("schema") or "").strip()
+
+
+def sql_warehouse_id(config_dir: str | Path | None = None) -> str:
+    """SQL warehouse used to query the benchmark Delta tables.
+
+    Env wins so Databricks Apps can inject it (``GENIE_DATABRICKS__SQL_WAREHOUSE_ID``
+    from the attached ``sql-warehouse`` resource); otherwise the merged config.
+    """
+    for var in ("GENIE_DATABRICKS__SQL_WAREHOUSE_ID", "DATABRICKS_SQL_WAREHOUSE_ID"):
+        value = os.getenv(var)
+        if value and value.strip():
+            return value.strip()
+    return str(_databricks_block(config_dir).get("sql_warehouse_id") or "").strip()
+
+
 def config_dir_from_env() -> Path | None:
     """Config directory when ``GENIE_CONFIG`` points at a yaml file (Databricks jobs/apps)."""
     raw = os.getenv("GENIE_CONFIG")
