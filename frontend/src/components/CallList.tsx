@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import {
   AccountFacts,
   api,
@@ -15,16 +15,14 @@ import {
 import { WS_BASE_URL } from "../config";
 import { recommend } from "../guidance";
 import {
-  isSpeechCaptionSupported,
-  MicRecordingSession,
-  MicStreamSession,
-  speechRecognitionLanguage,
-  SpeechCaptionSession,
-  startMicRecording,
-  startMicStream,
-  startSpeechCaption,
   VoiceUiState,
 } from "../lib/micStream";
+import {
+  AudioPlaybackQueue,
+  decodePcmChunk,
+  RealtimeVoiceSession,
+  startRealtimeVoice,
+} from "../lib/realtimeVoice";
 import {
   localizedValue,
   localizeResolutionNote,
@@ -154,6 +152,7 @@ export function CockpitSession({
   const [assistMeta, setAssistMeta] = useState<LiveNudge | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>({ phase: "idle" });
+  const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
   const availableLanguages =
     languageOptions && languageOptions.length > 0 ? languageOptions : INTERACTION_LANGUAGES;
   const language = selectedLanguage;
@@ -308,7 +307,12 @@ export function CockpitSession({
           )}
           {!hCompact && (
           <div className="sentient-kicker sentient-row-between">
-            <span>{copy.conversationStream}</span>
+            <span>
+              {copy.conversationStream}
+              {detectedLanguage && (
+                <span className="sentient-lang-badge" title="Detected from caller's speech"> · {detectedLanguage}</span>
+              )}
+            </span>
             <button className="sentient-btn-ghost sentient-btn-sm" onClick={resetScenario} disabled={resetBusy}>
               {resetBusy ? copy.resetting : copy.resetScenario}
             </button>
@@ -415,6 +419,14 @@ export function CockpitSession({
             onUpdateLastCustomerTurn={onUpdateLastCustomerTurn}
             onRemoveLastCustomerTurn={onRemoveLastCustomerTurn}
             onVoiceUiChange={setVoiceUi}
+            onLanguageDetected={(lang) => {
+              setDetectedLanguage(lang);
+              const mapped = lang.includes("-") ? lang : `${lang}-${lang.toUpperCase()}`;
+              if (availableLanguages.some((item) => item.code === mapped)) {
+                onLanguageChange(mapped as InteractionLanguage);
+              }
+            }}
+            onAccountFacts={(newFacts) => setFacts(newFacts)}
           />
           <AssistStatusPanel meta={assistMeta} language={language} />
     </div>
@@ -994,7 +1006,7 @@ function AssistStatusPanel({ meta, language }: { meta: LiveNudge | null; languag
 
 function LiveAssist({
   callId,
-  sttProvider,
+  customerId,
   language,
   compact = false,
   onNudge,
@@ -1002,6 +1014,8 @@ function LiveAssist({
   onUpdateLastCustomerTurn: _onUpdateLastCustomerTurn,
   onRemoveLastCustomerTurn: _onRemoveLastCustomerTurn,
   onVoiceUiChange,
+  onLanguageDetected,
+  onAccountFacts,
 }: {
   callId: string;
   customerId: string;
@@ -1013,23 +1027,112 @@ function LiveAssist({
   onUpdateLastCustomerTurn: (turn: LocalTurn) => void;
   onRemoveLastCustomerTurn: () => void;
   onVoiceUiChange: (state: VoiceUiState) => void;
+  onLanguageDetected?: (lang: string) => void;
+  onAccountFacts?: (facts: any) => void;
 }) {
   const copy = uiCopy(language);
   const [text, setText] = useState("");
-  const [speaker, setSpeaker] = useState<number>(1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
-  const micSessionRef = useRef<MicStreamSession | MicRecordingSession | null>(null);
-  const captionRef = useRef<SpeechCaptionSession | null>(null);
-  const voiceRef = useRef({ interim: "", level: 0.15 });
+  const [inCall, setInCall] = useState(false);
+  const rtSessionRef = useRef<RealtimeVoiceSession | null>(null);
+  const playbackRef = useRef<AudioPlaybackQueue | null>(null);
   const voicePhaseRef = useRef<VoiceUiState["phase"]>("idle");
-  const captionSupported = useMemo(() => isSpeechCaptionSupported(), []);
 
-  const applyAgentReply = (nudge: LiveNudge) => {
-    const reply = nudge.agent_reply?.trim();
-    if (!reply) return;
-    onLocalTurn({ text: reply, speaker: 0 });
+  useEffect(() => {
+    return () => {
+      rtSessionRef.current?.close();
+      rtSessionRef.current = null;
+      playbackRef.current?.close();
+      playbackRef.current = null;
+      voicePhaseRef.current = "idle";
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startVoice = async () => {
+    if (inCall || busy) return;
+    setErr(null);
+
+    try {
+      voicePhaseRef.current = "speaking";
+      onVoiceUiChange({ phase: "speaking", source: "mic", interimText: "", micLevel: 0.15 });
+
+      if (!playbackRef.current) {
+        playbackRef.current = new AudioPlaybackQueue(24_000);
+      }
+
+      const session = await startRealtimeVoice(WS_BASE_URL, callId, customerId, {
+        onLevel: (level) => {
+          if (voicePhaseRef.current === "speaking") {
+            onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: level });
+          }
+        },
+        onSessionReady: (_sessionId, lang) => {
+          if (lang && lang !== "auto") {
+            onLanguageDetected?.(lang);
+          }
+        },
+        onSpeechStarted: () => {
+          voicePhaseRef.current = "speaking";
+          onVoiceUiChange({ phase: "speaking", source: "mic", processingLabel: copy.listening });
+        },
+        onTranscript: (transcriptText, lang) => {
+          if (lang) {
+            onLanguageDetected?.(lang);
+          }
+          onLocalTurn({ text: transcriptText, speaker: 1, language: lang as InteractionLanguage || language });
+          voicePhaseRef.current = "agent_reply";
+          onVoiceUiChange({ phase: "agent_reply", source: "mic", processingLabel: copy.geniePreparing });
+        },
+        onResponseText: (responseText) => {
+          onLocalTurn({ text: responseText, speaker: 0 });
+        },
+        onResponseAudio: (pcmB64, sampleRate, final) => {
+          const { samples } = decodePcmChunk(pcmB64, sampleRate);
+          playbackRef.current?.enqueue(samples, sampleRate);
+          if (final) {
+            voicePhaseRef.current = "speaking";
+            onVoiceUiChange({ phase: "speaking", source: "mic", interimText: "", micLevel: 0.15 });
+          }
+        },
+        onToolCalled: (name, result) => {
+          if (name === "lookup_account" && result && typeof result === "object") {
+            onAccountFacts?.(result);
+          }
+          onNudge({ tool_name: name, tool_result: result } as unknown as LiveNudge);
+        },
+        onError: (code, message) => {
+          setErr(message);
+          if (code === "ws_closed") {
+            // Connection dropped — fully end the call
+            rtSessionRef.current = null;
+            playbackRef.current?.flush();
+            setInCall(false);
+            voicePhaseRef.current = "idle";
+            onVoiceUiChange({ phase: "idle" });
+          } else if (voicePhaseRef.current !== "idle") {
+            voicePhaseRef.current = "speaking";
+            onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
+          }
+        },
+      });
+      rtSessionRef.current = session;
+      setInCall(true);
+    } catch (e) {
+      voicePhaseRef.current = "idle";
+      onVoiceUiChange({ phase: "idle" });
+      setErr(e instanceof Error ? e.message : "Microphone access denied");
+    }
+  };
+
+  const endCall = () => {
+    rtSessionRef.current?.close();
+    rtSessionRef.current = null;
+    playbackRef.current?.flush();
+    setInCall(false);
+    voicePhaseRef.current = "idle";
+    onVoiceUiChange({ phase: "idle" });
   };
 
   const send = async () => {
@@ -1038,22 +1141,19 @@ function LiveAssist({
     setBusy(true);
     setErr(null);
     try {
-      onLocalTurn({ text: msg, speaker, language });
-      if (speaker === 1) {
-        onVoiceUiChange({
-          phase: "agent_reply",
-          source: "text",
-          processingLabel: copy.geniePreparing,
-        });
-      }
+      onLocalTurn({ text: msg, speaker: 1, language });
+      onVoiceUiChange({
+        phase: "agent_reply",
+        source: "text",
+        processingLabel: copy.geniePreparing,
+      });
 
-      const n = await api.sendUtterance(callId, msg, speaker, language);
+      const n = await api.sendUtterance(callId, msg, 1, language);
       onNudge(n);
 
-      if (speaker === 1) {
-        applyAgentReply(n);
-        onVoiceUiChange({ phase: "idle" });
-      }
+      const reply = n.agent_reply?.trim();
+      if (reply) onLocalTurn({ text: reply, speaker: 0 });
+      onVoiceUiChange({ phase: "idle" });
 
       setText("");
     } catch (e) {
@@ -1064,219 +1164,45 @@ function LiveAssist({
     }
   };
 
-  useEffect(() => {
-    return () => {
-      captionRef.current?.close();
-      captionRef.current = null;
-      micSessionRef.current?.close();
-      micSessionRef.current = null;
-      voicePhaseRef.current = "idle";
-      onVoiceUiChange({ phase: "idle" });
-    };
-  }, [onVoiceUiChange]);
-
-  const startMic = async () => {
-    if (recording || busy) return;
-    setErr(null);
-    try {
-      voiceRef.current = { interim: "", level: 0.15 };
-      voicePhaseRef.current = "speaking";
-      if (sttProvider === "databricks") {
-        const session = await startMicRecording((level) => {
-          voiceRef.current.level = level;
-          if (voicePhaseRef.current !== "speaking") return;
-          onVoiceUiChange({
-            phase: "speaking",
-            source: "mic",
-            interimText: voiceRef.current.interim,
-            micLevel: level,
-          });
-        });
-        micSessionRef.current = session;
-        // Best-effort on-device live caption so the audience can read along while
-        // the Databricks model produces the authoritative transcript on stop.
-        captionRef.current = startSpeechCaption(
-          (caption) => {
-            voiceRef.current.interim = caption;
-            if (voicePhaseRef.current !== "speaking") return;
-            onVoiceUiChange({
-              phase: "speaking",
-              source: "mic",
-              interimText: caption,
-              micLevel: voiceRef.current.level,
-            });
-          },
-          undefined,
-          speechRecognitionLanguage(language)
-        );
-        setRecording(true);
-        onVoiceUiChange({
-          phase: "speaking",
-          source: "mic",
-          interimText: "",
-          processingLabel: copy.listening,
-          micLevel: 0.15,
-        });
-        return;
-      }
-
-      const wsUrl = `${WS_BASE_URL}/calls/${callId}/mic-stream`;
-      const session = await startMicStream(
-        wsUrl,
-        (transcript) => {
-          if (transcript) voiceRef.current.interim = transcript;
-          if (voicePhaseRef.current !== "speaking") return;
-          onVoiceUiChange({
-            phase: "speaking",
-            source: "mic",
-            interimText: voiceRef.current.interim,
-            micLevel: voiceRef.current.level,
-          });
-        },
-        (level) => {
-          voiceRef.current.level = level;
-          if (voicePhaseRef.current !== "speaking") return;
-          onVoiceUiChange({
-            phase: "speaking",
-            source: "mic",
-            interimText: voiceRef.current.interim,
-            micLevel: level,
-          });
-        },
-        (message) => setErr(message),
-        speechRecognitionLanguage(language)
-      );
-      micSessionRef.current = session;
-      setRecording(true);
-      onVoiceUiChange({
-        phase: "speaking",
-        source: "mic",
-        interimText: "",
-          processingLabel: copy.listening,
-        micLevel: 0.15,
-      });
-    } catch (e) {
-      voicePhaseRef.current = "idle";
-      onVoiceUiChange({ phase: "idle" });
-      setErr(e instanceof Error ? e.message : copy.micAccessError);
-    }
-  };
-
-  const stopMic = async () => {
-    const session = micSessionRef.current;
-    if (!session || !recording) return;
-    setRecording(false);
-    setBusy(true);
-    voicePhaseRef.current = "transcribing";
-    onVoiceUiChange({
-      phase: "transcribing",
-      source: "mic",
-      interimText: voiceRef.current.interim,
-      processingLabel:
-        sttProvider === "databricks"
-          ? copy.processingDatabricks
-          : copy.processingDeepgram,
-    });
-    try {
-      if (sttProvider === "databricks") {
-        captionRef.current?.stop();
-        captionRef.current = null;
-        const recording = await (session as MicRecordingSession).stop();
-        micSessionRef.current = null;
-        voicePhaseRef.current = "agent_reply";
-        onVoiceUiChange({
-          phase: "agent_reply",
-          source: "mic",
-          interimText: voiceRef.current.interim,
-          processingLabel: copy.geniePreparing,
-        });
-        const n = await api.transcribeMic(
-          callId,
-          recording.audioBase64,
-          recording.mimeType,
-          1,
-          language,
-          voiceRef.current.interim
-        );
-        const textFromMic = String(n.transcript || "").trim();
-        if (!textFromMic) throw new Error(copy.noDatabricksTranscript);
-        // Authoritative text is Databricks ASR only — browser caption stays in voiceUi until idle.
-        onLocalTurn({ text: textFromMic, speaker: 1, language });
-        onNudge(n);
-        applyAgentReply(n);
-        voicePhaseRef.current = "idle";
-        onVoiceUiChange({ phase: "idle" });
-        return;
-      }
-
-      const textFromMic = (await (session as MicStreamSession).stop()).trim();
-      micSessionRef.current = null;
-      if (!textFromMic) throw new Error(copy.noDeepgramTranscript);
-      onLocalTurn({ text: textFromMic, speaker: 1, language });
-      voicePhaseRef.current = "agent_reply";
-      onVoiceUiChange({
-        phase: "agent_reply",
-        source: "mic",
-        processingLabel: copy.geniePreparing,
-      });
-      const n = await api.sendUtterance(callId, textFromMic, 1, language);
-      onNudge(n);
-      applyAgentReply(n);
-      voicePhaseRef.current = "idle";
-      onVoiceUiChange({ phase: "idle" });
-    } catch (e) {
-      captionRef.current?.close();
-      captionRef.current = null;
-      voicePhaseRef.current = "idle";
-      onVoiceUiChange({ phase: "idle" });
-      setErr(e instanceof Error ? e.message : copy.micTranscriptionFailed);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className={`sentient-compose${compact ? " sentient-compose-compact" : ""}`}>
       <div className="sentient-compose-row">
-        <select
-          value={speaker}
-          onChange={(e) => setSpeaker(Number(e.target.value))}
-          className="sentient-select sentient-select-inline"
-        >
-          <option value={1}>{copy.speakerCustomer}</option>
-          <option value={0}>{copy.speakerAgent}</option>
-        </select>
-        <input
-          className="sentient-input sentient-input-inline"
-          value={text}
-          placeholder={copy.utterancePlaceholder}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-        />
-        <div className="sentient-compose-actions">
-        <button className="sentient-btn" onClick={send} disabled={busy}>
-          {busy ? "…" : copy.send}
-        </button>
-        <button className="sentient-btn" onClick={recording ? () => void stopMic() : () => void startMic()} disabled={busy}>
-          {recording ? copy.stopMic : copy.mic}
-        </button>
-        </div>
+        {!inCall ? (
+          <button
+            className="sentient-btn sentient-btn-mic"
+            onClick={() => void startVoice()}
+            disabled={busy}
+          >
+            {copy.startCall}
+          </button>
+        ) : (
+          <button
+            className="sentient-btn sentient-btn-mic is-recording"
+            onClick={endCall}
+          >
+            {copy.endCall}
+          </button>
+        )}
+        {!inCall && (
+          <>
+            <input
+              className="sentient-input sentient-input-inline"
+              value={text}
+              placeholder={copy.utterancePlaceholder}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && send()}
+            />
+            <button className="sentient-btn" onClick={send} disabled={busy || !text.trim()}>
+              {busy ? "…" : copy.send}
+            </button>
+          </>
+        )}
+        {inCall && (
+          <span className="sentient-muted-text sentient-mic-hint">
+            Listening — speak naturally
+          </span>
+        )}
       </div>
-      {sttProvider === "databricks" && (
-        <div
-          className={`sentient-caption ${captionSupported ? "is-ok" : "is-off"}`}
-          title={
-            captionSupported
-              ? copy.captionAvailableTitle
-              : copy.captionUnavailableTitle
-          }
-        >
-          <span className="sentient-caption-dot" />
-          {captionSupported
-            ? copy.captionAvailable
-            : copy.captionUnavailable}
-        </div>
-      )}
       {err && <div className="sentient-alert">{err}</div>}
     </div>
   );

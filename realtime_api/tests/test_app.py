@@ -18,10 +18,10 @@ class FakeServices:
     def transcribe(self, audio: bytes, *, language: str | None, sample_rate_hz: int) -> tuple[str, str | None]:
         return "hello world", "en-US"
 
-    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
+    def respond(self, transcript: str, *, language: str, context: str | None = None, tool_ctx=None) -> str:
         return f"you said {transcript}"
 
-    def synthesize(self, text: str, *, language: str) -> AudioResponse:
+    def synthesize(self, text: str, *, language: str, reference_audio_b64: str | None = None) -> AudioResponse:
         return AudioResponse(audio=b"\x00\x01", mime_type="audio/wav", sample_rate_hz=24_000)
 
 
@@ -141,7 +141,7 @@ def test_text_to_speech_synthesize() -> None:
 
 
 class MultiSentenceServices(FakeServices):
-    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
+    def respond(self, transcript: str, *, language: str, context: str | None = None, tool_ctx=None) -> str:
         return "First sentence. Second sentence! Third one?"
 
 
@@ -154,8 +154,9 @@ def test_websocket_streams_one_audio_chunk_per_sentence() -> None:
     with TestClient(app) as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
         ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
         assert ws.receive_json()["type"] == "session.ready"
+        # A stray audio.end with nothing buffered is a no-op (persistent-call
+        # flow): it must not error or cancel, and a real turn still proceeds.
         ws.send_json({"type": "audio.end"})
-        assert ws.receive_json()["code"] == "empty_audio"
 
         _drive_turn(ws)
         assert ws.receive_json()["type"] == "transcript.final"
@@ -170,7 +171,7 @@ def test_websocket_streams_one_audio_chunk_per_sentence() -> None:
 class StreamingServices(FakeServices):
     """TTS that streams PCM chunks (mirrors the deployed predict_stream path)."""
 
-    def synthesize_stream(self, text: str, *, language: str):
+    def synthesize_stream(self, text: str, *, language: str, reference_audio_b64: str | None = None):
         for _ in range(3):
             yield AudioChunk(pcm=b"\x00\x01\x02\x03", sample_rate_hz=48_000)
 
@@ -313,7 +314,7 @@ def test_session_start_rejects_nonpositive_turn_override() -> None:
 class ContextEchoServices(FakeServices):
     """Echoes the grounding context so the assist route can be asserted on."""
 
-    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
+    def respond(self, transcript: str, *, language: str, context: str | None = None, tool_ctx=None) -> str:
         return f"ctx:{context}"
 
 

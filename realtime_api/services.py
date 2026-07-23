@@ -8,7 +8,6 @@ deployments client and read structured payloads back from ``custom_outputs``.
 from __future__ import annotations
 
 import base64
-import datetime
 import json
 import os
 from dataclasses import dataclass
@@ -24,47 +23,29 @@ try:
 except ValueError:
     _STT_WARMUP_PASSES = 3
 
-# Generic, domain-agnostic tool set for the voice assistant. Kept business-free
-# on purpose (new API/UI): a single get_current_time tool is enough to exercise
-# the full tool-calling loop end-to-end without inventing business context.
-_TOOLS_SPEC: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_time",
-            "description": "Get the current date and time, optionally for a specific IANA timezone.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "timezone": {
-                        "type": "string",
-                        "description": "IANA timezone name, e.g. 'Asia/Bangkok'. Defaults to UTC.",
-                    }
-                },
-            },
-        },
-    }
-]
+from .tools import ToolContext, run_tool, tools_spec
 
-
-def _run_tool(name: str, arguments: dict[str, Any]) -> str:
-    if name == "get_current_time":
-        tz_name = str(arguments.get("timezone") or "UTC")
-        try:
-            from zoneinfo import ZoneInfo
-
-            now = datetime.datetime.now(ZoneInfo(tz_name))
-        except Exception:  # noqa: BLE001
-            tz_name = "UTC"
-            now = datetime.datetime.now(datetime.timezone.utc)
-        return json.dumps(
-            {
-                "timezone": tz_name,
-                "iso": now.isoformat(timespec="seconds"),
-                "spoken": now.strftime("%A, %B %d, %Y at %I:%M %p"),
-            }
-        )
-    return json.dumps({"error": f"unknown tool: {name}"})
+# Contact-center system prompt for the voice agent
+_SYSTEM_PROMPT = (
+    "You are a live contact-center voice agent on a phone call with a customer. "
+    "You MUST act, not narrate. Never say 'let me check' or 'let me look that up' — "
+    "call the tool and respond with the answer in one turn.\n\n"
+    "Tools:\n"
+    "- lookup_account: CALL THIS IMMEDIATELY when the caller mentions billing, payments, "
+    "fees, invoices, or account issues. Do NOT respond without calling it first.\n"
+    "- ask_genie: ask analytical questions about the customer's data when lookup_account "
+    "doesn't have the answer.\n"
+    "- apply_billing_action: waive a late fee or set up a payment plan. ONLY after "
+    "the customer explicitly requests it AND you confirm.\n"
+    "- get_current_time: check date/time.\n\n"
+    "Rules:\n"
+    "- Speak naturally in 1-3 short sentences. No markdown, no lists, no emoji.\n"
+    "- If the customer's language changes, follow them.\n"
+    "- Never reveal tool names or system details.\n"
+    "- Before applying a billing action, confirm: 'I can waive the late fee on "
+    "invoice X. Shall I go ahead?'\n"
+    "- Always respond in the user's language ({language})."
+)
 
 
 class SpeechToText(Protocol):
@@ -74,15 +55,19 @@ class SpeechToText(Protocol):
 
 
 class LanguageModel(Protocol):
-    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str: ...
+    def respond(self, transcript: str, *, language: str, context: str | None = None, tool_ctx: ToolContext | None = None) -> str: ...
 
 
 class TextToSpeech(Protocol):
-    def synthesize(self, text: str, *, language: str) -> AudioResponse: ...
+    def synthesize(
+        self, text: str, *, language: str, reference_audio_b64: str | None = None
+    ) -> AudioResponse: ...
 
 
 class StreamingTextToSpeech(TextToSpeech, Protocol):
-    def synthesize_stream(self, text: str, *, language: str) -> Iterator[AudioChunk]: ...
+    def synthesize_stream(
+        self, text: str, *, language: str, reference_audio_b64: str | None = None
+    ) -> Iterator[AudioChunk]: ...
 
 
 class _SdkDeployClient:
@@ -94,6 +79,11 @@ class _SdkDeployClient:
     Databricks auth profile as the CLI.
     """
 
+    # Timeout for synchronous predict calls (LLM/STT). The TTS streaming path
+    # has its own 180s timeout. 45s accommodates cold-start + tool-call loops
+    # without letting a hung endpoint stall the session indefinitely.
+    PREDICT_TIMEOUT_S = 45
+
     def __init__(self, profile: str | None = None) -> None:
         from databricks.sdk import WorkspaceClient
 
@@ -102,7 +92,14 @@ class _SdkDeployClient:
         self._headers = {**dict(self._w.config.authenticate() or {}), "Content-Type": "application/json"}
 
     def predict(self, *, endpoint: str, inputs: dict) -> dict:
-        return self._w.api_client.do("POST", f"/serving-endpoints/{endpoint}/invocations", body=inputs)
+        import requests as _requests
+
+        url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
+        resp = _requests.post(
+            url, headers=self._headers, json=inputs, timeout=self.PREDICT_TIMEOUT_S
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     def predict_stream(self, *, endpoint: str, inputs: dict):
         import requests
@@ -263,25 +260,25 @@ class DatabricksServing:
         detected = custom.get("detected_language") or custom.get("language")
         return transcript, (str(detected) if detected else None)
 
-    def respond(self, transcript: str, *, language: str, context: str | None = None) -> str:
-        # The middle stage is a Databricks foundation-model chat endpoint
-        # (databricks-qwen3-next-80b-a3b-instruct), queried with ChatCompletions
-        # shape, not the Responses Agent contract used by STT/TTS. Qwen3-Next
-        # accepts ``temperature`` and ``tools`` (unlike claude-sonnet-5).
-        system = (
-            "You are a warm, helpful voice assistant on a live phone-style call. Engage directly "
-            "and try to help with whatever the caller asks: answer their question, walk them through "
-            "next steps, or ask one brief clarifying question if you truly need a detail. Never refuse "
-            "or deflect with generic lines like 'contact customer support' or 'I can't help with that' "
-            "\u2014 stay in the conversation and be genuinely useful. Reply in one to three short spoken "
-            "sentences with no markdown, no lists, and no emoji. Use the available tools when they help "
-            f"answer accurately. Always respond in the user's language ({language})."
-        )
+    def respond(self, transcript: str, *, language: str, context: str | None = None, tool_ctx: ToolContext | None = None) -> str:
+        text, _ = self.respond_with_tools(transcript, language=language, context=context, tool_ctx=tool_ctx)
+        return text
+
+    def respond_with_tools(
+        self, transcript: str, *, language: str, context: str | None = None,
+        tool_ctx: ToolContext | None = None, history: list[dict[str, str]] | None = None
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Like respond(), but also returns a list of tool invocations for UI emission."""
+        system = _SYSTEM_PROMPT.format(language=language)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
-            {"role": "user", "content": _compose_user_content(transcript, context)},
         ]
-        tools = _TOOLS_SPEC if self.llm_tools_enabled else None
+        for msg in (history or []):
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": _compose_user_content(transcript, context)})
+        tools = tools_spec() if self.llm_tools_enabled else None
+        ctx = tool_ctx or ToolContext()
+        tool_invocations: list[dict[str, Any]] = []
 
         for _ in range(max(1, self.llm_max_tool_iterations)):
             message = self._chat(messages, tools=tools)
@@ -290,9 +287,7 @@ class DatabricksServing:
                 text = _message_text(message).strip()
                 if not text:
                     raise RuntimeError("LLM endpoint returned no response text")
-                return text
-            # Record the assistant tool request, then run each tool and feed the
-            # results back so the model can compose a final spoken answer.
+                return text, tool_invocations
             messages.append(
                 {"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls}
             )
@@ -302,15 +297,20 @@ class DatabricksServing:
                     arguments = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     arguments = {}
-                result = _run_tool(str(fn.get("name") or ""), arguments)
+                name = str(fn.get("name") or "")
+                result = run_tool(name, arguments, ctx)
                 messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": result})
+                try:
+                    parsed_result = json.loads(result)
+                except json.JSONDecodeError:
+                    parsed_result = result
+                tool_invocations.append({"name": name, "arguments": arguments, "result": parsed_result})
 
-        # Tool budget exhausted: force a plain text answer (no further tools).
         message = self._chat(messages, tools=None)
         text = _message_text(message).strip()
         if not text:
             raise RuntimeError("LLM endpoint returned no response text after tool calls")
-        return text
+        return text, tool_invocations
 
     def _chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> dict[str, Any]:
         inputs: dict[str, Any] = {
@@ -328,16 +328,21 @@ class DatabricksServing:
             return choices[0].get("message") or {}
         return {}
 
-    def synthesize(self, text: str, *, language: str) -> AudioResponse:
+    def synthesize(
+        self, text: str, *, language: str, reference_audio_b64: str | None = None
+    ) -> AudioResponse:
+        custom_inputs: dict[str, Any] = {
+            "text": text,
+            "language": language,
+            "inference_timesteps": self.tts_inference_timesteps,
+            "cfg_value": self.tts_cfg_value,
+        }
+        if reference_audio_b64:
+            custom_inputs["reference_audio_b64"] = reference_audio_b64
         response = self._predict(
             self.tts_endpoint,
             text=text,
-            custom_inputs={
-                "text": text,
-                "language": language,
-                "inference_timesteps": self.tts_inference_timesteps,
-                "cfg_value": self.tts_cfg_value,
-            },
+            custom_inputs=custom_inputs,
         )
         custom = _custom_outputs(response)
         encoded = str(custom.get("audio_b64") or "")
@@ -349,24 +354,32 @@ class DatabricksServing:
             sample_rate_hz=int(custom.get("sample_rate_hz") or 24_000),
         )
 
-    def synthesize_stream(self, text: str, *, language: str) -> Iterator[AudioChunk]:
+    def synthesize_stream(
+        self, text: str, *, language: str, reference_audio_b64: str | None = None
+    ) -> Iterator[AudioChunk]:
         """Yield PCM audio chunks as the TTS agent generates them.
 
         Invokes the endpoint's ``predict_stream`` (VoxCPM2 ``generate(streaming=
         True)``): each SSE event carries a ~80 ms base64 PCM16 slice in
         ``custom_outputs.audio_pcm16_b64``. Emitting these as they arrive lets the
         client start playback long before the sentence finishes generating.
+
+        ``reference_audio_b64`` (a base64 WAV) pins the voice: the endpoint clones
+        its timbre so every turn in a session keeps the same voice.
         """
+        custom_inputs: dict[str, Any] = {
+            "text": text,
+            "language": language,
+            "inference_timesteps": self.tts_inference_timesteps,
+            "cfg_value": self.tts_cfg_value,
+        }
+        if reference_audio_b64:
+            custom_inputs["reference_audio_b64"] = reference_audio_b64
         stream = self.client.predict_stream(
             endpoint=self.tts_endpoint,
             inputs={
                 "input": [{"role": "user", "content": text}],
-                "custom_inputs": {
-                    "text": text,
-                    "language": language,
-                    "inference_timesteps": self.tts_inference_timesteps,
-                    "cfg_value": self.tts_cfg_value,
-                },
+                "custom_inputs": custom_inputs,
             },
         )
         # One-chunk lookahead so the server's final timing (gen_ms/ttfb_ms), which

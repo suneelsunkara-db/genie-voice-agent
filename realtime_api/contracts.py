@@ -79,18 +79,11 @@ class SessionStart:
     language: str
     sample_rate_hz: int
     encoding: Literal["pcm_s16le"] = "pcm_s16le"
-    # Optional per-session turn-endpointing overrides. When None the server's
-    # configured defaults apply (production live-mic behaviour is unchanged).
-    # Callers that manage turn boundaries explicitly (send audio then audio.end,
-    # e.g. a benchmark or push-to-talk client streaming a long pre-recorded
-    # utterance) raise ``max_turn_seconds`` and ``vad_silence_ms`` so VAD does not
-    # finalize the turn mid-stream.
     max_turn_seconds: int | None = None
     vad_silence_ms: int | None = None
-    # Optional textual grounding for the assist LLM, appended to the turn's user
-    # message (e.g. on-screen content, or an MCQ's question + options). Ignored by
-    # the pure STT and TTS routes.
     context: str | None = None
+    call_id: str | None = None
+    customer_id: str | None = None
 
     @classmethod
     def from_event(cls, payload: dict) -> "SessionStart":
@@ -111,6 +104,8 @@ class SessionStart:
             max_turn_seconds=_optional_positive_int(payload.get("max_turn_seconds"), "max_turn_seconds"),
             vad_silence_ms=_optional_positive_int(payload.get("vad_silence_ms"), "vad_silence_ms"),
             context=_optional_context(payload.get("context")),
+            call_id=_optional_str(payload.get("call_id")),
+            customer_id=_optional_str(payload.get("customer_id")),
         )
 
 
@@ -135,3 +130,10 @@ def _optional_context(value: object) -> str | None:
     if len(text) > _MAX_CONTEXT_CHARS:
         raise ValueError(f"context must be at most {_MAX_CONTEXT_CHARS} characters")
     return text
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None

@@ -1613,6 +1613,15 @@ html:has(.sentient-app) body {
   margin-bottom: 10px;
 }
 
+.sentient-lang-badge {
+  display: inline-block;
+  font-size: 0.8em;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sentient-accent, #6ee7b7);
+  opacity: 0.9;
+}
+
 .sentient-row-between {
   display: flex;
   justify-content: space-between;
@@ -1691,6 +1700,24 @@ html:has(.sentient-app) body {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.sentient-btn-mic {
+  min-width: 80px;
+  font-weight: 600;
+}
+.sentient-btn-mic.is-recording {
+  background: #e74c3c;
+  color: #fff;
+  animation: sentient-pulse 1.5s ease-in-out infinite;
+}
+@keyframes sentient-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.sentient-mic-hint {
+  font-size: 0.8rem;
+  opacity: 0.7;
 }
 
 .sentient-stat-grid {

@@ -7,10 +7,14 @@ audio is returned as base64 WAV in ``custom_outputs``:
     request:
       {
         "input": [{"role": "user", "content": "Hello there"}],
-        "custom_inputs": {"language": "en-US"}
+        "custom_inputs": {"language": "en-US",
+                          "reference_audio_b64": "<optional base64 wav>"}
       }
     response.custom_outputs:
       {"audio_b64": "<base64 wav>", "mime_type": "audio/wav", "sample_rate_hz": 48000}
+
+``reference_audio_b64`` (optional) is a base64 WAV whose voice VoxCPM2 clones, so
+a caller can keep one consistent voice across many requests (e.g. a whole call).
 
 Inference API reference (voxcpm package, VoxCPM2):
     model = VoxCPM.from_pretrained(dir, load_denoiser=False)
@@ -25,6 +29,8 @@ from __future__ import annotations
 
 import base64
 import io
+import os
+import tempfile
 import time
 import wave
 from typing import Any
@@ -91,16 +97,42 @@ class RealtimeTTSAgent(ResponsesAgent):
 
     def _warmup(self) -> None:
         # Best-effort; a warmup failure must never block the endpoint from serving.
-        for text in _WARMUP_TEXTS:
-            try:
-                self.model.generate(
-                    text=text,
-                    cfg_value=self.cfg_value,
-                    inference_timesteps=self.inference_timesteps,
-                    retry_badcase=False,
-                )
-            except Exception:  # noqa: BLE001
-                pass
+        ref_path: str | None = None
+        try:
+            for text in _WARMUP_TEXTS:
+                try:
+                    audio = self.model.generate(
+                        text=text,
+                        cfg_value=self.cfg_value,
+                        inference_timesteps=self.inference_timesteps,
+                        retry_badcase=False,
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+                # Capture one clip to warm the voice-cloning path below. A
+                # reference prepends ref-audio tokens, changing the input shape
+                # torch.compile specialises on; compiling that graph here (at
+                # startup, off the request path) avoids a ~15 s one-off stall on
+                # the first cloned turn of a call.
+                if ref_path is None:
+                    sr = int(getattr(getattr(self.model, "tts_model", None), "sample_rate", 48_000))
+                    ref_path = _write_reference_wav(
+                        base64.b64encode(_float_to_wav(audio, sr)).decode("ascii")
+                    )
+            if ref_path:
+                try:
+                    for _ in self.model.generate_streaming(
+                        text=_WARMUP_TEXTS[-1],
+                        cfg_value=self.cfg_value,
+                        inference_timesteps=self.inference_timesteps,
+                        retry_badcase=False,
+                        reference_wav_path=ref_path,
+                    ):
+                        pass
+                except Exception:  # noqa: BLE001
+                    pass
+        finally:
+            _unlink(ref_path)
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
         # MLflow runs predict on a default example at log time. Short-circuit with
@@ -122,13 +154,19 @@ class RealtimeTTSAgent(ResponsesAgent):
         cfg_value = float(ci.get("cfg_value") or self.cfg_value)
 
         started = time.perf_counter()
-        audio = self.model.generate(
+        gen_kwargs = dict(
             text=text,
             cfg_value=cfg_value,
             inference_timesteps=timesteps,
-            # Deterministic latency: never silently retry (up to 3x) on bad cases.
             retry_badcase=False,
         )
+        ref_path = _write_reference_wav(ci.get("reference_audio_b64"))
+        if ref_path:
+            gen_kwargs["reference_wav_path"] = ref_path
+        try:
+            audio = self.model.generate(**gen_kwargs)
+        finally:
+            _unlink(ref_path)
         gen_ms = (time.perf_counter() - started) * 1000.0
         sample_rate_hz = int(getattr(getattr(self.model, "tts_model", None), "sample_rate", 48_000))
         wav_bytes = _float_to_wav(audio, sample_rate_hz)
@@ -183,27 +221,37 @@ class RealtimeTTSAgent(ResponsesAgent):
         index = 0
         # generate_streaming() yields ~80 ms numpy chunks (it sets streaming=True
         # internally, so we must NOT pass streaming= ourselves).
-        for chunk in self.model.generate_streaming(
+        gen_kwargs = dict(
             text=text,
             cfg_value=cfg_value,
             inference_timesteps=timesteps,
             retry_badcase=False,
-        ):
-            pcm = _float_to_pcm16(chunk)
-            if not pcm:
-                continue
-            if first_chunk_ms is None:
-                first_chunk_ms = (time.perf_counter() - started) * 1000.0
-            yield ResponsesAgentStreamEvent(
-                **self.create_text_delta(delta=(text if index == 0 else ""), item_id=item_id),
-                custom_outputs={
-                    "audio_pcm16_b64": base64.b64encode(pcm).decode("ascii"),
-                    "chunk_index": index,
-                    "sample_rate_hz": sample_rate_hz,
-                    "final": False,
-                },
-            )
-            index += 1
+        )
+        # A reference clip pins the voice: VoxCPM2 clones its timbre so every turn
+        # in a session keeps the same voice. build_prompt_cache reads the file at
+        # the start of generation, so it must survive until the generator drains.
+        ref_path = _write_reference_wav(ci.get("reference_audio_b64"))
+        if ref_path:
+            gen_kwargs["reference_wav_path"] = ref_path
+        try:
+            for chunk in self.model.generate_streaming(**gen_kwargs):
+                pcm = _float_to_pcm16(chunk)
+                if not pcm:
+                    continue
+                if first_chunk_ms is None:
+                    first_chunk_ms = (time.perf_counter() - started) * 1000.0
+                yield ResponsesAgentStreamEvent(
+                    **self.create_text_delta(delta=(text if index == 0 else ""), item_id=item_id),
+                    custom_outputs={
+                        "audio_pcm16_b64": base64.b64encode(pcm).decode("ascii"),
+                        "chunk_index": index,
+                        "sample_rate_hz": sample_rate_hz,
+                        "final": False,
+                    },
+                )
+                index += 1
+        finally:
+            _unlink(ref_path)
 
         total_ms = (time.perf_counter() - started) * 1000.0
         yield ResponsesAgentStreamEvent(
@@ -234,6 +282,75 @@ def _serving_runtime_available() -> bool:
         return all(importlib.util.find_spec(name) is not None for name in ("torch", "voxcpm"))
     except Exception:  # noqa: BLE001
         return False
+
+
+# Fixed reference-clip duration. Normalising every reference to one constant
+# length gives the voice-cloning graph a single shape for torch.compile to
+# specialise on, so it compiles exactly once (at startup warm-up) instead of
+# recompiling (~15 s) on the first cloned turn of each new session.
+_REFERENCE_SECONDS = 4.0
+
+
+def _write_reference_wav(reference_audio_b64: Any) -> str | None:
+    """Materialise a base64 WAV reference clip to a temp file for voice cloning.
+
+    The clip is trimmed/padded to a fixed duration (see ``_REFERENCE_SECONDS``)
+    so the compiled graph shape is constant across sessions. Returns the path
+    (caller must ``_unlink`` it) or None when no reference was supplied or it
+    could not be decoded (never fail synthesis over a bad reference).
+    """
+    if not reference_audio_b64:
+        return None
+    try:
+        raw = base64.b64decode(str(reference_audio_b64))
+    except Exception:  # noqa: BLE001
+        return None
+    if not raw:
+        return None
+    raw = _normalize_reference(raw)
+    fd, path = tempfile.mkstemp(suffix=".wav")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+    except OSError:
+        _unlink(path)
+        return None
+    return path
+
+
+def _normalize_reference(wav_bytes: bytes) -> bytes:
+    """Trim/pad a mono PCM16 WAV to exactly ``_REFERENCE_SECONDS``.
+
+    Returns the input unchanged when it is not the mono/16-bit shape this service
+    produces (be permissive; only normalise what we know how to)."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as reader:
+            channels = reader.getnchannels()
+            width = reader.getsampwidth()
+            rate = reader.getframerate()
+            frames = reader.readframes(reader.getnframes())
+    except (wave.Error, EOFError, OSError):
+        return wav_bytes
+    if channels != 1 or width != 2 or rate <= 0:
+        return wav_bytes
+    target = int(rate * _REFERENCE_SECONDS) * 2  # bytes: 16-bit mono
+    frames = frames[:target] if len(frames) >= target else frames + b"\x00" * (target - len(frames))
+    out = io.BytesIO()
+    with wave.open(out, "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(rate)
+        writer.writeframes(frames)
+    return out.getvalue()
+
+
+def _unlink(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _last_user_text(request: ResponsesAgentRequest) -> str:

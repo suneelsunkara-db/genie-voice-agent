@@ -5,9 +5,15 @@ All settings (host, port, CORS) come from config. Run:
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
+
+# Configure the realtime_voice logger so pipeline events (turn lifecycle,
+# errors, latency) are visible in the uvicorn console output.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+logging.getLogger("realtime_voice").setLevel(logging.INFO)
 
 # The standalone ``realtime_api`` package lives at the repo root (not pip-installed).
 # uvicorn is launched with cwd=api/ (start_app.sh), so add the repo root to the

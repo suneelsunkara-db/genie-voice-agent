@@ -187,6 +187,8 @@ async def handle_voice_ws(
                 if session is None:
                     await _send_error(websocket, "session_not_started", "Send session.start before audio.end.")
                     continue
+                if not session.audio or session.busy:
+                    continue
                 task = await _start_audio_turn(
                     websocket, bundle, session, task, session_id, spec, settings, on_turn_audio
                 )
@@ -221,6 +223,10 @@ async def handle_voice_ws(
                 log_event("barge_in", session_id=session_id, turn_id=session.turn_id)
                 await websocket.send_json({"type": "playback.stop", "turn_id": session.barge_in()})
             elif event_type == "session.stop":
+                if session is not None and session.audio and not session.busy:
+                    task = await _start_audio_turn(
+                        websocket, bundle, session, task, session_id, spec, settings, on_turn_audio
+                    )
                 break
             else:
                 await _send_error(websocket, "unsupported_event", f"Unsupported event type: {event_type!r}")
@@ -234,7 +240,10 @@ async def handle_voice_ws(
     finally:
         log_event("ws.close", session_id=session_id, capability=spec.capability)
         if task and not task.done():
-            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=55)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                task.cancel()
         try:
             await websocket.close()
         except RuntimeError:
@@ -314,6 +323,8 @@ async def _emit_audio_turn(
                 )
             elif etype == "response.text":
                 log_event("response.text", session_id=session_id, turn_id=turn_id, text=event.get("text"))
+            elif etype == "tool.called":
+                log_event("tool.called", session_id=session_id, turn_id=turn_id, name=event.get("name"))
             elif etype == "response.audio":
                 audio_chunks += 1
                 if event.get("final"):

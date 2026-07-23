@@ -134,6 +134,8 @@ type UiCopy = {
   send: string;
   mic: string;
   stopMic: string;
+  startCall: string;
+  endCall: string;
   processingDatabricks: string;
   processingDeepgram: string;
   noDatabricksTranscript: string;
@@ -292,6 +294,8 @@ const EN: UiCopy = {
   send: "Send",
   mic: "Mic",
   stopMic: "Stop Mic",
+  startCall: "Start Call",
+  endCall: "End Call",
   processingDatabricks: "Processing voice with Databricks model...",
   processingDeepgram: "Processing voice with Deepgram...",
   noDatabricksTranscript: "No transcript returned from Databricks model",
@@ -446,6 +450,8 @@ const TH: UiCopy = {
   send: "ส่ง",
   mic: "ไมค์",
   stopMic: "หยุดไมค์",
+  startCall: "เริ่มสาย",
+  endCall: "วางสาย",
   processingDatabricks: "กำลังประมวลผลเสียงด้วยโมเดล Databricks...",
   processingDeepgram: "กำลังประมวลผลเสียงด้วย Deepgram...",
   noDatabricksTranscript: "ไม่มีข้อความถอดเสียงจากโมเดล Databricks",
@@ -600,6 +606,8 @@ const ID: UiCopy = {
   send: "Kirim",
   mic: "Mik",
   stopMic: "Stop Mik",
+  startCall: "Mulai Panggilan",
+  endCall: "Akhiri Panggilan",
   processingDatabricks: "Memproses suara dengan model Databricks...",
   processingDeepgram: "Memproses suara dengan Deepgram...",
   noDatabricksTranscript: "Tidak ada transkrip dari model Databricks",
@@ -754,6 +762,8 @@ const ZH: UiCopy = {
   send: "发送",
   mic: "麦克风",
   stopMic: "停止麦克风",
+  startCall: "开始通话",
+  endCall: "结束通话",
   processingDatabricks: "正在用 Databricks 模型处理语音...",
   processingDeepgram: "正在用 Deepgram 处理语音...",
   noDatabricksTranscript: "Databricks 模型没有返回转写",

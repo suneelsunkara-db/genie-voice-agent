@@ -1,6 +1,7 @@
 """Realtime session state (VAD buffering and turn lifecycle)."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from .contracts import SessionStart
@@ -15,10 +16,15 @@ class VoiceSession:
     silence_ms: float = 0.0
     turn_audio_ms: float = 0.0
     voiced_ms: float = 0.0
-    # True from the moment a turn is finalized until its reply fully drains. While
-    # busy, incoming mic audio (the tail of the user's speech, or speaker->mic
-    # echo of the assistant) must NOT finalize a new turn and cancel the reply.
     busy: bool = False
+    history: list = field(default_factory=list)
+    _cooldown_until: float = 0.0
+    # Voice consistency: the agent's first synthesized turn is captured as a
+    # reference clip (base64 WAV, set exactly once). Every later turn clones it
+    # via VoxCPM2 reference-audio cloning, so one stable voice is used for the
+    # whole call. Cloning from real audio is deterministic w.r.t. timbre, unlike
+    # RNG seeding (which the deployed model does not even support).
+    voice_reference_b64: str | None = None
 
     def add_audio(self, frame: bytes) -> bool:
         """Append PCM audio and report whether this frame begins speech."""
@@ -38,8 +44,8 @@ class VoiceSession:
         return began_speech
 
     def should_finalize(self, *, silence_ms: int, max_turn_seconds: int, min_speech_ms: int = 0) -> bool:
-        # Require a minimum amount of *voiced* audio so brief blips/echo don't
-        # trigger a full STT->LLM->TTS turn. The hard max-turn cap still applies.
+        if time.monotonic() < self._cooldown_until:
+            return False
         if self.turn_audio_ms >= max_turn_seconds * 1000:
             return True
         return (
@@ -47,6 +53,10 @@ class VoiceSession:
             and self.voiced_ms >= min_speech_ms
             and self.silence_ms >= silence_ms
         )
+
+    def set_cooldown(self, seconds: float) -> None:
+        """Suppress turn finalization for `seconds` after the agent finishes speaking."""
+        self._cooldown_until = time.monotonic() + seconds
 
     def finish_turn(self) -> tuple[int, bytes] | None:
         if not self.audio:

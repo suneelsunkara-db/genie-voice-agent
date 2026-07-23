@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CustomerWithIssue,
   InteractionLanguage,
-  INTERACTION_LANGUAGES,
   StatusResponse,
 } from "../api/client";
 import architectureHero from "../assets/genie-voice-architecture.jpg";
@@ -15,7 +14,6 @@ import {
   SentientBrandLockup,
   SentientChoice,
   SentientHCol,
-  SentientLanguagePicker,
   SentientSessionHead,
   SentientStep,
 } from "./sentient/Sentient";
@@ -51,11 +49,6 @@ export function CockpitPage({
 }) {
   const copy = uiCopy(interactionLanguage);
   const [pickedCustomerId, setPickedCustomerId] = useState<string | null>(null);
-
-  const languageOptions =
-    status?.languages?.supported && status.languages.supported.length > 0
-      ? status.languages.supported
-      : INTERACTION_LANGUAGES;
 
   const sortedCustomers = useMemo(() => sortCustomersForQueue(customers), [customers]);
   const queueCustomers = useMemo(() => sortedCustomers.slice(0, 10), [sortedCustomers]);
@@ -105,14 +98,6 @@ export function CockpitPage({
             name={selectedCustomer?.full_name ?? "…"}
             callLabel={selectedCall ? `${copy.call} ${selectedCall.call_id}` : undefined}
             issues={activeIssueTags}
-          />
-
-          <SentientLanguagePicker
-            kicker={copy.multilingualUSP}
-            description={copy.multilingualUSPDesc}
-            options={languageOptions}
-            value={interactionLanguage}
-            onChange={onLanguageChange}
           />
         </header>
 
