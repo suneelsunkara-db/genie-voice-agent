@@ -1100,7 +1100,28 @@ function LiveAssist({
           if (name === "lookup_account" && result && typeof result === "object") {
             onAccountFacts?.(result);
           }
-          onNudge({ tool_name: name, tool_result: result } as unknown as LiveNudge);
+          // A successful billing action closes the issue. Map the tool result
+          // into the same billing/resolution shape the text path returns so the
+          // resolution journey advances to "close" and the invoice updates
+          // immediately (the backend also persists this; refreshAssistData
+          // reconciles on the next fetch).
+          const billingResult =
+            name === "apply_billing_action" &&
+            result &&
+            typeof result === "object" &&
+            (result as Record<string, unknown>).applied
+              ? (result as Record<string, unknown>)
+              : null;
+          if (billingResult) {
+            onNudge({
+              tool_name: name,
+              tool_result: result,
+              billing: { applied: true, adjustment: billingResult },
+              resolution: { status: "closed" },
+            } as unknown as LiveNudge);
+          } else {
+            onNudge({ tool_name: name, tool_result: result } as unknown as LiveNudge);
+          }
         },
         onError: (code, message) => {
           setErr(message);

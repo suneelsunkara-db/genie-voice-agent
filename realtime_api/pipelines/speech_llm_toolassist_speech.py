@@ -19,6 +19,27 @@ logger = logging.getLogger("realtime_voice")
 # doesn't leave the user staring at a spinner forever.
 _LLM_TIMEOUT_S = 50
 
+# How long to wait for the LLM before playing a spoken acknowledgment. Fast
+# turns (cached / no tool calls) return well under this, so they stay snappy and
+# never hear a filler. Slower turns (Lakebase + Genie tool rounds) cross it and
+# the caller hears a natural "let me check" instead of dead air.
+_FILLER_GRACE_S = 0.6
+
+# Localized acknowledgments, keyed by language prefix. Kept short so TTS renders
+# quickly and the clip comfortably fits inside typical LLM+tool latency.
+_FILLER_PHRASES: dict[str, str] = {
+    "en": "Sure, let me take a look at that for you.",
+    "th": "ได้ค่ะ เดี๋ยวขอตรวจสอบให้สักครู่นะคะ",
+    "id": "Baik, saya periksa dulu sebentar ya.",
+    "zh": "好的，我帮您查一下，请稍等。",
+    "ja": "はい、ただいま確認いたしますので少々お待ちください。",
+}
+
+
+def _filler_phrase(language: str) -> str | None:
+    prefix = (language or "").split("-", 1)[0].lower()
+    return _FILLER_PHRASES.get(prefix) or _FILLER_PHRASES.get("en")
+
 
 async def process_turn(
     bundle: ServingBundle,
@@ -52,29 +73,59 @@ async def process_turn(
     t = time.perf_counter()
     respond_fn = getattr(bundle.llm, "respond_with_tools", None)
     tool_invocations: list[dict] = []
+
+    # Run the LLM (+tools) as a background task so we can cover its latency with a
+    # spoken acknowledgment. The task keeps running while we stream the filler.
     if respond_fn:
-        try:
-            response_text, tool_invocations = await asyncio.wait_for(
-                asyncio.to_thread(
-                    respond_fn, transcript, language=language, context=context,
-                    tool_ctx=tool_ctx, history=session.history[:-1],
-                ),
-                timeout=_LLM_TIMEOUT_S,
+        llm_task = asyncio.ensure_future(
+            asyncio.to_thread(
+                respond_fn, transcript, language=language, context=context,
+                tool_ctx=tool_ctx, history=session.history[:-1],
             )
-        except asyncio.TimeoutError:
-            logger.error("LLM timed out after %ds for turn %d", _LLM_TIMEOUT_S, turn_id)
-            raise RuntimeError(f"LLM response timed out after {_LLM_TIMEOUT_S}s") from None
+        )
     else:
-        try:
-            response_text = await asyncio.wait_for(
-                asyncio.to_thread(
-                    bundle.llm.respond, transcript, language=language, context=context, tool_ctx=tool_ctx
-                ),
-                timeout=_LLM_TIMEOUT_S,
+        llm_task = asyncio.ensure_future(
+            asyncio.to_thread(
+                bundle.llm.respond, transcript, language=language, context=context, tool_ctx=tool_ctx
             )
+        )
+
+    try:
+        await asyncio.wait({llm_task}, timeout=_FILLER_GRACE_S)
+        if not llm_task.done():
+            filler = _filler_phrase(language)
+            if filler:
+                try:
+                    async for event in stream_tts(
+                        bundle, session, turn_id, filler, language,
+                        mark_final=False, emit_text=False,
+                    ):
+                        if turn_id != session.turn_id:
+                            break
+                        yield event
+                except Exception:  # noqa: BLE001
+                    logger.warning("filler TTS failed for turn %d", turn_id, exc_info=True)
+
+        if turn_id != session.turn_id:
+            llm_task.cancel()
+            return
+
+        remaining = max(1.0, _LLM_TIMEOUT_S - (time.perf_counter() - t))
+        try:
+            result = await asyncio.wait_for(asyncio.shield(llm_task), timeout=remaining)
         except asyncio.TimeoutError:
             logger.error("LLM timed out after %ds for turn %d", _LLM_TIMEOUT_S, turn_id)
             raise RuntimeError(f"LLM response timed out after {_LLM_TIMEOUT_S}s") from None
+    finally:
+        if llm_task.done() and not llm_task.cancelled():
+            llm_task.exception()  # retrieve to avoid "exception never retrieved"
+        else:
+            llm_task.cancel()
+
+    if respond_fn:
+        response_text, tool_invocations = result
+    else:
+        response_text = result
     llm_ms = round((time.perf_counter() - t) * 1000)
     logger.info("LLM responded in %dms (turn %d, tools=%d)", llm_ms, turn_id, len(tool_invocations))
     if turn_id != session.turn_id:

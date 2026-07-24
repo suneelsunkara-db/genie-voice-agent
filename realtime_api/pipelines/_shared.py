@@ -57,7 +57,17 @@ async def stream_tts(
     turn_id: int,
     text: str,
     language: str,
+    *,
+    mark_final: bool = True,
+    emit_text: bool = True,
 ) -> AsyncIterator[dict]:
+    """Stream TTS audio for `text` as response.audio events.
+
+    mark_final=False keeps every chunk non-terminal so a preceding filler clip
+    doesn't signal turn completion before the real answer streams. emit_text=False
+    suppresses the transcript text carried on the first chunk (used for fillers,
+    which shouldn't appear as an agent turn).
+    """
     reference_b64 = session.voice_reference_b64
     # Capture this turn's audio only until the session has a locked-in voice.
     capture: bytearray | None = bytearray() if reference_b64 is None else None
@@ -90,14 +100,16 @@ async def stream_tts(
                 if len(capture) < int(capture_sr * 2 * _VOICE_REFERENCE_SECONDS):
                     capture.extend(chunk.pcm)
             if pending is not None:
-                event = pending.event(turn_id, chunk_index=index, final=False, text=text if index == 0 else None)
+                first_text = text if (emit_text and index == 0) else None
+                event = pending.event(turn_id, chunk_index=index, final=False, text=first_text)
                 if index == 0:
                     event["tts_first_ms"] = tts_first_ms
                 yield event
                 index += 1
             pending = chunk
         if pending is not None:
-            event = pending.event(turn_id, chunk_index=index, final=True, text=text if index == 0 else None)
+            first_text = text if (emit_text and index == 0) else None
+            event = pending.event(turn_id, chunk_index=index, final=mark_final, text=first_text)
             if index == 0:
                 event["tts_first_ms"] = tts_first_ms
             yield event
@@ -116,7 +128,13 @@ async def stream_tts(
         if session.voice_reference_b64 is None and audio_response.audio:
             session.voice_reference_b64 = base64.b64encode(audio_response.audio).decode("ascii")
             reference_b64 = session.voice_reference_b64
-        yield audio_response.event(turn_id, chunk_index=index, final=index == total - 1, text=sentence)
+        is_last = index == total - 1
+        yield audio_response.event(
+            turn_id,
+            chunk_index=index,
+            final=is_last and mark_final,
+            text=sentence if emit_text else None,
+        )
 
 
 def _lock_voice_reference(session: VoiceSession, pcm: bytes, sample_rate_hz: int) -> None:

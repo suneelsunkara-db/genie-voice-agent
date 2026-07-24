@@ -194,6 +194,56 @@ _APPLY_BILLING_SPEC = {
 }
 
 
+def _close_resolution_after_billing(
+    svc: Any, call_id: str, customer_id: str, action: str, billing_result: dict[str, Any]
+) -> None:
+    """Advance + persist issue resolution to 'closed' after a billing write.
+
+    Mirrors the text assist path (api/app/routers/agent_assist.py): commit the
+    close only after the billing write succeeds, upsert it onto the call state
+    so the account-facts overlay reports issue_status="closed", and append a
+    single timeline event on the status transition.
+    """
+    from genie_voice.assist.resolution import (
+        finalize_resolution_after_billing,
+        resolution_event_for_transition,
+    )
+
+    try:
+        state = svc.get_call_state(call_id) or {}
+        inner = dict(state.get("state") or {})
+        previous_resolution = dict(inner.get("resolution") or {})
+
+        resolution = dict(previous_resolution)
+        if str(resolution.get("status") or "open") == "open":
+            resolution["status"] = "in_progress"
+        actions = dict(resolution.get("actions") or {})
+        actions["pending_close"] = True
+        if action == "waive_late_fee":
+            actions["waiver_requested"] = True
+        if action == "payment_plan":
+            actions["payment_plan_requested"] = True
+        resolution["actions"] = actions
+
+        resolution = finalize_resolution_after_billing(resolution, billing_result)
+        inner["resolution"] = resolution
+        svc.upsert_call_state(call_id, state.get("customer_id") or customer_id, inner)
+
+        transition = resolution_event_for_transition(previous_resolution, resolution)
+        if transition:
+            svc.append_resolution_event(
+                call_id=call_id,
+                event_type=transition["event_type"],
+                issue_status=transition["issue_status"],
+                note=transition.get("note"),
+                actions=transition.get("actions") or {},
+            )
+    except Exception:  # noqa: BLE001
+        # Never fail the billing tool because the resolution overlay couldn't be
+        # persisted; the invoice write already succeeded.
+        pass
+
+
 def _run_apply_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> str:
     action = arguments.get("action", "")
     if action not in ("waive_late_fee", "payment_plan"):
@@ -224,6 +274,14 @@ def _run_apply_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> st
         result = svc.apply_billing_resolution(call_id, customer_id, resolution, account)
         if not result.get("applied"):
             return json.dumps({"applied": False, "reason": result.get("reason", "unknown")})
+
+        # Close the issue in call state + timeline. apply_billing_resolution only
+        # persists the invoice adjustment; the resolution state machine (status ->
+        # "closed" + resolution event) lives outside it, so the voice tool path
+        # must run it here to match the text path (agent_assist.py). Without this
+        # the invoice is waived but get_account_facts keeps reporting
+        # issue_status="open" and the UI journey never reaches "close".
+        _close_resolution_after_billing(svc, call_id, customer_id, action, result)
 
         adjustment = result.get("adjustment", {})
         return json.dumps({
