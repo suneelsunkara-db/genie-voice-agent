@@ -63,18 +63,26 @@ is only used to submit the job.
 databricks auth login --profile fe-vm-vdm-classic-rcn6ip
 ```
 
-## Configuration (env overrides)
+## Configuration
 
-| Variable | Default | Meaning |
+Connection + target settings come from config (no env overrides):
+
+| Setting | Source (config) |
+|---|---|
+| App base URL | `realtime_voice.benchmark.api_host` |
+| Path prefix on the app | `realtime_voice.benchmark.api_prefix` (default `realtime`) |
+| UC Volume output dir | `volume.multilingual_voice_benchmark_path` |
+| Databricks host / profile | `databricks.host` / `databricks.profile` |
+| SP auth (app M2M) | `realtime_voice.benchmark.auth.{client_id,client_secret}` |
+
+Per-run parameters are CLI flags on `run_benchmark.py`:
+
+| Flag | Default | Meaning |
 |---|---|---|
-| `MLV_API_HOST` | from `realtime_voice.benchmark.api_host` | Databricks Apps base URL |
-| `MLV_API_PREFIX` | `realtime` | path prefix on the app |
-| `MLV_RESULTS_DIR` | from `volume.multilingual_voice_benchmark_path` | UC Volume output dir |
-| `MLV_LANGUAGES` | *(all)* | comma-separated 2-letter codes |
-| `MLV_DATASET` | `all` | `all` \| `fleurs` \| `belebele` \| `ccfqa` |
-| `MLV_LIMIT` | `20` | samples per (dataset, language) |
-| `MLV_RUN_LABEL` | *(auto)* | suffix for ``logs/run_<label>.log`` on the UC Volume |
-| `DATABRICKS_PROFILE` | from config | CLI profile for auth |
+| `--dataset` | `all` | `all` \| `fleurs` \| `belebele` \| `ccfqa` |
+| `--languages` | *(all)* | comma-separated 2-letter codes |
+| `--limit` | `20` | samples per (dataset, language) |
+| `--run-id` / `--run-label` | *(auto)* | sweep id / log suffix on the UC Volume |
 
 ## Running the Python directly
 

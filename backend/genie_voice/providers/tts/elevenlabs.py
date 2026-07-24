@@ -12,7 +12,6 @@ Live response (with timestamps) shape:
 from __future__ import annotations
 
 import base64
-import os
 from typing import Any
 
 from genie_voice.models.contracts import CharTiming, SpeechResult
@@ -29,7 +28,8 @@ class ElevenLabsTTS(TTSProvider):
 
         from genie_voice.config import get_settings
 
-        if not get_settings().is_live or not os.environ.get("ELEVENLABS_API_KEY"):
+        settings = get_settings()
+        if not settings.is_live or not settings.secrets.elevenlabs_api_key:
             return self._mock(text, voice_id, fmt)
         return self._live(text, voice_id, fmt)
 
@@ -54,7 +54,9 @@ class ElevenLabsTTS(TTSProvider):
     def _live(self, text: str, voice_id: str, fmt: str) -> SpeechResult:
         import httpx
 
-        api_key = os.environ["ELEVENLABS_API_KEY"]
+        from genie_voice.config import get_settings
+
+        api_key = get_settings().secrets.elevenlabs_api_key
         model_id = self.options.get("model_id", "eleven_turbo_v2_5")
         url = (
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"

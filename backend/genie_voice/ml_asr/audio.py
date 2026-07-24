@@ -41,7 +41,9 @@ def _read_volume_audio(path: str) -> bytes:
         tmp_path = Path(tmp.name)
     try:
         cmd = ["databricks", "fs", "cp", uri, str(tmp_path), "--overwrite"]
-        profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        from genie_voice.ml_asr.runtime import databricks_profile
+
+        profile = databricks_profile()
         if profile:
             cmd = ["databricks", "--profile", profile, "fs", "cp", uri, str(tmp_path), "--overwrite"]
         subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=120, env=os.environ.copy())

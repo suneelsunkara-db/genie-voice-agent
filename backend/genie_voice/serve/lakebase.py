@@ -18,6 +18,7 @@ in-process store so the end-to-end local flow still works.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -192,7 +193,11 @@ def _apply_resolution_overlay(facts: dict[str, Any], resolution: dict[str, Any] 
 class LakebaseServing:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self.enabled = self.settings.lakebase.enabled
+        # Offline deploy (no Databricks) is signalled by GENIE_LOCAL_VOLUME_DIR;
+        # in that mode there is no Lakebase to reach, so fall back to in-memory.
+        # This replaces the old GENIE_LAKEBASE__ENABLED=false env override.
+        offline = bool(os.environ.get("GENIE_LOCAL_VOLUME_DIR"))
+        self.enabled = self.settings.lakebase.enabled and not offline
         self._cred: dict[str, Any] | None = None  # cached {host,user,token,exp}
         self._pool = None  # psycopg_pool.ConnectionPool, built lazily
         self._pool_token: str | None = None  # token the live pool was built with

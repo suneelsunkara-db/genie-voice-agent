@@ -9,9 +9,10 @@ Orchestration helper stages:
     genie-pipeline --stage data-quality-check
     genie-pipeline --stage genie-space
 
-Config is read from `--config` (a config.yaml the deployer copied into the job's
-workspace folder; exposed to settings via GENIE_CONFIG) plus any
-`GENIE_<SECTION>__<KEY>` env overrides set on the job.
+Config is read entirely from `--config` (the config.yaml the deployer copied
+into the job's workspace folder, exposed to settings via GENIE_CONFIG). That file
+is the single source of truth for the job; no env config overrides are set or
+required (auth uses the ambient serverless job identity via auth_type=default).
 """
 from __future__ import annotations
 

@@ -366,10 +366,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--transport", default="ws", choices=["ws", "inprocess"])
-    p.add_argument("--api-host", default=os.getenv("MLV_API_HOST", ""))
-    p.add_argument("--api-prefix", default=os.getenv("MLV_API_PREFIX", ""))
+    # Empty defaults -> resolved from config (realtime_voice.benchmark) in main().
+    p.add_argument("--api-host", default="")
+    p.add_argument("--api-prefix", default="")
     p.add_argument("--auth-token", default=None)
-    p.add_argument("--databricks-profile", default=os.getenv("DATABRICKS_PROFILE", ""))
+    p.add_argument("--databricks-profile", default="")
     p.add_argument("--tts-roundtrip", action="store_true")
     p.add_argument(
         "--max-audio-seconds", type=float, default=120.0,
@@ -377,8 +378,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--fixture", action="store_true")
     p.add_argument("--out-dir", default=None)
-    p.add_argument("--run-label", default=os.getenv("MLV_RUN_LABEL", ""))
-    p.add_argument("--run-id", default=os.getenv("MLV_RUN_ID", ""), help="sweep id shared across tasks")
+    p.add_argument("--run-label", default="")
+    p.add_argument("--run-id", default="", help="sweep id shared across tasks")
     # Job wiring (serverless env-spec env vars are not propagated).
     p.add_argument("--benchmark-dir", default=None)
     p.add_argument("--config", default=None)

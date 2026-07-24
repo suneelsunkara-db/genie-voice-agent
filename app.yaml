@@ -2,8 +2,9 @@
 #
 # One web process: uvicorn serves the FastAPI API AND the built React SPA
 # (api/app/static, produced by deploy_app.sh). The app authenticates to
-# Databricks as its injected service principal (auth_type=oauth reads the
-# platform-injected DATABRICKS_CLIENT_ID/SECRET/HOST).
+# Databricks as its injected service principal: config.yaml sets
+# auth_type=default, so the SDK unified-auth chain picks up the platform-injected
+# DATABRICKS_CLIENT_ID/SECRET/HOST.
 #
 # Notes:
 #   - `command` is an array; env vars are NOT expanded except via a /bin/sh -c
@@ -21,30 +22,18 @@ command:
   - 'export GENIE_CONFIG="$(pwd)/config/config.yaml"; PYTHONPATH="$(pwd)/api:$(pwd)/backend:$(pwd)" exec uvicorn app.main:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT'
 
 env:
-  # Real vendor capture (Deepgram/ElevenLabs) rather than the synthetic producer.
-  - name: GENIE_DEPLOYMENT
-    value: "live"
-  # Use the Databricks ASR endpoints for utterance-level mic transcription. The
-  # WebSocket caption path still uses Deepgram for interim streaming captions.
-  - name: GENIE_PROVIDERS__STT__ACTIVE
-    value: "databricks"
-  # Authenticate as the app's service principal (M2M OAuth via injected creds).
-  - name: GENIE_DATABRICKS__AUTH_TYPE
-    value: "oauth"
-  # ---- Non-secret workspace config (override the committed placeholders) ----
-  # NOTE: run_as is intentionally NOT set here. The app acts as its own OAuth
-  # service principal; with run_as empty, the code falls back to the SP identity
-  # (current_user) for GRANTs / Lakebase role / Genie parent path.
-  - name: GENIE_DATABRICKS__CATALOG
-    value: "partner_demo_catalog"
-  - name: GENIE_LAKEBASE__INSTANCE
-    value: "genie_voice_lakebase"
-  # Multilingual voice benchmark results (GET /realtime/v1/benchmarks reads summary.json).
-  - name: MLV_RESULTS_DIR
-    value: "/Volumes/partner_demo_catalog/genie_voice_contact_center/raw_streaming_data/multilingual_voice_benchmark"
-  # ---- Values injected from declared app resources (see deploy_app.sh) ----
-  - name: GENIE_DATABRICKS__SQL_WAREHOUSE_ID
-    valueFrom: "sql-warehouse"
+  # ---------------------------------------------------------------------------
+  # NO config values here. config/config.yaml is the single source of truth and
+  # is synced to the app (deployment=live, auth_type=default, catalog, warehouse,
+  # lakebase instance, providers, etc. all live there). GENIE_CONFIG (set in the
+  # command above) points the loader at it.
+  #
+  # The ONLY env below is the vendor SECRET, which must never be committed to a
+  # git-tracked config file. It is injected from a Databricks secret scope via a
+  # declared app resource (see deploy_app.sh). Databricks Apps also inject the
+  # service-principal OAuth creds (DATABRICKS_CLIENT_ID/SECRET/HOST) and
+  # DATABRICKS_APP_PORT automatically - we do not set those.
+  # ---------------------------------------------------------------------------
   - name: DEEPGRAM_API_KEY
     valueFrom: "deepgram-api-key"
   # ElevenLabs TTS is optional and not wired into the live flow; its key is empty

@@ -115,7 +115,7 @@ appears in core code.
 ## Repository layout
 
 ```
-config/            config.yaml (non-secret) + config.local.yaml (gitignored) + .env.example
+config/            config.yaml (non-secret) + config.local.yaml (gitignored, holds secrets)
 backend/           genie_voice package (core library)
   genie_voice/
     config/          settings loader (all tunables)
@@ -207,7 +207,6 @@ Runs **as your Databricks user** via OAuth U2M — no tokens or secrets in git.
 browser); everything thereafter runs under that identity.
 
 ```bash
-cp config/.env.example .env              # optional for U2M; add vendor keys for live mode
 cp config/config.yaml config/config.local.yaml   # then edit with your workspace values
 # Edit config/config.local.yaml — host, catalog, sql_warehouse_id, lakebase instance, secrets
 ./local-deploy.sh                # logs you in, sets up perms, runs flow, starts API+UI
@@ -285,9 +284,10 @@ WHISPER_ENDPOINT=voice_asr_en_finetuned_whisper_lora \
 ```
 
 Runtime behaviour is defined in **`app.yaml`**: it runs `uvicorn app.main:app` on
-`0.0.0.0:$DATABRICKS_APP_PORT`, sets `GENIE_DEPLOYMENT=live` and
-`GENIE_DATABRICKS__AUTH_TYPE=oauth`, and injects secrets via `valueFrom` against
-the declared app resources. `run_as` is intentionally left empty so the app uses
+`0.0.0.0:$DATABRICKS_APP_PORT` and injects vendor secrets via `valueFrom` against
+the declared app resources. All configuration (`deployment: live`, `auth_type`,
+catalog, warehouse, providers, …) comes from **`config/config.yaml`**, which is
+synced with the app — there are no `GENIE_*` env overrides. `run_as` is intentionally left empty so the app uses
 its **service principal** identity (`config/config.yaml` ships `run_as: ""`; local
 dev sets a real email in `config.local.yaml`).
 
@@ -431,7 +431,8 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
   (full dialog with LLM + tools + TTS), and `text-to-speech` (synthesis only). See
   `GET /v1/capabilities` for paths and per-route language lists.
 - **Server-side VAD/endpointing + barge-in** — the API owns turn-taking; the UI never
-  reimplements it. Barge-in is opt-in (`VOICE_ALLOW_BARGE_IN=1`, needs headphones/AEC).
+  reimplements it. Barge-in is opt-in (`realtime_voice.allow_barge_in: true` in config,
+  needs headphones/AEC).
 - **Per-endpoint latency** — the API reports `stt_ms`, `llm_ms`, and `tts_first_ms`
   per turn; the UI shows both client-observed and server endpoint timings.
 
@@ -439,12 +440,10 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
 
 ```bash
 pip install -r realtime_api/requirements.txt
-# Endpoints come from the realtime_voice: config block by default. To override:
-export VOICE_API_STT_ENDPOINT=realtime_voice_stt_qwen3_asr_1_7b
-export VOICE_API_LLM_ENDPOINT=qwen3-next-80b
-export VOICE_API_TTS_ENDPOINT=realtime_voice_tts_voxcpm2
+# Endpoints (and all knobs) come from the realtime_voice: config block. Edit
+# config/config.yaml or config/config.local.yaml — there are no env overrides.
 python -m realtime_api.server            # ws://localhost:8001/v1/speech-llm-toolassist-speech
-# PORT=9000 python -m realtime_api.server
+# PORT=9000 python -m realtime_api.server   # PORT is only the listen port
 ```
 
 Auth uses the Databricks SDK serving client (no local mlflow needed), authenticating
@@ -501,17 +500,22 @@ Server → client events:
 `barge_in` immediately cancels the current turn and increments the turn ID,
 preventing late inference responses from reaching the client.
 
-## Tuning (env overrides)
+## Tuning (config only)
 
-| Env var | Default | Meaning |
+All knobs live in the `realtime_voice:` block of `config/config.yaml`
+(`config.local.yaml` overrides locally) — there are no env overrides.
+
+| Config key (`realtime_voice.*`) | Default | Meaning |
 |---|---|---|
-| `VOICE_VERIFY_MODE` | `1` | Echo transcript/language instead of answering |
-| `VOICE_ALLOW_BARGE_IN` | `0` | Allow sustained talk-over to interrupt the reply |
-| `VOICE_API_STT/LLM/TTS_ENDPOINT` | from config | Override serving endpoints |
-| `VOICE_DEBUG_AUDIO` | unset | Save each finalized turn's PCM to WAV for inspection |
+| `allow_barge_in` | `false` | Allow sustained talk-over to interrupt the reply |
+| `warmup` | `true` | Prime the STT/LLM/TTS replicas at startup |
+| `stt_warmup_passes` | `3` | STT warm-up passes fired at startup |
+| `debug_audio` / `debug_audio_dir` | `false` / `/tmp/realtime_audio` | Save each finalized turn's PCM to WAV |
+| `stt_candidates` / `tts_candidates` / `llm_endpoint` | — | Serving endpoints |
 
-Other VAD/LLM/TTS knobs (silence window, min speech, temperature, diffusion steps)
-are in `realtime_api/config.py` and the `realtime_voice:` config block.
+Other VAD/LLM/TTS defaults (silence window, min speech, temperature, diffusion
+steps) are `RealtimeSettings` fields in `realtime_api/config.py`, populated from
+the same `realtime_voice:` block.
 
 ## Realtime voice model serving (candidates)
 

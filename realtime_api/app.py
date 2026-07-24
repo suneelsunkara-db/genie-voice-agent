@@ -5,7 +5,6 @@ import array
 import asyncio
 import logging
 import math
-import os
 import threading
 import time
 import wave
@@ -25,13 +24,6 @@ from .ws.handler import ROUTES, capabilities_payload, make_ws_handler
 
 logger = logging.getLogger("realtime_voice")
 
-# When VOICE_DEBUG_AUDIO=1, save each finalized turn's PCM to a WAV for inspection.
-_DEBUG_AUDIO = os.getenv("VOICE_DEBUG_AUDIO") == "1"
-_DEBUG_DIR = Path(os.getenv("VOICE_DEBUG_DIR", "/tmp/realtime_audio"))
-
-# Set GENIE_REALTIME_WARMUP=0 to disable startup priming of the serving replicas.
-_WARMUP_ENABLED = os.getenv("GENIE_REALTIME_WARMUP", "1") != "0"
-
 
 def warm_serving(
     settings: RealtimeSettings,
@@ -44,7 +36,7 @@ def warm_serving(
     the factory is async (the warm path only supports sync factories), or when the
     bundle's services don't expose ``warmup`` (e.g. test doubles).
     """
-    if not _WARMUP_ENABLED:
+    if not settings.warmup_enabled:
         return
 
     def _work() -> None:
@@ -87,9 +79,11 @@ def _audio_stats(audio: bytes, sample_rate_hz: int) -> dict:
     return {"ms": round(n / sample_rate_hz * 1000), "peak_dbfs": to_db(peak), "rms_dbfs": to_db(rms)}
 
 
-def _save_debug_wav(audio: bytes, sample_rate_hz: int, session_id: str, turn_id: int) -> str:
-    _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    path = _DEBUG_DIR / f"{session_id[:8]}_turn{turn_id}.wav"
+def _save_debug_wav(
+    audio: bytes, sample_rate_hz: int, session_id: str, turn_id: int, debug_dir: Path
+) -> str:
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    path = debug_dir / f"{session_id[:8]}_turn{turn_id}.wav"
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -151,10 +145,12 @@ def create_app(
         return await run_in_threadpool(load_benchmarks, run_id)
 
     def _on_turn_audio(audio: bytes, turn_id: int, sample_rate_hz: int, session_id: str) -> None:
-        if not _DEBUG_AUDIO:
+        if not settings.debug_audio:
             return
         stats = _audio_stats(audio, sample_rate_hz)
-        wav_path = _save_debug_wav(audio, sample_rate_hz, session_id, turn_id)
+        wav_path = _save_debug_wav(
+            audio, sample_rate_hz, session_id, turn_id, Path(settings.debug_audio_dir)
+        )
         from .observability import log_event
 
         log_event(
@@ -193,5 +189,6 @@ def _databricks_bundle(settings: RealtimeSettings) -> ServingBundle:
         llm_max_tool_iterations=settings.llm_max_tool_iterations,
         tts_inference_timesteps=settings.tts_inference_timesteps,
         tts_cfg_value=settings.tts_cfg_value,
+        stt_warmup_passes=settings.stt_warmup_passes,
     )
     return ServingBundle(stt=serving, llm=serving, tts=serving)

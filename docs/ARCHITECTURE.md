@@ -192,9 +192,10 @@ endpoints) so the service principal is auto-granted, applies UC/Lakebase/Genie
 grants (`infra/apps/grant_app_sp.py`) plus the `workspace-access` entitlement
 (required to mint Lakebase Postgres OAuth tokens at runtime), syncs source
 (`.gitignore`-aware; large non-runtime assets excluded to respect the 10 MB
-per-file Apps limit), and deploys in `SNAPSHOT` mode. Runtime behaviour is set in
-`app.yaml` (`GENIE_DEPLOYMENT=live`, `GENIE_DATABRICKS__AUTH_TYPE=oauth`,
-`run_as` left empty so the SP identity is used).
+per-file Apps limit), and deploys in `SNAPSHOT` mode. Configuration comes from
+`config/config.yaml` (`deployment: live`, `auth_type`, catalog, warehouse, …) —
+`app.yaml` only injects secrets and reads the platform port; `run_as` is left
+empty so the SP identity is used. There are no `GENIE_*` env overrides.
 
 ## Voice capture path (mic → STT)
 

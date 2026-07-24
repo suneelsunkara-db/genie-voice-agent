@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import tempfile
 import time
@@ -153,7 +152,9 @@ class _materialized_audio:
         with tempfile.NamedTemporaryFile(suffix=Path(path).suffix or ".wav", delete=False) as tmp:
             self._tmp_path = Path(tmp.name)
         cmd = ["databricks", "fs", "cp", uri, str(self._tmp_path), "--overwrite"]
-        profile = os.environ.get("ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        from genie_voice.ml_asr.runtime import databricks_profile
+
+        profile = databricks_profile()
         if profile:
             cmd = ["databricks", "--profile", profile, "fs", "cp", uri, str(self._tmp_path), "--overwrite"]
         try:

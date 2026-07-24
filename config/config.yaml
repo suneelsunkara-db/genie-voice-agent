@@ -1,35 +1,41 @@
 # =============================================================================
-# Genie Voice Agent - committed configuration TEMPLATE (placeholders only)
+# Genie Voice Agent - configuration.
 #
-# For local development on your machine, use gitignored config/config.local.yaml
-# (full file with your workspace values). The loader deep-merges config.local.yaml
-# over this file; local values win.
+# This file is the SINGLE SOURCE OF TRUTH for the Databricks App: it holds the
+# real deployed values and is the only config file synced to the app. No env
+# overrides are used by the app (secrets are the sole exception - see below).
 #
-# Secrets: empty placeholders below; put real keys in config/config.local.yaml.
-# Env overrides: GENIE_<SECTION>__<KEY>  e.g. GENIE_DATABRICKS__CATALOG=my_catalog
+# Local development: gitignored config/config.local.yaml is deep-merged OVER this
+# file (local values win), so it flips deployment/auth/providers/profile back to
+# your machine's values and supplies API keys. Nothing here needs env vars.
+#
+# Secrets: NEVER commit real keys here. Locally they live in config.local.yaml;
+# on the app they are injected from a Databricks secret scope (valueFrom).
 # =============================================================================
 
-# Deployment target - the ONLY run switch. It selects who PRODUCES live/mock data
-# on this machine; Lakebase is the low-latency serving store, and UC is analytics:
+# Deployment target - the ONLY run switch. It selects who PRODUCES live/mock data:
 #   local = synthetic producer (genie_voice.datagen) generates vendor-shaped
 #           Deepgram/ElevenLabs payloads + reference records (no vendor API calls).
 #   live  = real Deepgram/ElevenLabs capture produces the payloads.
-# In BOTH cases the live serving path writes primary tables in Lakebase first.
-# UC is the asynchronous analytics/Genie path.
-deployment: local
+# The app runs `live`; config.local.yaml overrides this to `local` for dev.
+deployment: live
 
 databricks:
-  # Host can also be set via DATABRICKS_HOST in .env (env wins).
-  host: "https://<your-workspace>.cloud.databricks.com"
-  # default = OAuth U2M (run AS the user via `databricks auth login`). No secrets.
+  # Workspace URL. On the app this is also platform-injected as DATABRICKS_HOST.
+  host: "https://fe-vm-vdm-classic-rcn6ip.cloud.databricks.com"
+  # `default` = SDK unified-auth credential chain, which works in EVERY context
+  # with no env config: the app picks up its injected service-principal creds
+  # (DATABRICKS_CLIENT_ID/SECRET/HOST), serverless jobs use the ambient job
+  # identity, and local dev uses the profile below. (Do NOT set `oauth` here:
+  # that path needs CLIENT_ID/SECRET which serverless jobs don't have.)
   auth_type: default        # default | pat | oauth
-  profile: "<your-databricks-profile>"   # ~/.databrickscfg profile (disambiguates when several match the host)
-  # Identity used for GRANTs/Lakebase role. Empty -> fall back to the caller's
-  # OAuth identity (current_user): the logged-in user locally, or the app's
-  # service principal on Databricks Apps. Local dev sets a real email in
-  # config.local.yaml; keep this empty so Apps uses its service principal.
+  # ~/.databrickscfg profile. Empty on the app/jobs (ambient/SP auth is used);
+  # config.local.yaml sets the real profile for local dev.
+  profile: ""
+  # Identity used for GRANTs/Lakebase role. Empty -> the caller's OAuth identity:
+  # the app's service principal on Databricks Apps. Local dev sets a real email.
   run_as: ""
-  catalog: "<your-catalog>"             # existing catalog (not created by us)
+  catalog: partner_demo_catalog         # existing catalog (not created by us)
   create_catalog: false     # never CREATE CATALOG; we use an existing one
   schema: genie_voice_contact_center        # our schema inside the catalog
   sql_warehouse_id: "d0a0a25efd015c58"      # REQUIRED: bootstrap / table load / Genie / benchmark Delta reads
@@ -59,7 +65,7 @@ medallion:
 # Lakebase autoscaling project (low-latency serving for agent assist).
 lakebase:
   enabled: true                     # use real Lakebase (offline deploy overrides to false)
-  instance: "<your-lakebase-instance>"    # Lakebase database instance name
+  instance: genie_voice_lakebase    # Lakebase database instance name
   database: databricks_postgres     # Postgres database inside the instance
   port: 5432                        # Postgres port for the compute endpoint
   schema: genie_voice_contact_center # Postgres schema for low-latency serving tables
@@ -97,9 +103,9 @@ providers:
       databricks: "genie_voice.providers.stt.databricks:DatabricksSTT"
       # assemblyai: "genie_voice.providers.stt.assemblyai:AssemblyAISTT"
       # azure:      "genie_voice.providers.stt.azure:AzureSTT"
-    # Switch STT providers here, or use:
-    #   GENIE_PROVIDERS__STT__ACTIVE=databricks
-    active: deepgram
+    # The app uses the Databricks ASR endpoints; config.local.yaml overrides this
+    # to `deepgram` for local dev.
+    active: databricks
     options:
       deepgram:
         model: nova-3
@@ -224,7 +230,7 @@ realtime_voice:
   # Multilingual voice benchmark job targets this app's realtime WebSocket API and
   # writes scores to ``volume.multilingual_voice_benchmark_path``.
   benchmark:
-    api_host: ""          # e.g. https://genie-voice-agent-<ws-id>.aws.databricksapps.com
+    api_host: "https://genie-voice-agent-3644297589119053.aws.databricksapps.com"
     api_prefix: realtime  # mounted under /realtime on the Databricks app
   serving:
     workload_type: GPU_MEDIUM

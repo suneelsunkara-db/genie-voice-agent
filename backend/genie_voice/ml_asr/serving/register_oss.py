@@ -27,7 +27,7 @@ def register_oss(model_id: str, *, config_path: str | None = None, wait: bool = 
         raise ValueError(f"{model_id} is missing register.candidate_id in config/ml_asr_eval.yaml")
 
     profile = _databricks_profile()
-    dbx = ["databricks", "--profile", profile]
+    dbx = ["databricks", "--profile", profile] if profile else ["databricks"]
     jobs_dir = f"{remote_root}/jobs"
     outputs_dir = f"{remote_root}/outputs/{candidate_id}"
     output_json_remote = f"{outputs_dir}/registration.json"
@@ -208,9 +208,7 @@ def _wait_for_job_run(dbx: list[str], run_id: str, *, label: str) -> None:
 
 
 def _databricks_profile() -> str:
-    return (
-        os.environ.get("ML_ASR_DATABRICKS_PROFILE")
-        or os.environ.get("DATABRICKS_CONFIG_PROFILE")
-        or os.environ.get("ASR_DATABRICKS_PROFILE")
-        or "fe-vm-vdm-classic-rcn6ip"
-    )
+    """Databricks CLI profile from config (databricks.profile in config.local.yaml)."""
+    from genie_voice.ml_asr.runtime import databricks_profile
+
+    return databricks_profile() or ""

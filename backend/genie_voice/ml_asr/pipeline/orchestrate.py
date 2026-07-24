@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,7 @@ from genie_voice.ml_asr.pipeline.iterate import (
 )
 from genie_voice.ml_asr.pipeline.prepare import prepare_dataset, validate_dataset
 from genie_voice.ml_asr.pipeline.summarize import summarize
-from genie_voice.ml_asr.runtime import is_volume_mode
+from genie_voice.ml_asr.runtime import databricks_profile, is_volume_mode
 
 
 def run_action(
@@ -228,7 +227,7 @@ def _sync_from_volume(remote_path: str, local_path: Path) -> None:
         return
     import subprocess
 
-    profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    profile = databricks_profile()
     dbx = ["databricks"]
     if profile:
         dbx = ["databricks", "--profile", profile]

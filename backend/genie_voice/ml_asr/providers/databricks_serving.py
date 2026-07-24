@@ -107,7 +107,9 @@ def _query_endpoint_cli(endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
         request_path = handle.name
     try:
         cmd = ["databricks"]
-        profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        from genie_voice.ml_asr.runtime import databricks_profile
+
+        profile = databricks_profile()
         if profile:
             cmd.extend(["--profile", profile])
         cmd.extend(["serving-endpoints", "query", endpoint, "--json", f"@{request_path}", "--output", "json"])

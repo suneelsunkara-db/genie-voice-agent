@@ -3,7 +3,10 @@
 # start_app.sh
 #
 # Start API + UI only (no deploy jobs, no Databricks orchestration).
-# Loads Deepgram key, runs a cheap auth check, then launches app services.
+# Auto-authenticates to Databricks (runs `databricks auth login` on its own if
+# needed) so you don't configure it manually; if that's skipped/fails the app
+# still starts and Databricks-backed views (Lakebase/UC/Genie) degrade
+# gracefully. The Deepgram key check is also optional (only warns).
 # =============================================================================
 set -euo pipefail
 
@@ -47,26 +50,28 @@ print(get_settings().secrets.deepgram_api_key or '')
   export DEEPGRAM_API_KEY
 fi
 
-# Live mode so mic -> Deepgram path is active.
+# Optional: validate the Deepgram key if one is configured. Never blocks startup
+# - a missing/invalid key only means mic transcription won't work; the API + UI
+# still come up.
 if [[ -n "${DEEPGRAM_API_KEY:-}" ]]; then
-  export GENIE_DEPLOYMENT=live
   code="$(curl -sS -o /tmp/dg_projects.json -w "%{http_code}" \
     -H "Authorization: Token ${DEEPGRAM_API_KEY}" \
     "https://api.deepgram.com/v1/projects" || true)"
   if [[ "$code" != "200" ]]; then
-    err "Deepgram key check failed (HTTP $code)."
-    exit 1
+    warn "Deepgram key check failed (HTTP $code); mic transcription will fail."
+  else
+    log "Deepgram auth check passed."
   fi
-  log "Deepgram auth check passed."
 else
-  warn "DEEPGRAM_API_KEY not found; mic transcription will fail."
+  warn "DEEPGRAM_API_KEY not found; mic transcription will fail (UI still starts)."
 fi
 
-# --- Databricks auth (re-auth if the cached OAuth U2M token is invalid) ------
-# The cockpit's data comes from Databricks (Lakebase / UC / Genie). A stale OAuth
-# token makes those calls 500, which the browser surfaces as "Failed to fetch".
-# Probe the same credential chain the app uses and, for U2M (auth_type=default),
-# launch an interactive 'databricks auth login' when the token is expired.
+# --- Databricks auth (auto-login if not configured; never blocks) ------------
+# The cockpit's Databricks-backed views (Lakebase / UC / Genie) need a valid
+# credential. If we're not authenticated (or the U2M token expired), start_app
+# runs `databricks auth login` ON ITS OWN using the host/profile from config, so
+# you don't have to configure Databricks manually. If login is unavailable or
+# fails, we warn and still start the app (Databricks views degrade gracefully).
 probe_databricks_auth() {
   PYTHONPATH="$ROOT/backend" python - <<'PY' >/dev/null 2>&1
 from genie_voice.config import get_settings
@@ -102,9 +107,10 @@ PY
     return 0
   fi
 
-  warn "Databricks auth invalid/expired - launching 'databricks auth login'."
+  warn "Databricks not authenticated - launching 'databricks auth login'."
   if ! command -v databricks >/dev/null 2>&1; then
-    warn "databricks CLI not found; run 'databricks auth login' manually, then re-run."
+    warn "databricks CLI not found; skipping login. Databricks-backed views will"
+    warn "error until you install the CLI and run 'databricks auth login'."
     return 0
   fi
   if [[ -n "$profile" ]]; then
@@ -118,7 +124,8 @@ PY
   if probe_databricks_auth; then
     log "Databricks auth re-established."
   else
-    warn "Databricks auth still failing; Databricks-backed views may error until fixed."
+    warn "Databricks auth still failing; the app still starts but Databricks-backed"
+    warn "views (Lakebase/UC/Genie) will error until it's fixed."
   fi
   return 0
 }

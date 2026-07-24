@@ -9,20 +9,10 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from dataclasses import dataclass
 from typing import Any, Iterator, Protocol
 
 from .contracts import AudioChunk, AudioResponse
-
-# Number of STT warm-up passes fired at startup. A cold GPU replica's warm-up
-# spans several inferences, so >1 pass reliably lands the first real turn on the
-# fast path. Override with GENIE_REALTIME_STT_WARMUP_PASSES.
-try:
-    _STT_WARMUP_PASSES = max(1, int(os.getenv("GENIE_REALTIME_STT_WARMUP_PASSES", "3")))
-except ValueError:
-    _STT_WARMUP_PASSES = 3
-
 from .tools import ToolContext, run_tool, tools_spec
 
 # Contact-center system prompt for the voice agent
@@ -132,6 +122,7 @@ class DatabricksServing:
     llm_max_tool_iterations: int = 3
     tts_inference_timesteps: int = 8
     tts_cfg_value: float = 2.0
+    stt_warmup_passes: int = 3
 
     @classmethod
     def from_workspace(
@@ -146,6 +137,7 @@ class DatabricksServing:
         llm_max_tool_iterations: int = 3,
         tts_inference_timesteps: int = 8,
         tts_cfg_value: float = 2.0,
+        stt_warmup_passes: int = 3,
     ) -> "DatabricksServing":
         from mlflow.deployments import get_deploy_client
 
@@ -160,6 +152,7 @@ class DatabricksServing:
             llm_max_tool_iterations=llm_max_tool_iterations,
             tts_inference_timesteps=tts_inference_timesteps,
             tts_cfg_value=tts_cfg_value,
+            stt_warmup_passes=stt_warmup_passes,
         )
 
     @classmethod
@@ -225,7 +218,7 @@ class DatabricksServing:
         # leaving the first real user turn on the fast path. Off-thread, so the
         # extra passes never delay startup/readiness.
         silence = b"\x00\x00" * 4800
-        for i in range(_STT_WARMUP_PASSES):
+        for i in range(self.stt_warmup_passes):
             _timed(f"stt{i + 1}", lambda: self.transcribe(silence, language=None, sample_rate_hz=16_000))
         _timed("llm", lambda: self.respond("hi", language="en"))
         _timed("tts", lambda: self.synthesize("Hello.", language="en"))

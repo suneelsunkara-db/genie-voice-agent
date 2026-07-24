@@ -1,8 +1,15 @@
 """Configuration loader.
 
-Loads `config/config.yaml` (committed template), deep-merges gitignored
-`config/config.local.yaml` when present (local wins — use a complete file for
-local development), then `.env` secrets and `GENIE_*` env overrides.
+Config files are the single source of truth:
+  - `config/config.yaml`      — Databricks/app values (committed).
+  - `config/config.local.yaml` — local dev values, deep-merged OVER config.yaml
+    (local wins). Gitignored; keep a complete file here.
+
+No `GENIE_*` env overrides. The only environment inputs are things that cannot
+live in a committed file: vendor SECRETS (used as a fallback when the config
+value is empty — e.g. the Databricks secret scope injects DEEPGRAM_API_KEY on
+the app), platform-injected credentials/host that the SDK reads on its own, and
+`GENIE_CONFIG` which merely points at which config file to load.
 """
 from __future__ import annotations
 
@@ -188,13 +195,16 @@ class DatagenConfig(BaseModel):
 
 
 class Secrets(BaseModel):
-    """Vendor API keys for live STT/TTS.
+    """Vendor API keys / tokens for live STT/TTS and model-weight downloads.
 
-    Loaded from config `secrets:` (typically config.local.yaml) with environment
-    variables overriding when set (DEEPGRAM_API_KEY, etc.).
+    Loaded from config `secrets:` (typically config.local.yaml, which is the
+    source of truth). The matching env var is only a fallback for values that
+    can't be committed — e.g. the Databricks secret scope injects DEEPGRAM_API_KEY
+    on the app.
     """
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
+    hf_token: str = ""
 
 
 class Settings(BaseModel):
@@ -276,8 +286,10 @@ class Settings(BaseModel):
 
     @property
     def databricks_host(self) -> str:
-        # env wins over yaml for host.
-        return os.environ.get("DATABRICKS_HOST") or self.databricks.host
+        # Config is authoritative. DATABRICKS_HOST is only a last-resort fallback
+        # (the platform injects it on Databricks Apps); it is never a dependency
+        # because config.yaml/config.local.yaml always carry the host.
+        return self.databricks.host or os.environ.get("DATABRICKS_HOST", "")
 
 
 def _load_yaml() -> dict[str, Any]:
@@ -317,36 +329,19 @@ def _looks_like_template_config(raw: dict[str, Any]) -> bool:
     return "<your-workspace>" in host
 
 
-def _apply_env_overrides(raw: dict[str, Any]) -> None:
-    """Override any config value via GENIE_<SECTION>__<KEY>=value (YAML-parsed).
-
-    Example: GENIE_LAKEBASE__ENABLED=false, GENIE_DATABRICKS__CATALOG=my_cat.
-    """
-    for key, val in os.environ.items():
-        if not key.startswith("GENIE_") or "__" not in key:
-            continue
-        path = key[len("GENIE_"):].lower().split("__")
-        node = raw
-        ok = True
-        for p in path[:-1]:
-            nxt = node.setdefault(p, {})
-            if not isinstance(nxt, dict):
-                ok = False
-                break
-            node = nxt
-        if ok:
-            node[path[-1]] = yaml.safe_load(val)
-
-
 def _load_secrets(yaml_secrets: dict[str, Any] | None = None) -> Secrets:
     sec = yaml_secrets or {}
 
     def _pick(env_key: str, yaml_key: str, default: str = "") -> str:
-        return os.environ.get(env_key) or str(sec.get(yaml_key) or default)
+        # Config is the source of truth (config.local.yaml `secrets:` locally).
+        # The env var is only a fallback for values that can't be committed: on
+        # Databricks Apps the secret scope injects e.g. DEEPGRAM_API_KEY as env.
+        return str(sec.get(yaml_key) or "") or os.environ.get(env_key, "") or default
 
     return Secrets(
         deepgram_api_key=_pick("DEEPGRAM_API_KEY", "deepgram_api_key"),
         elevenlabs_api_key=_pick("ELEVENLABS_API_KEY", "elevenlabs_api_key"),
+        hf_token=_pick("HF_TOKEN", "hf_token") or _pick("HUGGING_FACE_HUB_TOKEN", "hf_token"),
     )
 
 
@@ -360,11 +355,6 @@ def get_settings() -> Settings:
         load_dotenv()  # fall back to default search
 
     raw = _load_yaml()
-
-    # Simple top-level override: GENIE_DEPLOYMENT=local|live.
-    if os.environ.get("GENIE_DEPLOYMENT"):
-        raw["deployment"] = os.environ["GENIE_DEPLOYMENT"]
-    _apply_env_overrides(raw)
 
     yaml_secrets = raw.pop("secrets", None) or {}
 

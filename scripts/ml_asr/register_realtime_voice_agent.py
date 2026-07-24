@@ -65,7 +65,17 @@ def main() -> None:
     os.environ["HF_HOME"] = str(hf_cache)
     os.environ["HF_HUB_CACHE"] = str(hf_cache)
 
-    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    # HF token from config (secrets.hf_token); env is only a fallback.
+    try:
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+        from genie_voice.config import get_settings
+
+        hf_token = get_settings().secrets.hf_token or None
+    except Exception:  # noqa: BLE001
+        hf_token = None
+    hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     snapshot_download(
         repo_id=args.base_model,
         local_dir=str(model_dir),

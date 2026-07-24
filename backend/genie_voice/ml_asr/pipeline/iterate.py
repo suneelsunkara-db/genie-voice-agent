@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from genie_voice.ml_asr.config import EvalConfig, load_config
-from genie_voice.ml_asr.runtime import is_volume_mode
+from genie_voice.ml_asr.runtime import databricks_profile, is_volume_mode
 
 
 @dataclass(frozen=True)
@@ -97,7 +96,7 @@ def reset_state(config: EvalConfig) -> None:
 def sync_state_from_volume(config: EvalConfig) -> dict[str, Any]:
     if is_volume_mode():
         return load_state(config)
-    profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    profile = databricks_profile()
     dbx = ["databricks"]
     if profile:
         dbx = ["databricks", "--profile", profile]
@@ -121,7 +120,7 @@ def _state_path(config: EvalConfig) -> Path:
 
 
 def _upload_state(config: EvalConfig, local_path: Path) -> None:
-    profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    profile = databricks_profile()
     dbx = ["databricks"]
     if profile:
         dbx = ["databricks", "--profile", profile]

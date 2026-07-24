@@ -76,10 +76,7 @@ def resolve_volume_path(template: str) -> str:
 
 
 def benchmark_results_dir() -> Path:
-    """UC Volume path for benchmark results/logs (the canonical store)."""
-    override = os.getenv("MLV_RESULTS_DIR")
-    if override:
-        return Path(override)
+    """UC Volume path for benchmark results/logs (from config)."""
     template = str((_merged_config().get("volume") or {}).get("multilingual_voice_benchmark_path") or "").strip()
     if not template:
         raise RuntimeError("volume.multilingual_voice_benchmark_path is not configured")
@@ -91,48 +88,41 @@ def _benchmark_block() -> dict[str, Any]:
 
 
 def benchmark_api_host() -> str:
-    override = os.getenv("MLV_API_HOST")
-    if override:
-        return override.rstrip("/")
     host = str(_benchmark_block().get("api_host") or "").strip()
     if host:
         return host.rstrip("/")
-    raise RuntimeError("Set MLV_API_HOST or realtime_voice.benchmark.api_host")
+    raise RuntimeError("Set realtime_voice.benchmark.api_host in config")
 
 
 def benchmark_api_prefix() -> str:
-    if os.getenv("MLV_API_PREFIX") is not None:
-        return os.getenv("MLV_API_PREFIX", "").strip("/")
     return str(_benchmark_block().get("api_prefix") or "realtime").strip("/")
 
 
 def databricks_host() -> str:
-    for var in ("DATABRICKS_HOST", "MLV_HOST"):
-        value = os.getenv(var)
-        if value:
-            return value.rstrip("/")
-    return str((_merged_config().get("databricks") or {}).get("host") or "").rstrip("/")
+    # Config is the source of truth; DATABRICKS_HOST is only a fallback the
+    # platform injects when the config value is empty.
+    host = str((_merged_config().get("databricks") or {}).get("host") or "").strip()
+    return (host or os.getenv("DATABRICKS_HOST", "")).rstrip("/")
 
 
 def databricks_profile() -> str | None:
-    profile = os.getenv("DATABRICKS_CONFIG_PROFILE") or os.getenv("DATABRICKS_PROFILE")
-    if profile:
-        return profile.strip() or None
+    """Databricks profile from config (empty on the job -> ambient identity)."""
     value = str((_merged_config().get("databricks") or {}).get("profile") or "").strip()
     return value or None
 
 
 def benchmark_sp_credentials() -> tuple[str | None, str | None]:
-    """Service-principal (client_id, client_secret) for app M2M auth."""
-    client_id = os.getenv("MLV_SP_CLIENT_ID")
-    client_secret = os.getenv("MLV_SP_CLIENT_SECRET")
-    if client_id and client_secret:
-        return client_id.strip(), client_secret.strip()
+    """Service-principal (client_id, client_secret) for app M2M auth.
+
+    Config is the source of truth (realtime_voice.benchmark.auth in
+    config.local.yaml). On the serverless job the secret can't be committed, so
+    it is injected from the workspace secret scope as MLV_SP_CLIENT_ID/SECRET;
+    those env vars are used only as a fallback when config is empty.
+    """
     auth = _benchmark_block().get("auth") or {}
-    return (
-        str(auth.get("client_id") or "").strip() or None,
-        str(auth.get("client_secret") or "").strip() or None,
-    )
+    client_id = str(auth.get("client_id") or "").strip() or os.getenv("MLV_SP_CLIENT_ID", "").strip()
+    client_secret = str(auth.get("client_secret") or "").strip() or os.getenv("MLV_SP_CLIENT_SECRET", "").strip()
+    return (client_id or None, client_secret or None)
 
 
 def delta_catalog() -> str:

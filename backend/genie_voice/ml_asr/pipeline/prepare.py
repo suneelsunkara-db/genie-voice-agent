@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 from typing import Iterable
@@ -13,7 +12,7 @@ from genie_voice.ml_asr.datasets.business_holdout import bootstrap_business_lang
 from genie_voice.ml_asr.datasets.common_voice_business import bootstrap_common_voice_business_language
 from genie_voice.ml_asr.datasets.fleurs import bootstrap_fleurs_language
 from genie_voice.ml_asr.datasets.fleurs_business import bootstrap_fleurs_business_language
-from genie_voice.ml_asr.runtime import is_volume_mode
+from genie_voice.ml_asr.runtime import databricks_profile, is_volume_mode
 
 
 def prepare_dataset(
@@ -101,7 +100,7 @@ def _ensure_remote_dirs(config: EvalConfig, datasets: list[DatasetSpec]) -> None
         for remote_dir in dirs:
             Path(remote_dir).mkdir(parents=True, exist_ok=True)
         return
-    profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    profile = databricks_profile()
     base_cmd = ["databricks"]
     if profile:
         base_cmd.extend(["--profile", profile])
@@ -154,7 +153,7 @@ def _upload_artifacts(
     datasets: list[DatasetSpec],
     languages: list[LanguageCode],
 ) -> None:
-    profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    profile = databricks_profile()
     base_cmd = ["databricks"]
     if profile:
         base_cmd.extend(["--profile", profile])

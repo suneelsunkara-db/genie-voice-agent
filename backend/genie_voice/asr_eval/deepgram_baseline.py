@@ -151,7 +151,9 @@ def _read_volume_audio(path: str) -> bytes:
         tmp_path = Path(tmp.name)
     try:
         cmd = ["databricks", "fs", "cp", uri, str(tmp_path), "--overwrite"]
-        profile = os.environ.get("ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        from genie_voice.ml_asr.runtime import databricks_profile
+
+        profile = databricks_profile()
         if profile:
             cmd = ["databricks", "--profile", profile, "fs", "cp", uri, str(tmp_path), "--overwrite"]
         subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=120, env=os.environ.copy())
@@ -166,10 +168,8 @@ def _read_volume_audio(path: str) -> bytes:
 
 
 def _deepgram_api_key() -> str:
-    key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
-    if key:
-        return key
-
+    # Config is the source of truth (secrets.deepgram_api_key, which itself falls
+    # back to the DEEPGRAM_API_KEY env / secret-scope injection when unset).
     try:
         from genie_voice.config import get_settings
 
@@ -177,7 +177,7 @@ def _deepgram_api_key() -> str:
     except Exception:  # noqa: BLE001
         key = ""
     if not key:
-        raise RuntimeError("DEEPGRAM_API_KEY is not configured")
+        raise RuntimeError("deepgram_api_key is not configured")
     return key
 
 

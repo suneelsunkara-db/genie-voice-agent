@@ -16,8 +16,6 @@ What it does:
 """
 from __future__ import annotations
 
-import os
-
 from genie_voice.config import Settings, get_settings
 from genie_voice.databricks.client import current_user, get_workspace_client
 from genie_voice.datagen.schema import ALL_TABLES, MODEL
@@ -45,7 +43,7 @@ def ensure_tables(client, wh: str, settings: Settings) -> None:
         _try(client, wh, MODEL[table].render_ddl(settings.fqtn), f"ensure table {table}")
 
 
-def bootstrap(settings: Settings | None = None) -> dict[str, str]:
+def bootstrap(settings: Settings | None = None, *, skip_tables: bool = False) -> dict[str, str]:
     settings = settings or get_settings()
     client = get_workspace_client(settings)
     wh = settings.databricks.sql_warehouse_id
@@ -84,8 +82,8 @@ def bootstrap(settings: Settings | None = None) -> dict[str, str]:
         _try(client, wh, f"GRANT ALL PRIVILEGES ON SCHEMA {cat}.{sch} TO {p}", "all privileges on schema")
 
     # 4. Legacy typed table DDL. The task-based deploy owns the current tables,
-    #    so local-deploy skips this by default.
-    if os.environ.get("GENIE_SKIP_TABLE_BOOTSTRAP", "false").lower() in ("1", "true", "yes"):
+    #    so local-deploy skips this by default (pass skip_tables=True / --skip-tables).
+    if skip_tables:
         print("  skipping table/view bootstrap (orchestration tasks own datasets)")
     else:
         ensure_tables(client, wh, settings)
@@ -103,5 +101,7 @@ def bootstrap(settings: Settings | None = None) -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    info = bootstrap()
+    import sys
+
+    info = bootstrap(skip_tables="--skip-tables" in sys.argv)
     print("bootstrap complete:", info)

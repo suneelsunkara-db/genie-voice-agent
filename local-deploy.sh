@@ -17,7 +17,9 @@
 #               OFFLINE -> emulate the whole pipeline in-process (enrich.derive)
 #   9. start UI
 #
-# Everything is config-driven (config/config.yaml + .env). No hardcoded vendors.
+# Everything is config-driven (config/config.yaml + config/config.local.yaml).
+# No GENIE_* env config overrides; the only env used are secrets (.env fallback)
+# and the offline indicator GENIE_LOCAL_VOLUME_DIR set below.
 # =============================================================================
 set -euo pipefail
 
@@ -118,21 +120,18 @@ if [[ "$ONLINE" -eq 1 ]]; then
   WHOAMI="$(dbx current-user me 2>/dev/null | python -c 'import sys,json;print(json.load(sys.stdin).get("userName",""))' 2>/dev/null || true)"
   log "authenticated as: ${WHOAMI:-unknown}"
 
-  # Auto-discover a SQL warehouse if one isn't configured (or env-provided).
+  # SQL warehouse is config-driven (databricks.sql_warehouse_id in
+  # config.yaml / config.local.yaml). Warn if it is missing.
   CFG_WH="$(python -c "import sys;sys.path.insert(0,'backend');from genie_voice.config import get_settings;print(get_settings().databricks.sql_warehouse_id)" 2>/dev/null || true)"
-  if [[ -z "$CFG_WH" && -z "${GENIE_DATABRICKS__SQL_WAREHOUSE_ID:-}" ]]; then
-    WH_ID="$(dbx warehouses list -o json 2>/dev/null | python -c "import sys,json; d=json.load(sys.stdin); ws=d if isinstance(d,list) else d.get('warehouses',[]); run=[w for w in ws if str(w.get('state','')).upper()=='RUNNING']; pick=(run or ws); print(pick[0]['id'] if pick else '')" 2>/dev/null || true)"
-    if [[ -n "$WH_ID" ]]; then
-      export GENIE_DATABRICKS__SQL_WAREHOUSE_ID="$WH_ID"
-      log "auto-selected SQL warehouse: $WH_ID"
-    else
-      log "WARNING: no SQL warehouse configured/found - Databricks steps will be skipped"
-    fi
+  if [[ -z "$CFG_WH" ]]; then
+    log "WARNING: databricks.sql_warehouse_id not set in config - Databricks steps will be skipped"
   fi
 else
   log "no Databricks auth -> OFFLINE mode (local volume dir + in-memory Lakebase)"
+  # GENIE_LOCAL_VOLUME_DIR is the offline-mode indicator (a runtime path, not
+  # workspace config). Its presence makes LakebaseServing fall back to in-memory,
+  # so no config toggle is needed.
   export GENIE_LOCAL_VOLUME_DIR="$RUN_DIR/volume/raw_stt"
-  export GENIE_LAKEBASE__ENABLED=false
 fi
 
 # ---- 3. optional clean reset -------------------------------------------------
@@ -150,7 +149,7 @@ fi
 # ---- 4. bootstrap UC objects + permissions ---------------------------------
 if [[ "$ONLINE" -eq 1 ]]; then
   log "bootstrapping schema + raw_batch_data/raw_streaming_data Volumes + GRANTs (existing catalog)"
-  GENIE_SKIP_TABLE_BOOTSTRAP=true python -m genie_voice.databricks.bootstrap || log "bootstrap failed (check sql_warehouse_id)"
+  python -m genie_voice.databricks.bootstrap --skip-tables || log "bootstrap failed (check sql_warehouse_id)"
 fi
 
 # ---- 5. produce demo/audit files into raw_batch_data -----------------------

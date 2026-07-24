@@ -1,9 +1,11 @@
 """Configuration for the standalone realtime voice API.
 
-Endpoint settings are resolved (in priority order):
-1. ``VOICE_API_*`` environment variables (explicit override), else
-2. the shared ``realtime_voice:`` block in ``config/config.yaml`` (+ local),
-   using the promoted STT/TTS candidate endpoints and ``llm_endpoint``.
+Everything is read from the shared ``realtime_voice:`` block in
+``config/config.yaml`` (deep-merged with ``config/config.local.yaml`` locally):
+the promoted STT/TTS candidate endpoints, ``llm_endpoint``, and the runtime knobs
+(barge-in, warmup, debug). There are no environment overrides; the only env this
+module reads is ``GENIE_CONFIG``, which merely points at which config file to load
+on Databricks jobs/apps.
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ class RealtimeSettings:
     # Voice barge-in (interrupting the reply by talking) is only reliable with
     # headphones or AEC. With echo-cancellation off on speakers, the assistant's
     # own voice re-enters the mic and falsely interrupts, so this is OFF by
-    # default. Enable with VOICE_ALLOW_BARGE_IN=1 when using headphones.
+    # default. Enable via realtime_voice.allow_barge_in in config when on headphones.
     allow_barge_in: bool = False
     # LLM sampling + tool-calling knobs. Qwen3-Next accepts `temperature` and
     # `tools` (unlike claude-sonnet-5), so both are enabled by default.
@@ -53,22 +55,15 @@ class RealtimeSettings:
     supported_languages: tuple[str, ...] = ()
     stt_languages: tuple[str, ...] = ()
     tts_languages: tuple[str, ...] = ()
-
-    @classmethod
-    def from_env(cls) -> "RealtimeSettings":
-        required = {
-            "VOICE_API_STT_ENDPOINT": os.getenv("VOICE_API_STT_ENDPOINT", ""),
-            "VOICE_API_LLM_ENDPOINT": os.getenv("VOICE_API_LLM_ENDPOINT", ""),
-            "VOICE_API_TTS_ENDPOINT": os.getenv("VOICE_API_TTS_ENDPOINT", ""),
-        }
-        missing = [key for key, value in required.items() if not value]
-        if missing:
-            raise RuntimeError(f"Missing realtime API settings: {', '.join(missing)}")
-        return cls(
-            stt_endpoint=required["VOICE_API_STT_ENDPOINT"],
-            llm_endpoint=required["VOICE_API_LLM_ENDPOINT"],
-            tts_endpoint=required["VOICE_API_TTS_ENDPOINT"],
-        )
+    # Startup priming of the serving replicas (off-thread). Disable via
+    # realtime_voice.warmup: false in config (e.g. for fast local iteration).
+    warmup_enabled: bool = True
+    # STT warm-up passes fired at startup. A cold GPU replica's warm-up spans
+    # several inferences, so >1 pass reliably lands the first real turn warm.
+    stt_warmup_passes: int = 3
+    # Diagnostics: dump each finalized turn's PCM to a WAV (realtime_voice.debug_audio).
+    debug_audio: bool = False
+    debug_audio_dir: str = "/tmp/realtime_audio"
 
     @classmethod
     def from_config(cls, config_dir: str | Path | None = None) -> "RealtimeSettings":
@@ -85,6 +80,7 @@ class RealtimeSettings:
             stt_endpoint=stt,
             llm_endpoint=llm,
             tts_endpoint=tts,
+            allow_barge_in=bool(rv.get("allow_barge_in", False)),
             llm_temperature=float(llm_defaults.get("temperature", 0.4)),
             llm_max_tokens=int(llm_defaults.get("max_tokens", 512)),
             llm_tools_enabled=bool(llm_defaults.get("tools_enabled", True)),
@@ -94,18 +90,16 @@ class RealtimeSettings:
             stt_languages=tuple(_first_supported(rv.get("stt_candidates"))),
             tts_languages=tuple(_first_supported(rv.get("tts_candidates"))),
             supported_languages=_supported_languages(rv),
+            warmup_enabled=bool(rv.get("warmup", True)),
+            stt_warmup_passes=max(1, int(rv.get("stt_warmup_passes", 3))),
+            debug_audio=bool(rv.get("debug_audio", False)),
+            debug_audio_dir=str(rv.get("debug_audio_dir", "/tmp/realtime_audio")),
         )
 
     @classmethod
     def resolve(cls, config_dir: str | Path | None = None) -> "RealtimeSettings":
-        """Env override first, then the shared config block."""
-        settings = cls.from_env() if os.getenv("VOICE_API_STT_ENDPOINT") else cls.from_config(config_dir)
-        import dataclasses
-
-        barge = os.getenv("VOICE_ALLOW_BARGE_IN")
-        if barge is not None:
-            settings = dataclasses.replace(settings, allow_barge_in=barge == "1")
-        return settings
+        """Resolve from the shared config block (the single source of truth)."""
+        return cls.from_config(config_dir)
 
 
 def _repo_config_dir() -> Path:
@@ -132,9 +126,17 @@ def _load_realtime_voice(config_dir: str | Path | None) -> dict[str, Any]:
 
 
 def databricks_profile(config_dir: str | Path | None = None) -> str | None:
-    """Databricks CLI profile for SDK auth (config block, then env, else default)."""
-    profile = (_load_merged(config_dir).get("databricks") or {}).get("profile")
-    return profile or os.getenv("DATABRICKS_CONFIG_PROFILE") or None
+    """Databricks CLI profile for SDK auth, from the config file only.
+
+    Real value lives in ``config.local.yaml`` for local dev; on Databricks Apps
+    ``databricks.profile`` is empty and the injected service-principal OAuth
+    creds are used (``profile=None``). An unfilled template placeholder like
+    ``"<your-databricks-profile>"`` is treated as unset.
+    """
+    profile = (_load_merged(config_dir).get("databricks") or {}).get("profile") or None
+    if profile and str(profile).startswith("<"):
+        return None
+    return profile
 
 
 def _databricks_block(config_dir: str | Path | None = None) -> dict[str, Any]:
@@ -154,13 +156,8 @@ def delta_schema(config_dir: str | Path | None = None) -> str:
 def sql_warehouse_id(config_dir: str | Path | None = None) -> str:
     """SQL warehouse used to query the benchmark Delta tables.
 
-    Env wins so Databricks Apps can inject it (``GENIE_DATABRICKS__SQL_WAREHOUSE_ID``
-    from the attached ``sql-warehouse`` resource); otherwise the merged config.
+    From ``databricks.sql_warehouse_id`` in the config file (source of truth).
     """
-    for var in ("GENIE_DATABRICKS__SQL_WAREHOUSE_ID", "DATABRICKS_SQL_WAREHOUSE_ID"):
-        value = os.getenv(var)
-        if value and value.strip():
-            return value.strip()
     return str(_databricks_block(config_dir).get("sql_warehouse_id") or "").strip()
 
 
@@ -186,10 +183,7 @@ def resolve_volume_path(template: str, config_dir: str | Path | None = None) -> 
 
 
 def benchmark_results_dir(config_dir: str | Path | None = None) -> Path:
-    """UC Volume directory for multilingual voice benchmark artifacts."""
-    override = os.getenv("MLV_RESULTS_DIR")
-    if override:
-        return Path(override)
+    """UC Volume directory for multilingual voice benchmark artifacts (from config)."""
     cfg = _load_merged(config_dir or config_dir_from_env())
     template = str((cfg.get("volume") or {}).get("multilingual_voice_benchmark_path") or "").strip()
     if not template:
@@ -202,19 +196,14 @@ def benchmark_summary_path(config_dir: str | Path | None = None) -> Path:
 
 
 def benchmark_api_host(config_dir: str | Path | None = None) -> str:
-    override = os.getenv("MLV_API_HOST")
-    if override:
-        return override.rstrip("/")
     block = (_load_merged(config_dir or config_dir_from_env()).get("realtime_voice") or {}).get("benchmark") or {}
     host = str(block.get("api_host") or "").strip()
     if host:
         return host.rstrip("/")
-    raise RuntimeError("Set MLV_API_HOST or realtime_voice.benchmark.api_host")
+    raise RuntimeError("Set realtime_voice.benchmark.api_host in config")
 
 
 def benchmark_api_prefix(config_dir: str | Path | None = None) -> str:
-    if os.getenv("MLV_API_PREFIX") is not None:
-        return os.getenv("MLV_API_PREFIX", "").strip("/")
     block = (_load_merged(config_dir or config_dir_from_env()).get("realtime_voice") or {}).get("benchmark") or {}
     return str(block.get("api_prefix") or "realtime").strip("/")
 

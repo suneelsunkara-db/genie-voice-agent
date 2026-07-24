@@ -18,7 +18,9 @@ def submit_serverless_step(
     wait: bool = True,
 ) -> dict[str, Any]:
     config = load_config(config_path=config_path)
-    profile = os.environ.get("ML_ASR_DATABRICKS_PROFILE") or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    from genie_voice.ml_asr.runtime import databricks_profile
+
+    profile = databricks_profile()
     dbx = ["databricks"]
     if profile:
         dbx = ["databricks", "--profile", profile]
@@ -134,10 +136,14 @@ def _serverless_environment_variables(config: EvalConfig) -> dict[str, str]:
         "ML_ASR_DEEPGRAM_SECRET_KEY": config.serverless_deepgram_secret_key,
         "GENIE_CONFIG": f"{config.remote_jobs_dir}/package/config/config.yaml",
     }
-    for key in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
-        value = os.environ.get(key)
-        if value:
-            env[key] = value
+    # HF token for model-weight downloads on the job. Source of truth is config
+    # (secrets.hf_token in config.local.yaml); env is only a fallback.
+    from genie_voice.config import get_settings
+
+    hf = get_settings().secrets.hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if hf:
+        env["HF_TOKEN"] = hf
+        env["HUGGING_FACE_HUB_TOKEN"] = hf
     return env
 
 

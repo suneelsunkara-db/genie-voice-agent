@@ -24,7 +24,6 @@ if ! python -c "import genie_voice" >/dev/null 2>&1; then
   python -m pip install -q -e "$ROOT/backend[ml-asr]" || python -m pip install -q -e "$ROOT/backend"
 fi
 
-export ML_ASR_DATABRICKS_PROFILE="${ML_ASR_DATABRICKS_PROFILE:-${DATABRICKS_CONFIG_PROFILE:-fe-vm-vdm-classic-rcn6ip}}"
-export DATABRICKS_CONFIG_PROFILE="$ML_ASR_DATABRICKS_PROFILE"
-
+# Databricks profile is read from config (databricks.profile in
+# config.local.yaml) by the Python code — no env profile is set here.
 exec python -m genie_voice.ml_asr.cli "$@"
