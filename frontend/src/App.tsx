@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, CustomerWithIssue, InteractionLanguage, StatusResponse } from "./api/client";
+import { useUiLocale } from "./i18n";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
 import { CockpitPage } from "./components/CockpitPage";
@@ -13,6 +14,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(() => window.location.hash || "#/");
   const [interactionLanguage, setInteractionLanguage] = useState<InteractionLanguage>("en-US");
+
+  // Load (and cache) the pre-generated UI-copy bundle for the selected language;
+  // re-renders the tree once it lands so uiCopy() picks up the localized chrome.
+  useUiLocale(interactionLanguage);
 
   useEffect(() => {
     let active = true;
@@ -60,12 +65,10 @@ export default function App() {
   const showBenchmark = page === "#/asr-benchmark";
 
   useEffect(() => {
+    // The UI language picker defaults to English and stays where the agent puts
+    // it. Only correct the selection if it somehow isn't a supported language.
     const supported = status?.languages?.supported ?? [];
     const defaultLanguage = status?.languages?.default;
-    if (defaultLanguage && interactionLanguage === "en-US" && defaultLanguage !== "en-US") {
-      setInteractionLanguage(defaultLanguage);
-      return;
-    }
     if (supported.length > 0 && !supported.some((item) => item.code === interactionLanguage)) {
       setInteractionLanguage(defaultLanguage ?? supported[0].code);
     }

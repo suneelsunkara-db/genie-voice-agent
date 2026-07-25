@@ -2,20 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CustomerWithIssue,
   InteractionLanguage,
+  InteractionLanguageOption,
   StatusResponse,
 } from "../api/client";
 import architectureHero from "../assets/genie-voice-architecture.jpg";
 import { sortCustomersForQueue, SPOTLIGHT_CUSTOMER_ID, useCustomerCall } from "../hooks/useCustomerCall";
 import { customerIssueTags } from "../lib/customerIssues";
-import { uiCopy } from "../i18n";
+import { contentLanguage, languageLabel, uiCopy } from "../i18n";
 import { CockpitSession } from "./CallList";
 import {
   letterAt,
   SentientBrandLockup,
   SentientChoice,
   SentientHCol,
-  SentientSessionHead,
   SentientStep,
+  SentientTopBar,
+  type TopBarHighlight,
 } from "./sentient/Sentient";
 
 function CockpitLoadingHero({ alt, status }: { alt: string; status: string }) {
@@ -74,6 +76,52 @@ export function CockpitPage({
     [selectedCustomer, copy]
   );
 
+  // Voice-first language picker: the options are whatever the backend voice loop
+  // supports end-to-end (~24, from one config-driven catalog), deduped across the
+  // Chinese ASR variants. Native labels come from Intl.DisplayNames, so there's
+  // no hardcoded per-language name list here.
+  const languageOptions = useMemo<InteractionLanguageOption[]>(() => {
+    const supported = status?.languages?.supported ?? [];
+    const seen = new Set<string>();
+    const opts: InteractionLanguageOption[] = [];
+    for (const item of supported) {
+      const code = contentLanguage(item.code);
+      if (seen.has(code)) continue;
+      seen.add(code);
+      opts.push({ code, label: languageLabel(code, code), english_name: item.english_name });
+    }
+    if (opts.length === 0) {
+      opts.push({ code: "en-US", label: languageLabel("en-US", "en-US") });
+    }
+    return opts;
+  }, [status?.languages]);
+
+  const supportedLanguageCount = languageOptions.length;
+
+  // Value-prop highlights for the top bar. Colors map to accents in sentient.css.
+  const topBarHighlights = useMemo<TopBarHighlight[]>(
+    () => [
+      { label: copy.hlInsights, accent: "insight" },
+      { label: copy.hlResolution, accent: "resolution" },
+      { label: copy.hlHoldTime, accent: "hold" },
+      { label: copy.hlTokenomics, accent: "cost" },
+      { label: copy.hlReasoning, accent: "reasoning" },
+    ],
+    [copy]
+  );
+
+  // Highlight the Asian languages in the top-bar context (native names), drawn
+  // from whatever the config actually supports — a headline feature of the demo.
+  const asianLanguageChips = useMemo(() => {
+    const asian = new Set([
+      "th", "ja", "ko", "zh", "vi", "id", "ms", "fil", "hi", "yue", "km", "lo", "my",
+    ]);
+    return languageOptions
+      .filter((item) => asian.has(item.code.split("-")[0].toLowerCase()))
+      .map((item) => item.label ?? item.english_name ?? item.code)
+      .filter((name): name is string => Boolean(name));
+  }, [languageOptions]);
+
   if (customersLoading && !customers.length) {
     return <CockpitLoadingHero alt={copy.cockpitArchitectureAlt} status={copy.connectingWorkspace} />;
   }
@@ -93,19 +141,24 @@ export function CockpitPage({
     <div className="sentient-cockpit">
       <div className="sentient-h-rail">
         <header className="sentient-h-rail-bar">
-          <SentientSessionHead
-            kicker={copy.activeCustomer}
-            name={selectedCustomer?.full_name ?? "…"}
-            callLabel={selectedCall ? `${copy.call} ${selectedCall.call_id}` : undefined}
-            issues={activeIssueTags}
+          <SentientTopBar
+            contextKicker={copy.voiceStackKicker}
+            contextDesc={copy.voiceStackDesc(supportedLanguageCount)}
+            highlights={topBarHighlights}
+            languagesNote={copy.voiceStackLangs(supportedLanguageCount)}
+            languageChips={asianLanguageChips}
+            languageLabel={copy.interactionLanguage}
+            options={languageOptions}
+            value={interactionLanguage}
+            onChange={onLanguageChange}
           />
         </header>
 
         <div className="sentient-h-rail-cols">
           <SentientHCol
             step={1}
-            title="Who needs assist?"
-            description="Pick a customer"
+            title={copy.queueTitle}
+            description={copy.queueDesc}
             className="sentient-h-col-queue"
           >
             <div className="sentient-h-choices">
@@ -126,6 +179,9 @@ export function CockpitPage({
               layout="horizontal"
               call={selectedCall}
               customer={selectedCustomer}
+              customerName={selectedCustomer?.full_name ?? null}
+              callLabel={`${copy.call} ${selectedCall.call_id}`}
+              issueTags={activeIssueTags}
               sttProvider={status?.stt_provider ?? "deepgram"}
               languageOptions={status?.languages?.supported}
               defaultLanguage={status?.languages?.default}
@@ -139,13 +195,13 @@ export function CockpitPage({
             />
           ) : (
             <div className="sentient-h-session">
-              <SentientHCol step={2} title="On the call" description="No live call">
+              <SentientHCol step={2} title={copy.onCallTitle} description={copy.noLiveCall}>
                 <p className="sentient-muted-text">{copy.noLiveCallDetail}</p>
               </SentientHCol>
-              <SentientHCol step={3} title="Genie assist" description="—">
+              <SentientHCol step={3} title={copy.genieColTitle} description="—">
                 <p className="sentient-muted-text">{copy.noLiveCallDetail}</p>
               </SentientHCol>
-              <SentientHCol step={4} title="Resolution" description="—">
+              <SentientHCol step={4} title={copy.resolutionColTitle} description="—">
                 <p className="sentient-muted-text">{copy.noLiveCallDetail}</p>
               </SentientHCol>
             </div>

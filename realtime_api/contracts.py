@@ -84,6 +84,10 @@ class SessionStart:
     context: str | None = None
     call_id: str | None = None
     customer_id: str | None = None
+    # The language the agent *selected* in the UI. STT still auto-detects per
+    # turn (``language`` stays "auto"); this is only used to warn the caller when
+    # the detected speech doesn't match what they picked. None disables the check.
+    expected_language: str | None = None
 
     @classmethod
     def from_event(cls, payload: dict) -> "SessionStart":
@@ -91,6 +95,7 @@ class SessionStart:
         language = str(payload.get("language") or "auto")
         if language != "auto" and not LANGUAGE_TAG_RE.fullmatch(language):
             raise ValueError("language must be 'auto' or a BCP 47 tag, for example en-US or th-TH")
+        expected_language = _optional_language_tag(payload.get("expected_language"))
         sample_rate_hz = int(payload.get("sample_rate_hz") or 16_000)
         if sample_rate_hz not in {8_000, 16_000, 24_000, 48_000}:
             raise ValueError("sample_rate_hz must be one of 8000, 16000, 24000, or 48000")
@@ -106,6 +111,7 @@ class SessionStart:
             context=_optional_context(payload.get("context")),
             call_id=_optional_str(payload.get("call_id")),
             customer_id=_optional_str(payload.get("customer_id")),
+            expected_language=expected_language,
         )
 
 
@@ -137,3 +143,15 @@ def _optional_str(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text if text else None
+
+
+def _optional_language_tag(value: object) -> str | None:
+    """Accept a BCP 47 tag / base code (e.g. 'en' or 'en-US'); ignore 'auto'/blank."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text == "auto":
+        return None
+    if not LANGUAGE_TAG_RE.fullmatch(text):
+        raise ValueError("expected_language must be a BCP 47 tag, for example en-US or th")
+    return text

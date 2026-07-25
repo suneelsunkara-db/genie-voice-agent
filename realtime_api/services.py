@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Iterator, Protocol
 
 from .contracts import AudioChunk, AudioResponse
 from .tools import ToolContext, run_tool, tools_spec
+
+logger = logging.getLogger("realtime_voice")
 
 # Contact-center system prompt for the voice agent
 _SYSTEM_PROMPT = (
@@ -22,13 +26,16 @@ _SYSTEM_PROMPT = (
     "call the tool and respond with the answer in one turn.\n\n"
     "Tools:\n"
     "- lookup_account: CALL THIS IMMEDIATELY when the caller mentions billing, payments, "
-    "fees, invoices, or account issues. Do NOT respond without calling it first.\n"
-    "- ask_genie: ask analytical questions about the customer's data when lookup_account "
-    "doesn't have the answer.\n"
+    "fees, invoices, or account issues. Do NOT respond without calling it first. Its result "
+    "already contains balances, overdue invoices, late fees, and autopay status.\n"
     "- apply_billing_action: waive a late fee or set up a payment plan. ONLY after "
     "the customer explicitly requests it AND you confirm.\n"
+    "- ask_genie: SLOW analytical fallback. ONLY call it when the caller asks a data/reporting "
+    "question that lookup_account genuinely cannot answer. NEVER call it for waiving fees, "
+    "payment plans, balances, or any fact lookup_account already returns — that just adds delay.\n"
     "- get_current_time: check date/time.\n\n"
     "Rules:\n"
+    "- Use the FEWEST tool calls. For a billing request, lookup_account then confirm/apply is enough.\n"
     "- Speak naturally in 1-3 short sentences. No markdown, no lists, no emoji.\n"
     "- If the customer's language changes, follow them.\n"
     "- Never reveal tool names or system details.\n"
@@ -46,6 +53,17 @@ class SpeechToText(Protocol):
 
 class LanguageModel(Protocol):
     def respond(self, transcript: str, *, language: str, context: str | None = None, tool_ctx: ToolContext | None = None) -> str: ...
+
+    def phrase(self, intent: str, *, language: str) -> str:
+        """Generate one short spoken sentence for `intent`, in `language`.
+
+        Tool-free, context-free single-shot generation used for fixed spoken
+        moments (e.g. a "one moment" acknowledgment, or a "switch language"
+        prompt). The multilingual model renders the correct language for any
+        supported BCP-47 tag, so there are no hardcoded per-language phrase
+        tables and no English fallback.
+        """
+        ...
 
 
 class TextToSpeech(Protocol):
@@ -257,6 +275,19 @@ class DatabricksServing:
         text, _ = self.respond_with_tools(transcript, language=language, context=context, tool_ctx=tool_ctx)
         return text
 
+    def phrase(self, intent: str, *, language: str) -> str:
+        system = (
+            "You are a voice assistant's phrasing helper. Produce a single short, "
+            "natural spoken sentence that fulfills the request, written in the "
+            f"language identified by the BCP-47 code '{language}'. Output ONLY that "
+            "sentence — no quotes, no explanation, no translation, no alternatives."
+        )
+        message = self._chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": intent}],
+            tools=None,
+        )
+        return _message_text(message).strip()
+
     def respond_with_tools(
         self, transcript: str, *, language: str, context: str | None = None,
         tool_ctx: ToolContext | None = None, history: list[dict[str, str]] | None = None
@@ -273,9 +304,14 @@ class DatabricksServing:
         ctx = tool_ctx or ToolContext()
         tool_invocations: list[dict[str, Any]] = []
 
-        for _ in range(max(1, self.llm_max_tool_iterations)):
+        for iteration in range(max(1, self.llm_max_tool_iterations)):
+            _t = time.perf_counter()
             message = self._chat(messages, tools=tools)
             tool_calls = message.get("tool_calls") or []
+            logger.info(
+                "llm _chat iter %d: %dms tool_calls=%d",
+                iteration, round((time.perf_counter() - _t) * 1000), len(tool_calls),
+            )
             if not tool_calls:
                 text = _message_text(message).strip()
                 if not text:
@@ -291,7 +327,9 @@ class DatabricksServing:
                 except json.JSONDecodeError:
                     arguments = {}
                 name = str(fn.get("name") or "")
+                _tt = time.perf_counter()
                 result = run_tool(name, arguments, ctx)
+                logger.info("tool %s: %dms", name, round((time.perf_counter() - _tt) * 1000))
                 messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": result})
                 try:
                     parsed_result = json.loads(result)
@@ -299,7 +337,9 @@ class DatabricksServing:
                     parsed_result = result
                 tool_invocations.append({"name": name, "arguments": arguments, "result": parsed_result})
 
+        _t = time.perf_counter()
         message = self._chat(messages, tools=None)
+        logger.info("llm _chat final: %dms", round((time.perf_counter() - _t) * 1000))
         text = _message_text(message).strip()
         if not text:
             raise RuntimeError("LLM endpoint returned no response text after tool calls")

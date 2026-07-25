@@ -14,6 +14,7 @@ import {
 } from "../api/client";
 import { WS_BASE_URL } from "../config";
 import { recommend } from "../guidance";
+import { CustomerIssueTag } from "../lib/customerIssues";
 import {
   VoiceUiState,
 } from "../lib/micStream";
@@ -24,6 +25,7 @@ import {
   startRealtimeVoice,
 } from "../lib/realtimeVoice";
 import {
+  languageLabel,
   localizedValue,
   localizeResolutionNote,
   uiCopy,
@@ -111,6 +113,9 @@ function localizedRecommendation(
 export function CockpitSession({
   call,
   customer,
+  customerName = null,
+  callLabel,
+  issueTags = [],
   sttProvider,
   languageOptions,
   defaultLanguage,
@@ -126,6 +131,9 @@ export function CockpitSession({
 }: {
   call: CallState;
   customer: CustomerWithIssue | null;
+  customerName?: string | null;
+  callLabel?: string;
+  issueTags?: CustomerIssueTag[];
   sttProvider: string;
   languageOptions?: InteractionLanguageOption[];
   defaultLanguage?: InteractionLanguage;
@@ -153,6 +161,10 @@ export function CockpitSession({
   const [resetBusy, setResetBusy] = useState(false);
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>({ phase: "idle" });
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
+  const [languageMismatch, setLanguageMismatch] = useState<{
+    expected: string;
+    detected: string;
+  } | null>(null);
   const availableLanguages =
     languageOptions && languageOptions.length > 0 ? languageOptions : INTERACTION_LANGUAGES;
   const language = selectedLanguage;
@@ -169,6 +181,7 @@ export function CockpitSession({
     setGenieErr(null);
     setResolutionEvents([]);
     setAssistMeta(null);
+    setLanguageMismatch(null);
     api
       .callAccount(call.call_id)
       .then((f) => active && setFacts(f))
@@ -288,8 +301,54 @@ export function CockpitSession({
   const hCompact = layout === "horizontal";
   const panelClass = hCompact ? "sentient-panel-inner" : "sentient-glass";
 
+  const mismatchMessage = languageMismatch
+    ? copy.languageMismatch(
+        languageLabel(languageMismatch.expected, language),
+        languageLabel(languageMismatch.detected, language)
+      )
+    : null;
+
   const conversationPanel = (
     <div className={`${panelClass} sentient-conversation`}>
+          {hCompact && customerName && (
+            <div className="sentient-identity">
+              <div className="sentient-identity-main">
+                <span className="sentient-identity-name">{customerName}</span>
+                {callLabel && <span className="sentient-identity-call">{callLabel}</span>}
+              </div>
+              {issueTags.length > 0 && (
+                <div className="sentient-identity-tags">
+                  {issueTags.map((tag) => (
+                    <span
+                      key={tag.id}
+                      className={`sentient-identity-tag${tag.warn ? " is-warn" : ""}`}
+                    >
+                      {tag.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {mismatchMessage && (
+            <div className="sentient-lang-mismatch" role="alert">
+              <span className="sentient-lang-mismatch-icon" aria-hidden="true">⚠</span>
+              <span>{mismatchMessage}</span>
+              <button
+                className="sentient-lang-mismatch-switch"
+                onClick={() => {
+                  const base = languageMismatch!.detected.split("-")[0].toLowerCase();
+                  const target = availableLanguages.find(
+                    (item) => item.code.split("-")[0].toLowerCase() === base
+                  );
+                  if (target) onLanguageChange(target.code);
+                  setLanguageMismatch(null);
+                }}
+              >
+                {copy.interactionLanguage}
+              </button>
+            </div>
+          )}
           {!hCompact && (
           <RecommendationCard
             rec={rec}
@@ -320,7 +379,15 @@ export function CockpitSession({
           )}
           {hCompact && (
             <div className="sentient-row-between sentient-conv-tools">
-              <span className="sentient-muted-text">Transcript</span>
+              <span className="sentient-muted-text">
+                {copy.transcriptLabel}
+                {detectedLanguage && (
+                  <span className="sentient-lang-badge" title="Detected from caller's speech">
+                    {" · "}
+                    {detectedLanguage}
+                  </span>
+                )}
+              </span>
               <button className="sentient-btn-ghost sentient-btn-sm" onClick={resetScenario} disabled={resetBusy}>
                 {resetBusy ? copy.resetting : copy.resetScenario}
               </button>
@@ -377,7 +444,11 @@ export function CockpitSession({
             customerId={String(facts?.customer_id ?? call.customer_id ?? "")}
             sttProvider={sttProvider}
             language={language}
+            expectedLanguage={language}
             compact={hCompact}
+            onLanguageMismatch={(expected, detected) =>
+              setLanguageMismatch({ expected, detected })
+            }
             onNudge={(n) => {
               setLive(n.live);
               setAssistMeta(n);
@@ -420,11 +491,10 @@ export function CockpitSession({
             onRemoveLastCustomerTurn={onRemoveLastCustomerTurn}
             onVoiceUiChange={setVoiceUi}
             onLanguageDetected={(lang) => {
+              // Show what STT heard, but never silently switch the agent's
+              // selection — a mismatch surfaces via the warning banner instead
+              // so the agent stays in control of the workspace language.
               setDetectedLanguage(lang);
-              const mapped = lang.includes("-") ? lang : `${lang}-${lang.toUpperCase()}`;
-              if (availableLanguages.some((item) => item.code === mapped)) {
-                onLanguageChange(mapped as InteractionLanguage);
-              }
             }}
             onAccountFacts={(newFacts) => setFacts(newFacts)}
           />
@@ -606,21 +676,13 @@ export function CockpitSession({
   if (layout === "horizontal") {
     return (
       <div className="sentient-h-session">
-        <SentientHCol
-          step={2}
-          title="On the call"
-          description="Voice → transcript → response"
-        >
+        <SentientHCol step={2} title={copy.onCallTitle} description={copy.onCallDesc}>
           {conversationPanel}
         </SentientHCol>
-        <SentientHCol
-          step={3}
-          title="Genie assist"
-          description="Facts, invoices, live query"
-        >
+        <SentientHCol step={3} title={copy.genieColTitle} description={copy.genieColDesc}>
           {geniePanel}
         </SentientHCol>
-        <SentientHCol step={4} title="Resolution" description="Issue journey to close">
+        <SentientHCol step={4} title={copy.resolutionColTitle} description={copy.resolutionColDesc}>
           {resolutionPanel}
         </SentientHCol>
       </div>
@@ -1008,6 +1070,7 @@ function LiveAssist({
   callId,
   customerId,
   language,
+  expectedLanguage,
   compact = false,
   onNudge,
   onLocalTurn,
@@ -1015,12 +1078,14 @@ function LiveAssist({
   onRemoveLastCustomerTurn: _onRemoveLastCustomerTurn,
   onVoiceUiChange,
   onLanguageDetected,
+  onLanguageMismatch,
   onAccountFacts,
 }: {
   callId: string;
   customerId: string;
   sttProvider: string;
   language: InteractionLanguage;
+  expectedLanguage?: InteractionLanguage;
   compact?: boolean;
   onNudge: (n: LiveNudge) => void;
   onLocalTurn: (turn: LocalTurn) => void;
@@ -1028,6 +1093,7 @@ function LiveAssist({
   onRemoveLastCustomerTurn: () => void;
   onVoiceUiChange: (state: VoiceUiState) => void;
   onLanguageDetected?: (lang: string) => void;
+  onLanguageMismatch?: (expected: string, detected: string) => void;
   onAccountFacts?: (facts: any) => void;
 }) {
   const copy = uiCopy(language);
@@ -1038,9 +1104,20 @@ function LiveAssist({
   const rtSessionRef = useRef<RealtimeVoiceSession | null>(null);
   const playbackRef = useRef<AudioPlaybackQueue | null>(null);
   const voicePhaseRef = useRef<VoiceUiState["phase"]>("idle");
+  // Last mic level, kept in a ref so frequent onLevel updates don't churn state.
+  const micLevelRef = useRef(0.15);
+  // Half-duplex echo control: while the agent's TTS is playing through the
+  // speakers we mute the mic so the playback doesn't loop back in and get
+  // re-transcribed as a bogus customer turn. Resumed once playback drains.
+  const micGatedRef = useRef(false);
+  const resumeMicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
+      if (resumeMicTimerRef.current) {
+        clearTimeout(resumeMicTimerRef.current);
+        resumeMicTimerRef.current = null;
+      }
       rtSessionRef.current?.close();
       rtSessionRef.current = null;
       playbackRef.current?.close();
@@ -1056,14 +1133,18 @@ function LiveAssist({
 
     try {
       voicePhaseRef.current = "speaking";
-      onVoiceUiChange({ phase: "speaking", source: "mic", interimText: "", micLevel: 0.15 });
+      onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
 
       if (!playbackRef.current) {
         playbackRef.current = new AudioPlaybackQueue(24_000);
       }
 
       const session = await startRealtimeVoice(WS_BASE_URL, callId, customerId, {
+        onLanguageMismatch: (expected, detected) => {
+          onLanguageMismatch?.(expected, detected);
+        },
         onLevel: (level) => {
+          micLevelRef.current = level;
           if (voicePhaseRef.current === "speaking") {
             onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: level });
           }
@@ -1090,10 +1171,29 @@ function LiveAssist({
         },
         onResponseAudio: (pcmB64, sampleRate, final) => {
           const { samples } = decodePcmChunk(pcmB64, sampleRate);
+          // Mute the mic for the duration of playback (half-duplex) so the
+          // agent's own voice from the speakers isn't captured and transcribed.
+          if (!micGatedRef.current) {
+            micGatedRef.current = true;
+            rtSessionRef.current?.pauseMic();
+            if (resumeMicTimerRef.current) {
+              clearTimeout(resumeMicTimerRef.current);
+              resumeMicTimerRef.current = null;
+            }
+          }
           playbackRef.current?.enqueue(samples, sampleRate);
           if (final) {
             voicePhaseRef.current = "speaking";
-            onVoiceUiChange({ phase: "speaking", source: "mic", interimText: "", micLevel: 0.15 });
+            onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
+            // Resume the mic once the queued audio finishes draining, plus a
+            // short tail so the speaker's decay doesn't leak into the first frame.
+            const waitMs = (playbackRef.current?.msUntilIdle() ?? 0) + 350;
+            if (resumeMicTimerRef.current) clearTimeout(resumeMicTimerRef.current);
+            resumeMicTimerRef.current = setTimeout(() => {
+              micGatedRef.current = false;
+              resumeMicTimerRef.current = null;
+              rtSessionRef.current?.resumeMic();
+            }, waitMs);
           }
         },
         onToolCalled: (name, result) => {
@@ -1137,7 +1237,7 @@ function LiveAssist({
             onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
           }
         },
-      });
+      }, expectedLanguage);
       rtSessionRef.current = session;
       setInCall(true);
     } catch (e) {
@@ -1148,6 +1248,11 @@ function LiveAssist({
   };
 
   const endCall = () => {
+    if (resumeMicTimerRef.current) {
+      clearTimeout(resumeMicTimerRef.current);
+      resumeMicTimerRef.current = null;
+    }
+    micGatedRef.current = false;
     rtSessionRef.current?.close();
     rtSessionRef.current = null;
     playbackRef.current?.flush();
@@ -1220,7 +1325,7 @@ function LiveAssist({
         )}
         {inCall && (
           <span className="sentient-muted-text sentient-mic-hint">
-            Listening — speak naturally
+            {copy.liveListeningHint}
           </span>
         )}
       </div>

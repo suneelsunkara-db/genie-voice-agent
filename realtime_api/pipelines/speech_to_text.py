@@ -5,7 +5,7 @@ from typing import AsyncIterator
 
 from ..session import VoiceSession
 from . import ServingBundle
-from ._shared import resolve_language, transcribe
+from ._shared import language_mismatch, resolve_language, transcribe
 
 
 async def process_turn(
@@ -18,6 +18,13 @@ async def process_turn(
     if turn_id != session.turn_id:
         return
     if not transcript.strip():
+        return
+    # Language gate: if the caller isn't speaking the selected language, don't
+    # surface the off-language transcript — warn instead. This route has no TTS
+    # stage, so the (spoken) switch-language prompt is the assist pipeline's job.
+    mismatch = language_mismatch(session, detected)
+    if mismatch:
+        yield {"type": "language.mismatch", "turn_id": turn_id, **mismatch}
         return
     language = resolve_language(session, detected)
     yield {

@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from .benchmarks import load_benchmarks
 from .capabilities import LEGACY_VOICE_PATH, SPEECH_LLM_TOOLASSIST_SPEECH
 from .config import RealtimeSettings
+from .languages import DEFAULT_TAG, language_options
 from .pipelines import ServingBundle
 from .services import DatabricksServing
 from .ws.handler import ROUTES, capabilities_payload, make_ws_handler
@@ -125,9 +126,16 @@ def create_app(
     @app.get("/v1/languages")
     async def languages() -> dict:
         # End-to-end supported languages (STT ∩ TTS); lets the UI show them on
-        # page load without opening a WebSocket session.
-        langs = list(settings.supported_languages)
-        return {"languages": langs, "count": len(langs)}
+        # page load without opening a WebSocket session. Each option carries its
+        # BCP-47 tag + English name; the client resolves native labels via
+        # Intl.DisplayNames so there is no server-side per-language name map.
+        options = language_options(settings.supported_languages)
+        return {
+            "languages": [item["code"] for item in options],
+            "options": options,
+            "default": DEFAULT_TAG,
+            "count": len(options),
+        }
 
     @app.get("/v1/capabilities")
     async def capabilities() -> dict:

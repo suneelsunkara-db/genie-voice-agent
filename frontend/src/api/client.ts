@@ -1,13 +1,13 @@
 import { API_BASE_URL } from "../config";
 
-export type InteractionLanguage =
-  | "en-US"
-  | "th-TH"
-  | "id-ID"
-  | "zh-CN"
-  | "zh-CN-sensevoice"
-  | "zh-CN-paraformer";
+// Voice-first: the selected interaction language is any BCP-47 tag the realtime
+// voice loop supports (~24, sourced from the backend catalog). It's a string —
+// not a closed union — so selection scales with the API's supported set. The zh
+// ASR-comparison variants below remain first-class named codes.
+export type InteractionLanguage = string;
 
+// zh ASR-comparison variants surfaced in the benchmark UI (kept explicit because
+// they map to specific STT models, not distinct interaction languages).
 export const INTERACTION_LANGUAGES: { code: InteractionLanguage; label: string }[] = [
   { code: "en-US", label: "English" },
   { code: "th-TH", label: "Thai" },
@@ -19,8 +19,9 @@ export const INTERACTION_LANGUAGES: { code: InteractionLanguage; label: string }
 
 export interface InteractionLanguageOption {
   code: InteractionLanguage;
-  label: string;
+  label?: string;
   english_name?: string;
+  base?: string;
   stt_endpoint?: string;
 }
 

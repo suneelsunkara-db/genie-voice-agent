@@ -1,33 +1,75 @@
-"""Interaction-language contract for multilingual voice assist.
+"""Interaction-language catalog for multilingual voice assist.
+
+Single source of truth for the languages Genie Voice supports. The *set* is
+config-driven — the end-to-end voice loop's STT ∩ TTS languages from the
+``realtime_voice.*`` config block — so it always matches what the picker and the
+voice APIs offer (~24 today). This module maps each base ISO-639 code to a
+BCP-47 tag + English name and generates one ``LanguageSpec`` per language; native
+display names are resolved on the client via ``Intl.DisplayNames``, so there are
+no hand-maintained per-language name maps. The zh ASR-comparison variants remain
+first-class codes for the benchmark UI.
 
 The selected language controls speech recognition and customer-facing prose. It
-does not change the current business data contract: account facts remain the
-canonical USD/INV-900xx dataset unless the schema is explicitly localized later.
+does not change the business data contract: account facts remain the canonical
+USD/INV-900xx dataset unless the schema is explicitly localized later.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 import re
 
-LanguageCode = Literal[
-    "en-US",
-    "th-TH",
-    "id-ID",
-    "zh-CN",
-    "zh-CN-sensevoice",
-    "zh-CN-paraformer",
-]
+# A language code is any BCP-47 tag the config supports (~24) plus the zh
+# ASR-comparison variants — no longer a closed union, so selection scales with
+# the config rather than a hardcoded list.
+LanguageCode = str
 
 DEFAULT_LANGUAGE: LanguageCode = "en-US"
-SUPPORTED_LANGUAGES: tuple[LanguageCode, ...] = (
-    "en-US",
-    "th-TH",
-    "id-ID",
-    "zh-CN",
-    "zh-CN-sensevoice",
-    "zh-CN-paraformer",
-)
+
+# Canonical reference table: base ISO-639 code -> (default BCP-47 tag, English
+# name). Complete for every code that can appear in the Qwen3-ASR / VoxCPM2
+# candidate lists, so the supported set (their intersection) is always fully
+# described with no fallback. This is the ONE language reference table in the
+# codebase — realtime_api imports it from here.
+LANGUAGE_CATALOG: dict[str, tuple[str, str]] = {
+    "ar": ("ar-SA", "Arabic"),
+    "cs": ("cs-CZ", "Czech"),
+    "da": ("da-DK", "Danish"),
+    "de": ("de-DE", "German"),
+    "el": ("el-GR", "Greek"),
+    "en": ("en-US", "English"),
+    "es": ("es-ES", "Spanish"),
+    "fa": ("fa-IR", "Persian"),
+    "fi": ("fi-FI", "Finnish"),
+    "fil": ("fil-PH", "Filipino"),
+    "fr": ("fr-FR", "French"),
+    "he": ("he-IL", "Hebrew"),
+    "hi": ("hi-IN", "Hindi"),
+    "hu": ("hu-HU", "Hungarian"),
+    "id": ("id-ID", "Indonesian"),
+    "it": ("it-IT", "Italian"),
+    "ja": ("ja-JP", "Japanese"),
+    "km": ("km-KH", "Khmer"),
+    "ko": ("ko-KR", "Korean"),
+    "lo": ("lo-LA", "Lao"),
+    "mk": ("mk-MK", "Macedonian"),
+    "ms": ("ms-MY", "Malay"),
+    "my": ("my-MM", "Burmese"),
+    "nl": ("nl-NL", "Dutch"),
+    "no": ("nb-NO", "Norwegian"),
+    "pl": ("pl-PL", "Polish"),
+    "pt": ("pt-PT", "Portuguese"),
+    "ro": ("ro-RO", "Romanian"),
+    "ru": ("ru-RU", "Russian"),
+    "sv": ("sv-SE", "Swedish"),
+    "sw": ("sw-KE", "Swahili"),
+    "th": ("th-TH", "Thai"),
+    "tr": ("tr-TR", "Turkish"),
+    "vi": ("vi-VN", "Vietnamese"),
+    "yue": ("yue-HK", "Cantonese"),
+    "zh": ("zh-CN", "Chinese"),
+}
+
 _ZH_REPLY_INSTRUCTION = (
     "Reply in natural Simplified Chinese while preserving invoice IDs, customer IDs, and USD amounts exactly."
 )
@@ -43,81 +85,135 @@ class LanguageSpec:
     reply_instruction: str
 
 
-LANGUAGE_SPECS: dict[LanguageCode, LanguageSpec] = {
-    "en-US": LanguageSpec(
-        code="en-US",
-        label="English",
-        english_name="English",
-        deepgram_language="en-US",
-        whisper_language="english",
-        reply_instruction="Use plain spoken English.",
-    ),
-    "th-TH": LanguageSpec(
-        code="th-TH",
-        label="Thai",
-        english_name="Thai",
-        deepgram_language="th",
-        whisper_language="thai",
-        reply_instruction="Reply in natural Thai while preserving invoice IDs, customer IDs, and USD amounts exactly.",
-    ),
-    "id-ID": LanguageSpec(
-        code="id-ID",
-        label="Indonesian",
-        english_name="Indonesian",
-        deepgram_language="id",
-        whisper_language="indonesian",
-        reply_instruction="Reply in natural Indonesian while preserving invoice IDs, customer IDs, and USD amounts exactly.",
-    ),
+def _base(tag: str) -> str:
+    return (tag or "").split("-", 1)[0].lower()
+
+
+def _reply_instruction(english_name: str) -> str:
+    return (
+        f"Reply in natural {english_name} while preserving invoice IDs, "
+        "customer IDs, and USD amounts exactly."
+    )
+
+
+def _make_spec(tag: str, english_name: str) -> LanguageSpec:
+    return LanguageSpec(
+        code=tag,
+        label=english_name,
+        english_name=english_name,
+        deepgram_language=_base(tag),
+        whisper_language=english_name.lower(),
+        reply_instruction=_reply_instruction(english_name),
+    )
+
+
+# The zh ASR-comparison variants (same spoken language, different STT models) and
+# the Qwen3 zh-CN label are kept distinct so the benchmark comparison stays clear.
+_SPEC_OVERRIDES: dict[str, LanguageSpec] = {
     "zh-CN": LanguageSpec(
-        code="zh-CN",
-        label="Chinese (Qwen3)",
-        english_name="Mandarin Chinese (Qwen3)",
-        deepgram_language="zh",
-        whisper_language="chinese",
-        reply_instruction=_ZH_REPLY_INSTRUCTION,
+        "zh-CN", "Chinese (Qwen3)", "Mandarin Chinese (Qwen3)", "zh", "chinese", _ZH_REPLY_INSTRUCTION
     ),
     "zh-CN-sensevoice": LanguageSpec(
-        code="zh-CN-sensevoice",
-        label="Chinese (SenseVoice)",
-        english_name="Mandarin Chinese (SenseVoice)",
-        deepgram_language="zh",
-        whisper_language="chinese",
-        reply_instruction=_ZH_REPLY_INSTRUCTION,
+        "zh-CN-sensevoice", "Chinese (SenseVoice)", "Mandarin Chinese (SenseVoice)", "zh", "chinese", _ZH_REPLY_INSTRUCTION
     ),
     "zh-CN-paraformer": LanguageSpec(
-        code="zh-CN-paraformer",
-        label="Chinese (Paraformer)",
-        english_name="Mandarin Chinese (Paraformer 8k)",
-        deepgram_language="zh",
-        whisper_language="chinese",
-        reply_instruction=_ZH_REPLY_INSTRUCTION,
+        "zh-CN-paraformer", "Chinese (Paraformer)", "Mandarin Chinese (Paraformer 8k)", "zh", "chinese", _ZH_REPLY_INSTRUCTION
     ),
 }
 
+# Extra ASR-comparison codes not present in the config intersection (they share
+# the zh-CN audio language) but surfaced in the benchmark UI.
+_ZH_VARIANT_CODES: tuple[str, ...] = ("zh-CN-sensevoice", "zh-CN-paraformer")
 
-def normalize_language(language: str | None) -> LanguageCode:
-    value = (language or DEFAULT_LANGUAGE).strip()
-    aliases = {
+
+def _config_supported_tags() -> list[str]:
+    """End-to-end voice languages (STT ∩ TTS) as BCP-47 tags, from config.
+
+    Reads the same ``realtime_voice`` block the voice APIs resolve from, so this
+    catalog and the picker/voice loop never diverge. Degrades to English-only if
+    the config can't be read (keeps imports safe in bare contexts) — that's an
+    availability guard, not a per-language fallback.
+    """
+    try:
+        from genie_voice.config.settings import _load_yaml
+
+        rv = _load_yaml().get("realtime_voice") or {}
+    except Exception:  # noqa: BLE001
+        rv = {}
+
+    def _langs(key: str) -> list[str]:
+        for candidate in (rv.get(key) or {}).values():
+            langs = candidate.get("supported_languages")
+            if langs:
+                return [str(x).lower() for x in langs]
+        return []
+
+    stt = set(_langs("stt_candidates"))
+    tts = _langs("tts_candidates")
+    bases = [c for c in tts if c in stt] if (stt and tts) else (tts or sorted(stt))
+    tags = [LANGUAGE_CATALOG[b][0] for b in bases if b in LANGUAGE_CATALOG]
+    if "en-US" not in tags:
+        tags.insert(0, "en-US")
+    return tags
+
+
+def _build_specs() -> tuple[tuple[str, ...], dict[str, LanguageSpec]]:
+    order: list[str] = []
+    specs: dict[str, LanguageSpec] = {}
+    for tag in _config_supported_tags():
+        if tag in specs:
+            continue
+        name = LANGUAGE_CATALOG.get(_base(tag), (tag, tag))[1]
+        specs[tag] = _SPEC_OVERRIDES.get(tag) or _make_spec(tag, name)
+        order.append(tag)
+    for tag in _ZH_VARIANT_CODES:
+        if tag not in specs:
+            specs[tag] = _SPEC_OVERRIDES[tag]
+            order.append(tag)
+    return tuple(order), specs
+
+
+SUPPORTED_LANGUAGES, LANGUAGE_SPECS = _build_specs()
+
+
+def _build_aliases() -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for tag, spec in LANGUAGE_SPECS.items():
+        aliases[tag.lower()] = tag
+        aliases.setdefault(_base(tag), tag)
+        aliases.setdefault(spec.english_name.lower(), tag)
+        base = _base(tag)
+        if base in LANGUAGE_CATALOG:
+            aliases.setdefault(LANGUAGE_CATALOG[base][1].lower(), tag)
+    # Friendly overrides so the common names resolve to the primary code.
+    aliases.update({
         "en": "en-US",
         "english": "en-US",
-        "th": "th-TH",
-        "thai": "th-TH",
-        "id": "id-ID",
-        "indonesian": "id-ID",
         "zh": "zh-CN",
         "zh-cn": "zh-CN",
         "chinese": "zh-CN",
         "mandarin": "zh-CN",
-        "zh-cn-sensevoice": "zh-CN-sensevoice",
         "sensevoice": "zh-CN-sensevoice",
-        "zh-cn-paraformer": "zh-CN-paraformer",
+        "zh-cn-sensevoice": "zh-CN-sensevoice",
         "paraformer": "zh-CN-paraformer",
-    }
-    canonical = aliases.get(value.lower(), value)
-    if canonical not in SUPPORTED_LANGUAGES:
-        supported = ", ".join(SUPPORTED_LANGUAGES)
-        raise ValueError(f"Unsupported language {value!r}; supported: {supported}")
-    return canonical  # type: ignore[return-value]
+        "zh-cn-paraformer": "zh-CN-paraformer",
+    })
+    return aliases
+
+
+_ALIASES = _build_aliases()
+
+
+def normalize_language(language: str | None) -> LanguageCode:
+    value = (language or DEFAULT_LANGUAGE).strip()
+    if value in LANGUAGE_SPECS:
+        return value
+    low = value.lower()
+    canonical = _ALIASES.get(low) or _ALIASES.get(_base(low))
+    if canonical:
+        return canonical
+    supported = ", ".join(SUPPORTED_LANGUAGES)
+    raise ValueError(f"Unsupported language {value!r}; supported: {supported}")
 
 
 def is_chinese_language(language: str | None) -> bool:

@@ -1,9 +1,29 @@
+import { useEffect, useSyncExternalStore } from "react";
+
 import { InteractionLanguage } from "./api/client";
 
 export function contentLanguage(language: InteractionLanguage | undefined): InteractionLanguage {
   if (!language) return "en-US";
   if (language.startsWith("zh-CN")) return "zh-CN";
   return language;
+}
+
+/**
+ * Human-readable language name via the browser's built-in Intl.DisplayNames —
+ * works for every language with no hand-maintained name maps. Pass `inLanguage`
+ * to get the name in a specific locale (e.g. the caller's detected language
+ * named in the agent's selected language); omit it for the native endonym used
+ * in the picker (the language's name in its own language).
+ */
+export function languageLabel(code: string, inLanguage?: string): string {
+  const base = (code || "").split("-")[0].toLowerCase();
+  if (!base) return code;
+  try {
+    const display = new Intl.DisplayNames([inLanguage || code], { type: "language" });
+    return display.of(base) || code;
+  } catch {
+    return code;
+  }
 }
 
 type UiCopy = {
@@ -35,6 +55,25 @@ type UiCopy = {
   interactionLanguage: string;
   multilingualUSP: string;
   multilingualUSPDesc: string;
+  voiceStackKicker: string;
+  voiceStackDesc: (count: number) => string;
+  voiceStackLangs: (count: number) => string;
+  hlInsights: string;
+  hlResolution: string;
+  hlHoldTime: string;
+  hlTokenomics: string;
+  hlReasoning: string;
+  queueTitle: string;
+  queueDesc: string;
+  onCallTitle: string;
+  onCallDesc: string;
+  genieColTitle: string;
+  genieColDesc: string;
+  resolutionColTitle: string;
+  resolutionColDesc: string;
+  transcriptLabel: string;
+  liveListeningHint: string;
+  languageMismatch: (selectedName: string, detectedName: string) => string;
   sessionPulseLive: string;
   sessionPulseNow: string;
   issue: string;
@@ -188,6 +227,27 @@ const EN: UiCopy = {
   interactionLanguage: "Interaction language",
   multilingualUSP: "Multilingual assist",
   multilingualUSPDesc: "Speech, Genie answers, and this workspace follow your language choice.",
+  voiceStackKicker: "Real-time voice · Genie + open-source models on Databricks",
+  voiceStackDesc: () =>
+    `Speak naturally; Genie reasons over governed customer insights & billing and answers out loud in the caller's own language.`,
+  voiceStackLangs: (count) => `${count} languages end-to-end, including`,
+  hlInsights: "Live customer insights",
+  hlResolution: "Faster resolution",
+  hlHoldTime: "Less hold time",
+  hlTokenomics: "Lower tokenomics vs frontier AI",
+  hlReasoning: "Deeper reasoning · Genie Agent mode",
+  queueTitle: "Who needs assist?",
+  queueDesc: "Pick a customer",
+  onCallTitle: "On the call",
+  onCallDesc: "Voice → transcript → response",
+  genieColTitle: "Genie assist",
+  genieColDesc: "Facts, invoices, live query",
+  resolutionColTitle: "Resolution",
+  resolutionColDesc: "Issue journey to close",
+  transcriptLabel: "Transcript",
+  liveListeningHint: "Listening — speak naturally",
+  languageMismatch: (selectedName, detectedName) =>
+    `You selected ${selectedName}, but the caller seems to be speaking ${detectedName}. Switch language to match.`,
   sessionPulseLive: "Live on call",
   sessionPulseNow: "Session focus",
   issue: "issue",
@@ -345,6 +405,27 @@ const TH: UiCopy = {
   interactionLanguage: "ภาษาที่ใช้โต้ตอบ",
   multilingualUSP: "รองรับหลายภาษา",
   multilingualUSPDesc: "การถอดเสียง คำตอบจาก Genie และหน้าจอนี้จะตามภาษาที่คุณเลือก",
+  voiceStackKicker: "เสียงเรียลไทม์ · Genie + โมเดลโอเพนซอร์สบน Databricks",
+  voiceStackDesc: () =>
+    `พูดได้อย่างเป็นธรรมชาติ Genie วิเคราะห์ข้อมูลเชิงลึกของลูกค้าและใบแจ้งหนี้ที่กำกับดูแล แล้วตอบด้วยเสียงในภาษาของลูกค้า`,
+  voiceStackLangs: (count) => `${count} ภาษาแบบครบวงจร รวมถึง`,
+  hlInsights: "ข้อมูลเชิงลึกลูกค้าแบบสด",
+  hlResolution: "ปิดเคสได้เร็วขึ้น",
+  hlHoldTime: "เวลารอสายน้อยลง",
+  hlTokenomics: "ต้นทุนต่ำกว่าโมเดล AI ชั้นนำ",
+  hlReasoning: "วิเคราะห์ลึกขึ้นด้วย Genie Agent mode",
+  queueTitle: "ใครต้องการความช่วยเหลือ?",
+  queueDesc: "เลือกลูกค้า",
+  onCallTitle: "ระหว่างสาย",
+  onCallDesc: "เสียง → ข้อความ → การตอบกลับ",
+  genieColTitle: "ผู้ช่วย Genie",
+  genieColDesc: "ข้อมูล ใบแจ้งหนี้ การค้นหาสด",
+  resolutionColTitle: "การแก้ไขปัญหา",
+  resolutionColDesc: "เส้นทางการปิดเคส",
+  transcriptLabel: "บทสนทนา",
+  liveListeningHint: "กำลังฟัง — พูดได้ตามธรรมชาติ",
+  languageMismatch: (selectedName, detectedName) =>
+    `คุณเลือก${selectedName} แต่ดูเหมือนผู้โทรกำลังพูด${detectedName} เปลี่ยนภาษาให้ตรงกันได้`,
   sessionPulseLive: "สดบนสาย",
   sessionPulseNow: "โฟกัสเซสชัน",
   issue: "ปัญหา",
@@ -493,6 +574,27 @@ const ID: UiCopy = {
   interactionLanguage: "Bahasa interaksi",
   multilingualUSP: "Dukungan multibahasa",
   multilingualUSPDesc: "Ucapan, jawaban Genie, dan workspace ini mengikuti bahasa yang Anda pilih.",
+  voiceStackKicker: "Suara real-time · Genie + model open-source di Databricks",
+  voiceStackDesc: () =>
+    `Bicara secara alami; Genie menalar atas wawasan pelanggan & tagihan yang tergovernansi lalu menjawab dengan suara dalam bahasa penelepon.`,
+  voiceStackLangs: (count) => `${count} bahasa menyeluruh, termasuk`,
+  hlInsights: "Wawasan pelanggan langsung",
+  hlResolution: "Penyelesaian lebih cepat",
+  hlHoldTime: "Waktu tunggu lebih singkat",
+  hlTokenomics: "Biaya lebih rendah vs model AI terdepan",
+  hlReasoning: "Penalaran lebih dalam · Genie Agent mode",
+  queueTitle: "Siapa yang butuh bantuan?",
+  queueDesc: "Pilih pelanggan",
+  onCallTitle: "Saat panggilan",
+  onCallDesc: "Suara → transkrip → respons",
+  genieColTitle: "Bantuan Genie",
+  genieColDesc: "Fakta, tagihan, kueri langsung",
+  resolutionColTitle: "Penyelesaian",
+  resolutionColDesc: "Perjalanan masalah hingga selesai",
+  transcriptLabel: "Transkrip",
+  liveListeningHint: "Mendengarkan — bicara dengan alami",
+  languageMismatch: (selectedName, detectedName) =>
+    `Anda memilih ${selectedName}, tetapi penelepon tampaknya berbicara ${detectedName}. Ganti bahasa agar sesuai.`,
   sessionPulseLive: "Langsung di panggilan",
   sessionPulseNow: "Fokus sesi",
   sidebarTitle: "Pelanggan bermasalah",
@@ -649,6 +751,27 @@ const ZH: UiCopy = {
   interactionLanguage: "交互语言",
   multilingualUSP: "多语言支持",
   multilingualUSPDesc: "语音、Genie 回答和此工作区都会跟随您选择的语言。",
+  voiceStackKicker: "实时语音 · Genie + Databricks 上的开源模型",
+  voiceStackDesc: () =>
+    `自然开口即可；Genie 基于受治理的客户洞察与账单进行推理，并用客户的语言语音作答。`,
+  voiceStackLangs: (count) => `${count} 种语言端到端，包括`,
+  hlInsights: "实时客户洞察",
+  hlResolution: "更快解决问题",
+  hlHoldTime: "更短等待时间",
+  hlTokenomics: "成本低于顶级 AI 模型",
+  hlReasoning: "更深推理 · Genie Agent 模式",
+  queueTitle: "谁需要协助？",
+  queueDesc: "选择客户",
+  onCallTitle: "通话中",
+  onCallDesc: "语音 → 转录 → 回复",
+  genieColTitle: "Genie 协助",
+  genieColDesc: "事实、账单、实时查询",
+  resolutionColTitle: "问题解决",
+  resolutionColDesc: "问题处理直至关闭",
+  transcriptLabel: "对话记录",
+  liveListeningHint: "正在聆听 — 请自然说话",
+  languageMismatch: (selectedName, detectedName) =>
+    `您选择了${selectedName}，但来电者似乎在说${detectedName}。请切换到匹配的语言。`,
   sessionPulseLive: "通话进行中",
   sessionPulseNow: "会话焦点",
   sidebarTitle: "有问题的客户",
@@ -787,17 +910,144 @@ const ZH: UiCopy = {
   zhAsrSelectedModel: "当前选择",
 };
 
-const COPY: Record<InteractionLanguage, UiCopy> = {
-  "en-US": EN,
-  "th-TH": TH,
-  "id-ID": ID,
-  "zh-CN": ZH,
-  "zh-CN-sensevoice": ZH,
-  "zh-CN-paraformer": ZH,
+// ---------------------------------------------------------------------------
+// Message-catalog machinery (all-language UI chrome, no per-language authoring)
+// ---------------------------------------------------------------------------
+// The 4 locales below are hand-authored for top quality. Every other supported
+// language is covered by a committed, LLM-pre-generated bundle in ./locales/
+// (see scripts/i18n) that is loaded on demand and cached — so runtime pays ZERO
+// translation cost (the LLM runs offline at build time). A missing/failed bundle
+// degrades safely to English; it never blocks or crashes.
+
+// Templated (function-valued) UiCopy fields and their positional placeholder
+// names. Used to flatten a UiCopy into a translatable {placeholder} catalog and
+// to rebuild the closures from a translated catalog.
+const FUNCTION_FIELDS: Record<string, string[]> = {
+  customersInQueue: ["count"],
+  monthsTenure: ["months"],
+  voiceStackDesc: ["count"],
+  voiceStackLangs: ["count"],
+  languageMismatch: ["selectedName", "detectedName"],
+  designedAround: ["name"],
+  suggestedAssistQuestion: ["customerId", "callId"],
+  suggestedCallQuestion: ["callId"],
+  customerAskedFor: ["items"],
+  genieConfirmedOverdue: ["count", "amount"],
+  billingUpdated: ["invoice"],
+  billingNotUpdated: ["reason"],
 };
 
+/** Flatten a UiCopy into a translatable catalog of strings + {placeholder} templates. */
+export function flattenCopy(copy: UiCopy): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(copy)) {
+    const value = (copy as Record<string, unknown>)[key];
+    if (typeof value === "function") {
+      const params = FUNCTION_FIELDS[key] ?? [];
+      out[key] = (value as (...a: string[]) => string)(...params.map((p) => `{${p}}`));
+    } else if (typeof value === "string") {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/** The English message catalog — the source the offline generator translates. */
+export const EN_CATALOG = flattenCopy(EN);
+
+/** Rebuild a UiCopy from a (possibly partial) catalog, filling gaps from English. */
+function buildCopy(catalog: Record<string, string>): UiCopy {
+  const merged = { ...EN_CATALOG, ...catalog };
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(merged)) {
+    const params = FUNCTION_FIELDS[key];
+    if (params) {
+      const template = merged[key];
+      out[key] = (...args: unknown[]) => {
+        let text = template;
+        params.forEach((p, i) => {
+          text = text.split(`{${p}}`).join(String(args[i] ?? ""));
+        });
+        return text;
+      };
+    } else {
+      out[key] = merged[key];
+    }
+  }
+  return out as UiCopy;
+}
+
+// Resolved UiCopy per interaction code. Seeded with the hand-authored locales;
+// generated bundles are inserted on demand by ensureLocale().
+const COPY_CACHE = new Map<string, UiCopy>([
+  ["en-US", EN],
+  ["th-TH", TH],
+  ["id-ID", ID],
+  ["zh-CN", ZH],
+]);
+const AUTHORED_CODES = new Set(COPY_CACHE.keys());
+
+// Pre-generated locale bundles, resolved lazily via Vite's glob import. Guarded
+// so this module stays importable under plain Node (offline extraction tool),
+// where `import.meta.glob` doesn't exist.
+const LOCALE_BUNDLES: Record<string, () => Promise<{ default: Record<string, string> }>> =
+  (import.meta as unknown as { env?: unknown }).env
+    ? import.meta.glob<{ default: Record<string, string> }>("./locales/*.json")
+    : {};
+
+// Minimal external store so React re-renders once a lazily-loaded bundle lands.
+let localeVersion = 0;
+const localeListeners = new Set<() => void>();
+const pendingLocales = new Set<string>();
+
+function notifyLocaleChange(): void {
+  localeVersion += 1;
+  for (const listener of localeListeners) listener();
+}
+
+/** Ensure the bundle for `language` is loaded (no-op for authored/loaded codes). */
+export function ensureLocale(language: InteractionLanguage | undefined): void {
+  const code = contentLanguage(language);
+  if (AUTHORED_CODES.has(code) || COPY_CACHE.has(code) || pendingLocales.has(code)) return;
+  const loader = LOCALE_BUNDLES[`./locales/${code}.json`];
+  if (!loader) return; // no bundle yet → English (already cached under en-US)
+  pendingLocales.add(code);
+  loader()
+    .then((mod) => {
+      COPY_CACHE.set(code, buildCopy(mod.default ?? (mod as unknown as Record<string, string>)));
+      notifyLocaleChange();
+    })
+    .catch(() => {
+      /* keep English fallback */
+    })
+    .finally(() => pendingLocales.delete(code));
+}
+
+function subscribeLocale(listener: () => void): () => void {
+  localeListeners.add(listener);
+  return () => localeListeners.delete(listener);
+}
+
+function getLocaleVersion(): number {
+  return localeVersion;
+}
+
+/**
+ * Subscribe the caller to locale-bundle loads and trigger the load for the
+ * given language. Mount ONCE high in the tree; every `uiCopy(language)` call in
+ * the subtree then picks up the translated copy on the next render. Keeping
+ * `uiCopy` itself synchronous means non-component helpers can keep using it.
+ */
+export function useUiLocale(language: InteractionLanguage | undefined): void {
+  useSyncExternalStore(subscribeLocale, getLocaleVersion, getLocaleVersion);
+  useEffect(() => {
+    ensureLocale(language);
+  }, [language]);
+}
+
 export function uiCopy(language: InteractionLanguage | undefined): UiCopy {
-  return COPY[language ?? "en-US"] ?? COPY[contentLanguage(language)] ?? EN;
+  const code = contentLanguage(language);
+  return COPY_CACHE.get(code) ?? EN;
 }
 
 const VALUE_LABELS: Partial<Record<InteractionLanguage, Record<string, Record<string, string>>>> = {

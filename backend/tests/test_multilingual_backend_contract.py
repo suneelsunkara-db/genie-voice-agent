@@ -25,9 +25,15 @@ def test_normalize_language_aliases_and_rejects_unknown():
     assert normalize_language("mandarin") == "zh-CN"
     assert normalize_language("sensevoice") == "zh-CN-sensevoice"
     assert normalize_language("paraformer") == "zh-CN-paraformer"
+    # Voice-first: the catalog now spans the full config-supported set, so
+    # languages like French/Vietnamese resolve instead of raising.
+    assert normalize_language("fr-FR") == "fr-FR"
+    assert normalize_language("french") == "fr-FR"
+    assert normalize_language("vi") == "vi-VN"
 
+    # A code outside the catalog is still rejected (validation, not a fallback).
     try:
-        normalize_language("fr-FR")
+        normalize_language("xx-XX")
     except ValueError as exc:
         assert "Unsupported language" in str(exc)
     else:

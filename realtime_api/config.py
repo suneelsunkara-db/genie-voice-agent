@@ -22,10 +22,11 @@ class RealtimeSettings:
     tts_endpoint: str
     sample_rate_hz: int = 16_000
     # Trailing silence required to treat the turn as finished (end-of-speech
-    # endpointing). Set generously so ordinary pauses *between clauses* don't end
-    # the turn and make the assistant reply while you're mid-sentence. ~1.4s is a
-    # forgiving end-of-utterance gap; lower it for snappier (but choppier) turns.
-    vad_silence_ms: int = 1400
+    # endpointing). Set generously so the caller can speak their FULL sentence —
+    # ordinary mid-sentence / between-clause pauses must not end the turn and make
+    # the assistant reply to half a sentence. 2.5s is a deliberately forgiving
+    # end-of-utterance gap (favors "let them finish" over snappy turnaround).
+    vad_silence_ms: int = 2500
     max_turn_seconds: int = 20
     # Minimum voiced audio before a turn can finalize; filters brief blips and
     # speaker->mic echo (e.g. the assistant's own voice) from firing turns.

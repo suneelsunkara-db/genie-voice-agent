@@ -145,6 +145,81 @@ export function SentientHCol({
   );
 }
 
+export interface TopBarHighlight {
+  label: string;
+  accent: "insight" | "resolution" | "hold" | "cost" | "reasoning";
+}
+
+export function SentientTopBar({
+  contextKicker,
+  contextDesc,
+  highlights,
+  languagesNote,
+  languageChips,
+  languageLabel,
+  options,
+  value,
+  onChange,
+}: {
+  contextKicker: string;
+  contextDesc: string;
+  highlights?: TopBarHighlight[];
+  languagesNote?: string;
+  languageChips?: string[];
+  languageLabel: string;
+  options: InteractionLanguageOption[];
+  value: InteractionLanguage;
+  onChange: (language: InteractionLanguage) => void;
+}) {
+  return (
+    <div className="sentient-topbar">
+      <SentientBrandLockup />
+      <div className="sentient-topbar-context">
+        <span className="sentient-topbar-kicker">{contextKicker}</span>
+        <p className="sentient-topbar-desc">{contextDesc}</p>
+        {highlights && highlights.length > 0 && (
+          <div className="sentient-topbar-highlights">
+            {highlights.map((hl) => (
+              <span key={hl.label} className="sentient-hl" data-accent={hl.accent}>
+                <span aria-hidden className="sentient-hl-dot" />
+                {hl.label}
+              </span>
+            ))}
+          </div>
+        )}
+        {languagesNote && (
+          <p className="sentient-topbar-langs">
+            <span className="sentient-topbar-langs-note">{languagesNote}</span>
+            {(languageChips ?? []).map((name) => (
+              <span key={name} className="sentient-topbar-lang-chip">
+                {name}
+              </span>
+            ))}
+          </p>
+        )}
+      </div>
+      <label className="sentient-topbar-lang">
+        <span className="sentient-topbar-lang-label">{languageLabel}</span>
+        <div className="sentient-lang-select-wrap">
+          <select
+            className="sentient-lang-select"
+            value={value}
+            aria-label={languageLabel}
+            onChange={(event) => onChange(event.target.value)}
+          >
+            {options.map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.label ?? item.english_name ?? item.code}
+              </option>
+            ))}
+          </select>
+          <span aria-hidden className="sentient-lang-select-caret">▾</span>
+        </div>
+      </label>
+    </div>
+  );
+}
+
 export function SentientLanguagePicker({
   kicker,
   description,

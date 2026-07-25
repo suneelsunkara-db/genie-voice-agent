@@ -6,6 +6,28 @@ from dataclasses import dataclass, field
 
 from .contracts import SessionStart
 
+# --- Adaptive energy VAD tuning ---------------------------------------------
+# A single fixed RMS gate can't serve both a quiet mic (real speech falls under
+# it → captured as silence → STT fragments) and a noisy room (ambient sits above
+# it → the turn never ends). Instead we track the background noise floor and gate
+# *relative* to it, with hysteresis so mid-word dips don't flap the state.
+#
+# on  = max(_ABS_MIN_RMS, floor * _ONSET_MULT): energy needed to START speech.
+# off = on * _HANGOVER_RATIO: while already speaking, energy must fall below this
+#       for a frame to count as trailing silence (prevents brief dips ending the
+#       turn). The floor only adapts on non-speech frames, so speech never pulls
+#       the threshold up after itself.
+_ABS_MIN_RMS = 110.0  # ~ -49 dBFS; keeps digital/near silence from ever triggering
+_ONSET_MULT = 2.2
+_HANGOVER_RATIO = 0.55
+_FLOOR_ALPHA = 0.08  # EMA weight for adapting the noise floor toward background
+_INITIAL_NOISE_FLOOR = 80.0  # conservative seed before any calibration frames
+# Hard ceiling on the noise floor: without it, quiet speech misclassified as
+# background can ratchet the floor (and thus the onset gate) upward until real
+# speech no longer registers. Capping the floor keeps the onset gate at/below
+# ~_FLOOR_CEILING * _ONSET_MULT so normal speech always clears it.
+_FLOOR_CEILING = 150.0
+
 
 @dataclass
 class VoiceSession:
@@ -16,6 +38,10 @@ class VoiceSession:
     silence_ms: float = 0.0
     turn_audio_ms: float = 0.0
     voiced_ms: float = 0.0
+    last_rms: float = 0.0
+    # Running background-noise estimate, adapted across the whole call (NOT reset
+    # per turn) so the gate stays calibrated to the caller's room/mic level.
+    noise_floor: float = _INITIAL_NOISE_FLOOR
     busy: bool = False
     history: list = field(default_factory=list)
     _cooldown_until: float = 0.0
@@ -32,13 +58,30 @@ class VoiceSession:
             raise ValueError("PCM s16le audio frame must contain an even number of bytes")
         frame_ms = len(frame) / 2 / self.config.sample_rate_hz * 1000
         rms = _pcm_s16le_rms(frame)
-        began_speech = bool(frame) and not self.speech_active and rms >= 250
-        if rms >= 250:
+        self.last_rms = rms
+
+        on_threshold = max(_ABS_MIN_RMS, self.noise_floor * _ONSET_MULT)
+        off_threshold = on_threshold * _HANGOVER_RATIO
+        # Hysteresis: starting speech needs the (higher) onset threshold; once
+        # speaking, we stay voiced until energy drops below the (lower) hangover
+        # threshold, so a brief between-syllable dip isn't counted as silence.
+        gate = off_threshold if self.speech_active else on_threshold
+        is_voiced = bool(frame) and rms >= gate
+
+        began_speech = is_voiced and not self.speech_active
+        if is_voiced:
             self.speech_active = True
             self.silence_ms = 0.0
             self.voiced_ms += frame_ms
-        elif self.speech_active:
-            self.silence_ms += frame_ms
+        else:
+            if self.speech_active:
+                self.silence_ms += frame_ms
+            # Only non-speech frames update the floor, so speech can't inflate the
+            # threshold. EMA tracks the room, clamped to a ceiling so misclassified
+            # quiet speech can't ratchet the gate above real speech.
+            self.noise_floor += _FLOOR_ALPHA * (rms - self.noise_floor)
+            if self.noise_floor > _FLOOR_CEILING:
+                self.noise_floor = _FLOOR_CEILING
         self.turn_audio_ms += frame_ms
         self.audio.extend(frame)
         return began_speech

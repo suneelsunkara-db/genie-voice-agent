@@ -4,6 +4,7 @@ from __future__ import annotations
 import struct
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from realtime_api.app import create_app
 from realtime_api.config import RealtimeSettings
@@ -20,6 +21,9 @@ class FakeServices:
 
     def respond(self, transcript: str, *, language: str, context: str | None = None, tool_ctx=None) -> str:
         return f"you said {transcript}"
+
+    def phrase(self, intent: str, *, language: str) -> str:
+        return f"[{language}] {intent}"
 
     def synthesize(self, text: str, *, language: str, reference_audio_b64: str | None = None) -> AudioResponse:
         return AudioResponse(audio=b"\x00\x01", mime_type="audio/wav", sample_rate_hz=24_000)
@@ -105,6 +109,59 @@ def test_speech_llm_toolassist_speech_processes_a_finalized_turn() -> None:
         assert audio["final"] is True
 
 
+def test_whole_utterance_transcribed_once_no_partials() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
+        assert ws.receive_json()["type"] == "session.ready"
+        ws.send_bytes(_loud_frame())
+        assert ws.receive_json()["type"] == "speech.started"
+        for _ in range(30):
+            ws.send_bytes(_loud_frame())
+
+        ws.send_json({"type": "audio.end"})
+        # No interim streaming: the whole utterance is transcribed once as final.
+        types: list[str] = []
+        for _ in range(8):
+            types.append(ws.receive_json()["type"])
+            if "transcript.final" in types:
+                break
+        assert "transcript.partial" not in types
+        assert "transcript.final" in types
+
+
+def test_language_gate_speaks_switch_prompt_and_drops_turn() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        # Agent selected Thai; fake STT detects en-US -> the whole turn is gated:
+        # no partials, no transcript.final, no LLM reply. Instead the API warns
+        # (language.mismatch) and *speaks* a switch-language prompt (response.audio).
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language": "en-US",
+                "expected_language": "th-TH",
+                "sample_rate_hz": 16000,
+            }
+        )
+        assert ws.receive_json()["type"] == "session.ready"
+        ws.send_bytes(_loud_frame())
+        assert ws.receive_json()["type"] == "speech.started"
+        for _ in range(30):
+            ws.send_bytes(_loud_frame())
+
+        ws.send_json({"type": "audio.end"})
+        types: list[str] = []
+        for _ in range(12):
+            msg = ws.receive_json()
+            types.append(msg["type"])
+            if msg["type"] == "response.audio" and msg.get("final"):
+                break
+        assert "transcript.partial" not in types
+        assert "transcript.final" not in types  # off-language transcript is gated
+        assert "response.text" not in types  # no agent reply
+        assert "language.mismatch" in types  # visual warning for the UI
+        assert "response.audio" in types  # spoken switch-language prompt
+
+
 def test_legacy_voice_alias_routes_to_speech_llm_toolassist_speech() -> None:
     with _app() as client, client.websocket_connect("/v1/realtime/voice") as ws:
         ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
@@ -126,6 +183,74 @@ def test_speech_to_text_emits_transcript_only() -> None:
         transcript = ws.receive_json()
         assert transcript["type"] == "transcript.final"
         assert transcript["text"] == "hello world"
+
+
+def test_language_mismatch_gates_transcript_on_stt_route() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-to-text") as ws:
+        # Agent picked Thai but the fake STT always detects en-US. This route has
+        # no TTS, so the gate suppresses the off-language transcript.final and
+        # only emits the language.mismatch warning.
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language": "en-US",
+                "expected_language": "th-TH",
+                "sample_rate_hz": 16000,
+            }
+        )
+        assert ws.receive_json()["capability"] == "speech-to-text"
+        _drive_turn(ws)
+        mismatch = ws.receive_json()
+        assert mismatch["type"] == "language.mismatch"
+        assert mismatch["expected"] == "th-TH"
+        assert mismatch["detected"] == "en-US"
+
+
+def test_no_language_mismatch_when_selection_matches() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-to-text") as ws:
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language": "en-US",
+                "expected_language": "en-US",
+                "sample_rate_hz": 16000,
+            }
+        )
+        assert ws.receive_json()["capability"] == "speech-to-text"
+        _drive_turn(ws)
+        assert ws.receive_json()["type"] == "transcript.final"
+        ws.send_json({"type": "session.stop"})
+        # Drain remaining events until the socket closes; none may be a mismatch.
+        try:
+            for _ in range(4):
+                msg = ws.receive_json()
+                assert msg["type"] != "language.mismatch"
+                if msg["type"] == "session.closed":
+                    break
+        except WebSocketDisconnect:
+            pass
+
+
+def test_language_mismatch_canonicalizes_name_vs_tag() -> None:
+    """Regression: STT reports a name ('chinese') while selection is a tag
+    ('zh-CN'). These are the same language and must NOT trigger a mismatch."""
+    from realtime_api.pipelines._shared import language_mismatch
+
+    def _sess(expected: str):
+        return VoiceSession(
+            SessionStart.from_event(
+                {"type": "session.start", "language": "auto", "expected_language": expected}
+            )
+        )
+
+    # Same language reported in different forms -> no gate.
+    assert language_mismatch(_sess("zh-CN"), "chinese") is None
+    assert language_mismatch(_sess("zh-CN"), "zh") is None
+    assert language_mismatch(_sess("en-US"), "english") is None
+    # Genuinely different language -> gate fires with a canonical detected tag.
+    assert language_mismatch(_sess("zh-CN"), "english") == {"expected": "zh-CN", "detected": "en-US"}
+    # Unmappable detection -> never gate (a false mismatch blocks the whole turn).
+    assert language_mismatch(_sess("zh-CN"), "xyz") is None
 
 
 def test_text_to_speech_synthesize() -> None:

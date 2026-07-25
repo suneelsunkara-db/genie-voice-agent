@@ -66,26 +66,38 @@ def create_app() -> FastAPI:
 
         Keeps table creation centralized in LakebaseServing.ensure_schema()
         so new serving tables (like resolution_events) are provisioned once.
-        """
-        try:
-            serving().ensure_schema()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[api-startup] Lakebase schema ensure skipped: {exc}")
-        if settings.lakebase.enabled and not settings.databricks.sql_warehouse_id:
-            print(
-                "[api-startup] WARNING: lakebase.enabled requires databricks.sql_warehouse_id "
-                "for governed UC billing writes; close/billing will fail until configured."
-            )
-        try:
-            from genie_voice.databricks.warehouse_sql import (
-                ensure_billing_adjustments_table,
-                warehouse_configured,
-            )
 
-            if warehouse_configured(settings):
-                ensure_billing_adjustments_table(settings)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[api-startup] UC billing_adjustments ensure skipped: {exc}")
+        Runs OFF-THREAD: schema provisioning hits Lakebase Postgres + the SQL
+        warehouse, both of which can be cold (tens of seconds) or slow. Doing it
+        synchronously here blocks the event loop and prevents the server from ever
+        binding (observed as a startup hang at the Databricks auth step). It is
+        idempotent and only needed before the first billing/resolution write, so
+        we provision it in the background and let the server come up immediately.
+        """
+        import threading
+
+        def _work() -> None:
+            try:
+                serving().ensure_schema()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[api-startup] Lakebase schema ensure skipped: {exc}")
+            if settings.lakebase.enabled and not settings.databricks.sql_warehouse_id:
+                print(
+                    "[api-startup] WARNING: lakebase.enabled requires databricks.sql_warehouse_id "
+                    "for governed UC billing writes; close/billing will fail until configured."
+                )
+            try:
+                from genie_voice.databricks.warehouse_sql import (
+                    ensure_billing_adjustments_table,
+                    warehouse_configured,
+                )
+
+                if warehouse_configured(settings):
+                    ensure_billing_adjustments_table(settings)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[api-startup] UC billing_adjustments ensure skipped: {exc}")
+
+        threading.Thread(target=_work, daemon=True, name="api-schema-ensure").start()
 
     @app.on_event("startup")
     def _warm_databricks_paths() -> None:

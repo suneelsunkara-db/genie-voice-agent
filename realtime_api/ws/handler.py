@@ -137,6 +137,8 @@ async def handle_voice_ws(
                 if began:
                     log_event("speech.started", session_id=session_id, turn_id=session.turn_id + 1)
                     await websocket.send_json({"type": "speech.started", "turn_id": session.turn_id + 1})
+                # Whole-utterance capture: no interim streaming. The turn is buffered
+                # until end-of-speech (trailing silence) and transcribed once.
                 if session.should_finalize(
                     silence_ms=session.config.vad_silence_ms or settings.vad_silence_ms,
                     max_turn_seconds=session.config.max_turn_seconds or settings.max_turn_seconds,
@@ -170,7 +172,12 @@ async def handle_voice_ws(
                     )
                     continue
                 session = VoiceSession(start)
-                log_event("session.start", session_id=session_id, language=session.config.language)
+                log_event(
+                    "session.start",
+                    session_id=session_id,
+                    language=session.config.language,
+                    expected_language=session.config.expected_language,
+                )
                 await websocket.send_json(
                     {
                         "type": "session.ready",
@@ -181,6 +188,13 @@ async def handle_voice_ws(
                         "supported_languages": list(settings.supported_languages),
                     }
                 )
+                # Pre-warm the spoken filler for the selected language while the
+                # caller speaks their first (often cold, tool-heavy) turn, so a
+                # slow turn plays "one moment" instead of dead air.
+                if spec.capability == SPEECH_LLM_TOOLASSIST_SPEECH:
+                    asyncio.ensure_future(
+                        assist_pipeline.warm_filler(bundle, session.config.language)
+                    )
             elif event_type == "audio.end":
                 if not spec.accepts_audio:
                     continue
@@ -260,6 +274,13 @@ async def _start_audio_turn(
     settings: RealtimeSettings,
     on_turn_audio: Callable[[bytes, int, int, str], None] | None,
 ) -> asyncio.Task | None:
+    # Snapshot VAD counters BEFORE finish_turn resets them — this tells us how
+    # much audio/voice the turn captured and why it ended (silence gap vs cap),
+    # plus the adapted noise floor to sanity-check the gate against the room.
+    audio_ms = round(session.turn_audio_ms)
+    voiced_ms = round(session.voiced_ms)
+    trailing_silence_ms = round(session.silence_ms)
+    noise_floor = round(session.noise_floor)
     finished = session.finish_turn()
     if finished is None:
         await _send_error(websocket, "empty_audio", "No audio was received for this turn.")
@@ -270,7 +291,17 @@ async def _start_audio_turn(
     session.busy = True
     if on_turn_audio is not None:
         on_turn_audio(audio, turn_id, session.config.sample_rate_hz, session_id)
-    log_event("turn.started", session_id=session_id, turn_id=turn_id, capability=spec.capability)
+    log_event(
+        "turn.started",
+        session_id=session_id,
+        turn_id=turn_id,
+        capability=spec.capability,
+        audio_ms=audio_ms,
+        voiced_ms=voiced_ms,
+        trailing_silence_ms=trailing_silence_ms,
+        vad_silence_ms=settings.vad_silence_ms,
+        noise_floor=noise_floor,
+    )
     await websocket.send_json({"type": "turn.started", "turn_id": turn_id})
     return asyncio.create_task(
         _emit_audio_turn(websocket, bundle, session, turn_id, audio, session_id, spec)
@@ -325,6 +356,14 @@ async def _emit_audio_turn(
                 log_event("response.text", session_id=session_id, turn_id=turn_id, text=event.get("text"))
             elif etype == "tool.called":
                 log_event("tool.called", session_id=session_id, turn_id=turn_id, name=event.get("name"))
+            elif etype == "language.mismatch":
+                log_event(
+                    "language.mismatch",
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    expected=event.get("expected"),
+                    detected=event.get("detected"),
+                )
             elif etype == "response.audio":
                 audio_chunks += 1
                 if event.get("final"):
@@ -339,9 +378,21 @@ async def _emit_audio_turn(
     except asyncio.CancelledError:
         log_event("turn.cancelled", session_id=session_id, turn_id=turn_id)
         raise
+    except (WebSocketDisconnect, RuntimeError) as exc:
+        # Client went away mid-turn (disconnect, or send-after-close). Not an
+        # inference failure — the turn's results simply have nowhere to go.
+        if isinstance(exc, RuntimeError) and "send" not in str(exc).lower():
+            logger.exception("turn %d failed", turn_id)
+            log_event("turn.error", session_id=session_id, turn_id=turn_id, error=repr(exc))
+        else:
+            log_event("turn.aborted", session_id=session_id, turn_id=turn_id, reason="client_disconnected")
     except Exception as exc:  # noqa: BLE001
-        log_event("turn.error", session_id=session_id, turn_id=turn_id, error=str(exc))
-        await _send_error(websocket, "inference_error", str(exc), turn_id=turn_id)
+        logger.exception("turn %d failed", turn_id)
+        log_event("turn.error", session_id=session_id, turn_id=turn_id, error=repr(exc))
+        try:
+            await _send_error(websocket, "inference_error", str(exc) or exc.__class__.__name__, turn_id=turn_id)
+        except (RuntimeError, WebSocketDisconnect):
+            pass
     finally:
         session.busy = False
         session.discard_buffer()
@@ -372,9 +423,19 @@ async def _emit_synthesize_turn(
     except asyncio.CancelledError:
         log_event("turn.cancelled", session_id=session_id, turn_id=turn_id)
         raise
+    except (WebSocketDisconnect, RuntimeError) as exc:
+        if isinstance(exc, RuntimeError) and "send" not in str(exc).lower():
+            logger.exception("synthesize turn %d failed", turn_id)
+            log_event("turn.error", session_id=session_id, turn_id=turn_id, error=repr(exc))
+        else:
+            log_event("turn.aborted", session_id=session_id, turn_id=turn_id, reason="client_disconnected")
     except Exception as exc:  # noqa: BLE001
-        log_event("turn.error", session_id=session_id, turn_id=turn_id, error=str(exc))
-        await _send_error(websocket, "inference_error", str(exc), turn_id=turn_id)
+        logger.exception("synthesize turn %d failed", turn_id)
+        log_event("turn.error", session_id=session_id, turn_id=turn_id, error=repr(exc))
+        try:
+            await _send_error(websocket, "inference_error", str(exc) or exc.__class__.__name__, turn_id=turn_id)
+        except (RuntimeError, WebSocketDisconnect):
+            pass
     finally:
         session.busy = False
 

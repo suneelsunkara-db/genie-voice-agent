@@ -22,6 +22,7 @@ export interface RealtimeVoiceCallbacks {
   onTurnStarted?: (turnId: number) => void;
   onTurnDone?: (turnId: number) => void;
   onToolCalled?: (name: string, result: unknown, turnId: number) => void;
+  onLanguageMismatch?: (expected: string, detected: string, turnId: number) => void;
   onError?: (code: string, message: string) => void;
   onSessionReady?: (sessionId: string, language: string) => void;
   onLevel?: (level: number) => void;
@@ -69,10 +70,17 @@ export async function startRealtimeVoice(
   wsBaseUrl: string,
   callId: string,
   customerId: string,
-  callbacks: RealtimeVoiceCallbacks
+  callbacks: RealtimeVoiceCallbacks,
+  expectedLanguage?: string
 ): Promise<RealtimeVoiceSession> {
+  // Capture RAW audio for ASR. The browser echo-canceller "locks onto" the TTS
+  // playing through the speakers and then gates the caller's own voice into
+  // fragmented near-silence (observed: turn 1 clean, turns 2+ degrade to ~7%
+  // voiced once the agent has spoken). Noise suppression + auto-gain likewise
+  // distort speech for the STT model. We handle echo ourselves via half-duplex
+  // mic muting during playback, so all three browser DSP stages are disabled.
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   });
 
   const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
@@ -133,6 +141,9 @@ export async function startRealtimeVoice(
           encoding: "pcm_s16le",
           call_id: callId,
           customer_id: customerId,
+          // STT still auto-detects; this is only used to warn on a mismatch
+          // between what the agent selected and what the caller actually speaks.
+          ...(expectedLanguage ? { expected_language: expectedLanguage } : {}),
         })
       );
       resolve();
@@ -177,6 +188,9 @@ export async function startRealtimeVoice(
           break;
         case "tool.called":
           callbacks.onToolCalled?.(msg.name, msg.result, msg.turn_id);
+          break;
+        case "language.mismatch":
+          callbacks.onLanguageMismatch?.(msg.expected, msg.detected, msg.turn_id);
           break;
         case "error":
           callbacks.onError?.(msg.code, msg.message);
@@ -292,6 +306,11 @@ export class AudioPlaybackQueue {
         this.playing = false;
       }
     };
+  }
+
+  /** Milliseconds until all currently-queued audio finishes playing (0 if idle). */
+  msUntilIdle(): number {
+    return Math.max(0, (this.nextStartTime - this.ctx.currentTime) * 1000);
   }
 
   /** Stop all queued audio immediately. */

@@ -43,23 +43,29 @@ _meta_cache: dict[str, object] = {"ts": 0.0, "value": None, "refreshing": False}
 
 
 def _supported_language_options(settings) -> list[dict[str, str]]:
-    routes = {}
-    if settings.providers.stt.active == "databricks":
-        options = settings.providers.stt.active_options()
-        routes = options.get("routes") or options.get("language_routes") or {}
+    """Languages offered by the voice picker.
+
+    Voice-first: the list is the realtime voice loop's end-to-end set (Qwen3-ASR
+    ∩ VoxCPM2, ~24 languages) sourced from one config-driven catalog. Native
+    labels are resolved on the client via Intl.DisplayNames, so no per-language
+    name map lives here. Falls back to the legacy agent-assist specs only if the
+    realtime package/config can't be loaded (keeps /status resilient).
+    """
+    try:
+        from realtime_api.config import RealtimeSettings
+        from realtime_api.languages import language_options
+
+        rt = RealtimeSettings.resolve()
+        options = language_options(rt.supported_languages)
+        if options:
+            return options
+    except Exception:  # noqa: BLE001 — never let a config hiccup break /status
+        pass
+
     out: list[dict[str, str]] = []
     for code in SUPPORTED_LANGUAGES:
         spec = LANGUAGE_SPECS[code]
-        item = {
-            "code": code,
-            "label": spec.label,
-            "english_name": spec.english_name,
-        }
-        route = routes.get(code) or {}
-        endpoint = route.get("endpoint") if isinstance(route, dict) else None
-        if endpoint:
-            item["stt_endpoint"] = str(endpoint)
-        out.append(item)
+        out.append({"code": code, "english_name": spec.english_name})
     return out
 
 

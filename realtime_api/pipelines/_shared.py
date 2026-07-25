@@ -9,6 +9,7 @@ import time
 import wave
 from typing import AsyncIterator
 
+from ..languages import CATALOG, canonical_base, canonical_tag
 from ..session import VoiceSession
 from . import ServingBundle
 
@@ -30,9 +31,38 @@ def split_sentences(text: str) -> list[str]:
 
 
 def resolve_language(session: VoiceSession, detected: str | None) -> str:
+    """The language used for the reply + TTS, as a canonical BCP-47 tag.
+
+    STT may report a name ('chinese') or a bare code ('zh'); canonicalize so
+    downstream LLM/TTS always get a proper tag ('zh-CN'). Prefer the detected
+    language; fall back to the explicit session selection, then English.
+    """
     pref = session.config.language
     stt_language = None if (not pref or pref == "auto") else pref
-    return detected or stt_language or "en-US"
+    return canonical_tag(detected or stt_language or "en-US")
+
+
+def language_mismatch(session: VoiceSession, detected: str | None) -> dict | None:
+    """Report when the detected speech language differs from the UI selection.
+
+    Both sides are canonicalized to an ISO base first — the STT reports a name
+    ('chinese') or bare code ('zh') while the selection is a tag ('zh-CN'), and a
+    naive subtag compare ('zh' vs 'chinese') would false-trigger. The gate only
+    fires on a *confident* cross-language difference: both must resolve to known
+    catalog languages, otherwise we don't gate (a false mismatch blocks the whole
+    turn, which is worse than a missed one). Returns an event payload (without
+    ``type``/``turn_id``) or None.
+    """
+    expected = session.config.expected_language
+    if not expected or not detected:
+        return None
+    exp_base = canonical_base(expected)
+    det_base = canonical_base(detected)
+    if exp_base not in CATALOG or det_base not in CATALOG:
+        return None
+    if exp_base != det_base:
+        return {"expected": expected, "detected": canonical_tag(detected)}
+    return None
 
 
 async def transcribe(
@@ -48,7 +78,14 @@ async def transcribe(
         sample_rate_hz=session.config.sample_rate_hz,
     )
     stt_ms = round((time.perf_counter() - t) * 1000)
-    return transcript, detected, stt_ms
+    # Normalize the STT's detected language ONCE, here at the trust boundary.
+    # Endpoints report it inconsistently — an English name ('chinese'), a bare
+    # code ('zh'), or a tag ('zh-CN'). Canonicalizing to a BCP-47 tag here means
+    # every downstream consumer (mismatch gate, reply language, logging) works
+    # off one clean representation instead of re-parsing raw values. Unmappable
+    # detections pass through unchanged so the gate can recognize them as unknown.
+    canonical = canonical_tag(detected) if detected else None
+    return transcript, canonical, stt_ms
 
 
 async def stream_tts(
