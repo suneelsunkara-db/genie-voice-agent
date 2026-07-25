@@ -362,6 +362,59 @@ export interface ASRBenchmarkOverviewResponse {
   })[];
 }
 
+// ---- Voice observability / eval traces ------------------------------------ //
+export type TraceSpanKind = "STT" | "LLM" | "TOOL" | "TTS" | "GUARD";
+
+export interface TraceSpan {
+  name: string;
+  kind: TraceSpanKind;
+  start_ms: number;
+  end_ms?: number | null;
+  duration_ms?: number | null;
+  status: string;
+  input?: unknown;
+  output?: unknown;
+  attributes?: Record<string, unknown>;
+}
+
+export interface TraceSummary {
+  trace_id: string;
+  session_id?: string;
+  turn_id?: number;
+  call_id?: string | null;
+  customer_id?: string | null;
+  capability?: string;
+  language?: string | null;
+  detected_language?: string | null;
+  status?: string;
+  input_transcript?: string | null;
+  output_text?: string | null;
+  tool_names?: string[];
+  apply_billing_action_called?: boolean;
+  lookup_account_count?: number;
+  llm_iterations?: number;
+  total_ms?: number | null;
+  started_at?: string;
+  created_at?: string;
+}
+
+export interface TraceDetail extends TraceSummary {
+  error?: string | null;
+  spans: TraceSpan[];
+}
+
+export interface TraceSessionRollup {
+  session_id: string;
+  call_id?: string | null;
+  customer_id?: string | null;
+  turns: number;
+  languages: string[];
+  apply_billing_action_called: boolean;
+  lookup_account_total: number;
+  statuses: Record<string, number>;
+  latest?: string | null;
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -463,6 +516,17 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
+  voiceTraces: (opts?: { limit?: number; sessionId?: string; callId?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.sessionId) params.set("session_id", opts.sessionId);
+    if (opts?.callId) params.set("call_id", opts.callId);
+    const query = params.toString();
+    return getJSON<{ traces: TraceSummary[]; count: number }>(`/traces${query ? `?${query}` : ""}`);
+  },
+  voiceTraceSessions: (limit = 200) =>
+    getJSON<{ sessions: TraceSessionRollup[]; count: number }>(`/traces/sessions?limit=${limit}`),
+  voiceTrace: (traceId: string) => getJSON<TraceDetail>(`/traces/${encodeURIComponent(traceId)}`),
   zhAsrComparisons: (callId?: string, limit = 10) => {
     const params = new URLSearchParams();
     if (callId) params.set("call_id", callId);

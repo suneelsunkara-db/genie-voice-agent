@@ -12,10 +12,13 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Iterator, Protocol
+from typing import TYPE_CHECKING, Any, Iterator, Protocol
 
 from .contracts import AudioChunk, AudioResponse
 from .tools import ToolContext, run_tool, tools_spec
+
+if TYPE_CHECKING:
+    from .tracing import TurnTrace
 
 logger = logging.getLogger("realtime_voice")
 
@@ -28,8 +31,9 @@ _SYSTEM_PROMPT = (
     "- lookup_account: CALL THIS IMMEDIATELY when the caller mentions billing, payments, "
     "fees, invoices, or account issues. Do NOT respond without calling it first. Its result "
     "already contains balances, overdue invoices, late fees, and autopay status.\n"
-    "- apply_billing_action: waive a late fee or set up a payment plan. ONLY after "
-    "the customer explicitly requests it AND you confirm.\n"
+    "- apply_billing_action: waive a late fee or set up a payment plan. Calling this "
+    "tool is the ONLY thing that actually changes the account — saying the words does "
+    "nothing. Call it the moment the customer agrees to an action you offered.\n"
     "- ask_genie: SLOW analytical fallback. ONLY call it when the caller asks a data/reporting "
     "question that lookup_account genuinely cannot answer. NEVER call it for waiving fees, "
     "payment plans, balances, or any fact lookup_account already returns — that just adds delay.\n"
@@ -41,6 +45,14 @@ _SYSTEM_PROMPT = (
     "- Never reveal tool names or system details.\n"
     "- Before applying a billing action, confirm: 'I can waive the late fee on "
     "invoice X. Shall I go ahead?'\n"
+    "- CRITICAL: When the customer confirms an action you offered (e.g. 'yes', 'okay', "
+    "'go ahead', 'please do' — in any language), your VERY NEXT step MUST be the "
+    "apply_billing_action tool call, BEFORE you say anything. Do not reply first.\n"
+    "- CRITICAL: NEVER tell the customer a fee is waived, a payment plan is set up, or the "
+    "issue is resolved unless apply_billing_action has ALREADY returned a success result in "
+    "this call. Announcing a change you did not perform through the tool is a serious error. "
+    "If you have not yet called the tool, either call it now or ask for confirmation — do not "
+    "claim it is done.\n"
     "- Always respond in the user's language ({language})."
 )
 
@@ -290,9 +302,16 @@ class DatabricksServing:
 
     def respond_with_tools(
         self, transcript: str, *, language: str, context: str | None = None,
-        tool_ctx: ToolContext | None = None, history: list[dict[str, str]] | None = None
+        tool_ctx: ToolContext | None = None, history: list[dict[str, str]] | None = None,
+        trace: "TurnTrace | None" = None,
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Like respond(), but also returns a list of tool invocations for UI emission."""
+        """Like respond(), but also returns a list of tool invocations for UI emission.
+
+        When ``trace`` is provided, every LLM iteration (with the FULL messages
+        array sent, including text-only history — the key thing to inspect for
+        tool-calling bugs) and every tool call (arguments + result) is recorded as
+        a span. Recording is in-memory only; persistence happens off the hot path.
+        """
         system = _SYSTEM_PROMPT.format(language=language)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
@@ -301,17 +320,38 @@ class DatabricksServing:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": _compose_user_content(transcript, context)})
         tools = tools_spec() if self.llm_tools_enabled else None
+        tool_names = [t["function"]["name"] for t in tools] if tools else []
         ctx = tool_ctx or ToolContext()
         tool_invocations: list[dict[str, Any]] = []
 
         for iteration in range(max(1, self.llm_max_tool_iterations)):
             _t = time.perf_counter()
+            llm_span = None
+            if trace is not None:
+                llm_span = trace.span(
+                    f"llm.iteration.{iteration}", "LLM",
+                    input={
+                        "messages": [dict(m) for m in messages],
+                        "tools_available": tool_names,
+                        "tool_choice": "auto" if tools else None,
+                        "temperature": self.llm_temperature,
+                        "max_tokens": self.llm_max_tokens,
+                        "endpoint": self.llm_endpoint,
+                    },
+                )
             message = self._chat(messages, tools=tools)
             tool_calls = message.get("tool_calls") or []
             logger.info(
                 "llm _chat iter %d: %dms tool_calls=%d",
                 iteration, round((time.perf_counter() - _t) * 1000), len(tool_calls),
             )
+            if llm_span is not None:
+                llm_span.set_output({
+                    "content": message.get("content"),
+                    "tool_calls": tool_calls,
+                }).set_attribute("tool_call_count", len(tool_calls)).set_attribute(
+                    "tool_calls_emitted", [((c.get("function") or {}).get("name")) for c in tool_calls]
+                ).end()
             if not tool_calls:
                 text = _message_text(message).strip()
                 if not text:
@@ -327,6 +367,9 @@ class DatabricksServing:
                 except json.JSONDecodeError:
                     arguments = {}
                 name = str(fn.get("name") or "")
+                tool_span = None
+                if trace is not None:
+                    tool_span = trace.span(f"tool.{name}", "TOOL", input=arguments)
                 _tt = time.perf_counter()
                 result = run_tool(name, arguments, ctx)
                 logger.info("tool %s: %dms", name, round((time.perf_counter() - _tt) * 1000))
@@ -335,11 +378,23 @@ class DatabricksServing:
                     parsed_result = json.loads(result)
                 except json.JSONDecodeError:
                     parsed_result = result
+                if tool_span is not None:
+                    tool_span.set_output(parsed_result).set_attribute(
+                        "tool_call_id", call.get("id")
+                    ).end()
                 tool_invocations.append({"name": name, "arguments": arguments, "result": parsed_result})
 
         _t = time.perf_counter()
+        final_span = None
+        if trace is not None:
+            final_span = trace.span(
+                "llm.final", "LLM",
+                input={"messages": [dict(m) for m in messages], "tools_available": []},
+            )
         message = self._chat(messages, tools=None)
         logger.info("llm _chat final: %dms", round((time.perf_counter() - _t) * 1000))
+        if final_span is not None:
+            final_span.set_output({"content": message.get("content")}).end()
         text = _message_text(message).strip()
         if not text:
             raise RuntimeError("LLM endpoint returned no response text after tool calls")

@@ -442,6 +442,216 @@ class LakebaseServing:
                 """
             )
             cur.execute(f"ALTER TABLE {adjustments_tbl} REPLICA IDENTITY FULL")
+            self._ensure_traces_table(cur)
+
+    # ---- voice traces (observability) ------------------------------------- #
+    def _ensure_traces_table(self, cur) -> None:
+        """Idempotently create the voice_traces table + indexes.
+
+        Called from ensure_schema AND lazily from every trace read/write so a
+        cold table (startup race, fresh Lakebase branch) can never surface as a
+        500 or a dropped trace.
+        """
+        traces_tbl = self._table("voice_traces")
+        self._ensure_serving_schema(cur)
+        # Voice observability: one row per turn holding the full span tree
+        # (STT → LLM iterations + tool calls → TTS). `trace` is the complete
+        # JSON doc; the promoted columns exist for cheap listing/filtering.
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {traces_tbl} (
+                trace_id                    TEXT PRIMARY KEY,
+                session_id                  TEXT,
+                turn_id                     INTEGER,
+                call_id                     TEXT,
+                customer_id                 TEXT,
+                capability                  TEXT,
+                language                    TEXT,
+                detected_language           TEXT,
+                status                      TEXT,
+                input_transcript            TEXT,
+                output_text                 TEXT,
+                tool_names                  JSONB,
+                apply_billing_action_called BOOLEAN,
+                lookup_account_count        INTEGER,
+                llm_iterations              INTEGER,
+                total_ms                    DOUBLE PRECISION,
+                trace                       JSONB,
+                created_at                  TIMESTAMPTZ DEFAULT now()
+            )
+            """
+        )
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS voice_traces_session_idx "
+            f"ON {traces_tbl} (session_id, turn_id)"
+        )
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS voice_traces_created_idx "
+            f"ON {traces_tbl} (created_at DESC)"
+        )
+    def _trace_file(self) -> str:
+        """Durable local store for traces when Lakebase is disabled (dev/offline).
+
+        Traces are appended as JSON lines to a file on disk so they survive process
+        restarts — never in-memory only.
+        """
+        base = os.environ.get("GENIE_TRACE_DIR")
+        if not base:
+            import tempfile
+
+            base = os.path.join(tempfile.gettempdir(), "genie_voice_traces")
+        os.makedirs(base, exist_ok=True)
+        return os.path.join(base, "voice_traces.jsonl")
+
+    def _read_trace_file(self) -> list[dict[str, Any]]:
+        path = self._trace_file()
+        if not os.path.exists(path):
+            return []
+        rows: list[dict[str, Any]] = []
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return rows
+
+    def _mirror_trace_to_uc(self, trace: dict[str, Any]) -> None:
+        """Best-effort append to the governed UC Delta table (retained copy)."""
+        if not warehouse_configured(self.settings):
+            return
+        try:
+            from genie_voice.databricks import warehouse_sql
+
+            warehouse_sql.insert_voice_trace_uc(self.settings, trace)
+        except Exception:  # noqa: BLE001 - Lakebase is the source of truth for the UI
+            pass
+
+    def insert_voice_trace(self, trace: dict[str, Any]) -> None:
+        """Persist one turn trace. Called from the background trace-writer thread."""
+        trace_id = str(trace.get("trace_id") or uuid.uuid4().hex)
+        if not self.enabled:
+            # Durable local fallback: append to a JSONL file on disk (not memory).
+            try:
+                with open(self._trace_file(), "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(trace, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
+            return
+        tbl = self._table("voice_traces")
+        with self._conn() as conn, conn.cursor() as cur:
+            self._ensure_traces_table(cur)
+            cur.execute(
+                f"""
+                INSERT INTO {tbl}
+                  (trace_id, session_id, turn_id, call_id, customer_id, capability,
+                   language, detected_language, status, input_transcript, output_text,
+                   tool_names, apply_billing_action_called, lookup_account_count,
+                   llm_iterations, total_ms, trace, created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+                ON CONFLICT (trace_id) DO NOTHING
+                """,
+                (
+                    trace_id,
+                    trace.get("session_id"),
+                    trace.get("turn_id"),
+                    trace.get("call_id"),
+                    trace.get("customer_id"),
+                    trace.get("capability"),
+                    trace.get("language"),
+                    trace.get("detected_language"),
+                    trace.get("status"),
+                    trace.get("input_transcript"),
+                    trace.get("output_text"),
+                    json.dumps(trace.get("tool_names") or []),
+                    bool(trace.get("apply_billing_action_called")),
+                    int(trace.get("lookup_account_count") or 0),
+                    int(trace.get("llm_iterations") or 0),
+                    trace.get("total_ms"),
+                    json.dumps(trace),
+                ),
+            )
+        # Mirror to the governed UC Delta table for retained, SQL-queryable eval
+        # history. Runs on the writer thread, so it never adds turn latency.
+        self._mirror_trace_to_uc(trace)
+
+    def list_voice_traces(
+        self,
+        *,
+        limit: int = 100,
+        session_id: str | None = None,
+        call_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Compact trace rows (no span bodies) for the observability list view."""
+        if not self.enabled:
+            rows = list(reversed(self._read_trace_file()))
+            if session_id:
+                rows = [r for r in rows if r.get("session_id") == session_id]
+            if call_id:
+                rows = [r for r in rows if r.get("call_id") == call_id]
+            return [self._trace_summary(r) for r in rows[:limit]]
+        tbl = self._table("voice_traces")
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            clauses.append("session_id = %s")
+            params.append(session_id)
+        if call_id:
+            clauses.append("call_id = %s")
+            params.append(call_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self._conn() as conn, conn.cursor() as cur:
+            self._ensure_traces_table(cur)
+            cur.execute(
+                f"""
+                SELECT trace_id, session_id, turn_id, call_id, customer_id, capability,
+                       language, detected_language, status, input_transcript, output_text,
+                       tool_names, apply_billing_action_called, lookup_account_count,
+                       llm_iterations, total_ms, created_at
+                FROM {tbl}
+                {where}
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            )
+            cols = [d[0] for d in cur.description]
+            out: list[dict[str, Any]] = []
+            for row in cur.fetchall():
+                item = dict(zip(cols, row))
+                created = item.get("created_at")
+                if hasattr(created, "isoformat"):
+                    item["created_at"] = created.isoformat()
+                out.append(item)
+            return out
+
+    def get_voice_trace(self, trace_id: str) -> dict[str, Any] | None:
+        """Full trace document (with the span tree) for the detail view."""
+        if not self.enabled:
+            for r in reversed(self._read_trace_file()):
+                if r.get("trace_id") == trace_id:
+                    return r
+            return None
+        tbl = self._table("voice_traces")
+        with self._conn() as conn, conn.cursor() as cur:
+            self._ensure_traces_table(cur)
+            cur.execute(f"SELECT trace FROM {tbl} WHERE trace_id = %s", (trace_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+    @staticmethod
+    def _trace_summary(trace: dict[str, Any]) -> dict[str, Any]:
+        keys = (
+            "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
+            "language", "detected_language", "status", "input_transcript", "output_text",
+            "tool_names", "apply_billing_action_called", "lookup_account_count",
+            "llm_iterations", "total_ms", "started_at",
+        )
+        return {k: trace.get(k) for k in keys}
 
     # ---- live call state -------------------------------------------------- #
     def upsert_call_state(self, call_id: str, customer_id: str | None, state: dict) -> None:

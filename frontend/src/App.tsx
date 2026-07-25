@@ -4,6 +4,7 @@ import { useUiLocale } from "./i18n";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
 import { CockpitPage } from "./components/CockpitPage";
+import { TracesPage } from "./components/TracesPage";
 import { SentientShell } from "./components/sentient/Sentient";
 
 export default function App() {
@@ -63,6 +64,7 @@ export default function App() {
   }, []);
 
   const showBenchmark = page === "#/asr-benchmark";
+  const showTraces = page === "#/traces";
 
   useEffect(() => {
     // The UI language picker defaults to English and stays where the agent puts
@@ -74,9 +76,37 @@ export default function App() {
     }
   }, [status?.languages, interactionLanguage]);
 
+  // The trace explorer is a full-screen observability surface (its own dark
+  // theme), rendered outside the Sentient shell like a dedicated tool.
+  if (showTraces) {
+    return <TracesPage />;
+  }
+
   return (
     <SentientShell>
       {error && <div className="error">API error: {error} — is the backend running?</div>}
+      <button
+        type="button"
+        onClick={() => (window.location.hash = "#/traces")}
+        title="Open the voice trace explorer"
+        style={{
+          position: "fixed",
+          top: 14,
+          right: 16,
+          zIndex: 50,
+          padding: "6px 14px",
+          borderRadius: 999,
+          border: "1px solid rgba(110,168,254,0.5)",
+          background: "rgba(20,28,48,0.75)",
+          color: "#cfe0ff",
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          backdropFilter: "blur(6px)",
+        }}
+      >
+        Traces
+      </button>
       {showBenchmark ? (
         <ASRBenchmarkPage />
       ) : (

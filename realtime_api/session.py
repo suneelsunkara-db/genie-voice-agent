@@ -32,6 +32,9 @@ _FLOOR_CEILING = 150.0
 @dataclass
 class VoiceSession:
     config: SessionStart
+    # WS-connection id, set by the handler at accept time. Used to group per-turn
+    # traces belonging to the same call in the observability view.
+    session_id: str | None = None
     turn_id: int = 0
     audio: bytearray = field(default_factory=bytearray)
     speech_active: bool = False

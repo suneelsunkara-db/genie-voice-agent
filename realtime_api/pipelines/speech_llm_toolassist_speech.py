@@ -6,9 +6,11 @@ import logging
 import time
 from typing import AsyncIterator
 
+from ..capabilities import SPEECH_LLM_TOOLASSIST_SPEECH
 from ..languages import base_code, english_name
 from ..session import VoiceSession
 from ..tools import ToolContext
+from ..tracing import TurnTrace, submit_trace
 from . import ServingBundle
 from ._shared import language_mismatch, resolve_language, stream_tts, transcribe
 
@@ -96,148 +98,207 @@ async def process_turn(
     *,
     context: str | None = None,
 ) -> AsyncIterator[dict]:
-    transcript, detected, stt_ms = await transcribe(bundle, session, audio)
-    # Log EVERY STT result (including empties) so silent-drop turns are visible:
-    # distinguishes "STT heard nothing" (silence/echo) from "STT heard the wrong
-    # language" (gate) from a real transcript.
-    logger.info(
-        "stt turn %d: %dms detected=%s len=%d text=%r",
-        turn_id, stt_ms, detected, len(transcript), transcript[:120],
-    )
-    if turn_id != session.turn_id:
-        return
-    if not transcript.strip():
-        return
-    # Language gate: if the caller isn't speaking the selected language, don't
-    # surface the off-language transcript or run the assistant. Warn the UI
-    # (visual banner) and *speak* a localized prompt asking the agent to switch
-    # the picker — the spoken guidance lives here because this is the only route
-    # with a TTS stage. The turn is otherwise dropped (no history, no LLM/reply).
-    mismatch = language_mismatch(session, detected)
-    if mismatch:
-        yield {"type": "language.mismatch", "turn_id": turn_id, **mismatch}
-        try:
-            prompt = await _switch_prompt(bundle, mismatch["expected"], mismatch["detected"])
-        except Exception:  # noqa: BLE001
-            logger.warning("switch-language phrase failed for turn %d", turn_id, exc_info=True)
-            prompt = ""
-        if prompt:
-            try:
-                async for event in stream_tts(
-                    bundle, session, turn_id, prompt, mismatch["expected"], emit_text=False
-                ):
-                    if turn_id != session.turn_id:
-                        break
-                    yield event
-            except Exception:  # noqa: BLE001
-                logger.warning("switch-language TTS failed for turn %d", turn_id, exc_info=True)
-        session.set_cooldown(1.5)
-        return
-
-    language = resolve_language(session, detected)
-    # Warm the in-language filler in the background so a later slow turn in this
-    # language can play it without blocking on generation.
-    asyncio.ensure_future(_warm_filler(bundle, language))
-    yield {
-        "type": "transcript.final",
-        "turn_id": turn_id,
-        "text": transcript,
-        "language": language,
-        "stt_ms": stt_ms,
-    }
-
-    session.history.append({"role": "user", "content": transcript})
-
-    tool_ctx = ToolContext(
-        customer_id=session.config.customer_id,
+    # One trace per turn: STT → language gate → LLM (+tool) iterations → TTS. The
+    # trace is submitted to a background writer in the finally block, so it is
+    # persisted even on early-return paths (empty/mismatch/superseded) and errors,
+    # and NEVER blocks the turn (submit is a non-blocking enqueue).
+    trace = TurnTrace(
+        session_id=session.session_id or "",
+        turn_id=turn_id,
+        capability=SPEECH_LLM_TOOLASSIST_SPEECH,
         call_id=session.config.call_id,
-        _detected_language=language,
+        customer_id=session.config.customer_id,
     )
-    t = time.perf_counter()
-    respond_fn = getattr(bundle.llm, "respond_with_tools", None)
-    tool_invocations: list[dict] = []
-
-    # Run the LLM (+tools) as a background task so we can cover its latency with a
-    # spoken acknowledgment. The task keeps running while we stream the filler.
-    if respond_fn:
-        llm_task = asyncio.ensure_future(
-            asyncio.to_thread(
-                respond_fn, transcript, language=language, context=context,
-                tool_ctx=tool_ctx, history=session.history[:-1],
-            )
-        )
-    else:
-        llm_task = asyncio.ensure_future(
-            asyncio.to_thread(
-                bundle.llm.respond, transcript, language=language, context=context, tool_ctx=tool_ctx
-            )
-        )
-
+    trace.language = session.config.language
     try:
-        await asyncio.wait({llm_task}, timeout=_FILLER_GRACE_S)
-        if not llm_task.done():
-            filler = _FILLER_CACHE.get(base_code(language))
-            if filler:
+        stt_span = trace.span(
+            "stt", "STT",
+            input={
+                "audio_bytes": len(audio),
+                "sample_rate_hz": session.config.sample_rate_hz,
+                "requested_language": session.config.language,
+                "expected_language": session.config.expected_language,
+            },
+        )
+        transcript, detected, stt_ms = await transcribe(bundle, session, audio)
+        stt_span.set_output({"transcript": transcript, "detected_language": detected}).set_attribute(
+            "stt_ms", stt_ms
+        ).end()
+        trace.input_transcript = transcript
+        trace.detected_language = detected
+        # Log EVERY STT result (including empties) so silent-drop turns are visible:
+        # distinguishes "STT heard nothing" (silence/echo) from "STT heard the wrong
+        # language" (gate) from a real transcript.
+        logger.info(
+            "stt turn %d: %dms detected=%s len=%d text=%r",
+            turn_id, stt_ms, detected, len(transcript), transcript[:120],
+        )
+        if turn_id != session.turn_id:
+            trace.status = "superseded"
+            return
+        if not transcript.strip():
+            trace.status = "empty_transcript"
+            return
+        # Language gate: if the caller isn't speaking the selected language, don't
+        # surface the off-language transcript or run the assistant. Warn the UI
+        # (visual banner) and *speak* a localized prompt asking the agent to switch
+        # the picker — the spoken guidance lives here because this is the only route
+        # with a TTS stage. The turn is otherwise dropped (no history, no LLM/reply).
+        mismatch = language_mismatch(session, detected)
+        if mismatch:
+            trace.status = "language_mismatch"
+            with trace.span("language.gate", "GUARD", input={"detected": detected}) as gate:
+                gate.set_output(mismatch)
+            yield {"type": "language.mismatch", "turn_id": turn_id, **mismatch}
+            try:
+                prompt = await _switch_prompt(bundle, mismatch["expected"], mismatch["detected"])
+            except Exception:  # noqa: BLE001
+                logger.warning("switch-language phrase failed for turn %d", turn_id, exc_info=True)
+                prompt = ""
+            if prompt:
                 try:
                     async for event in stream_tts(
-                        bundle, session, turn_id, filler, language,
-                        mark_final=False, emit_text=False,
+                        bundle, session, turn_id, prompt, mismatch["expected"], emit_text=False
                     ):
                         if turn_id != session.turn_id:
                             break
                         yield event
                 except Exception:  # noqa: BLE001
-                    logger.warning("filler TTS failed for turn %d", turn_id, exc_info=True)
-
-        if turn_id != session.turn_id:
-            llm_task.cancel()
+                    logger.warning("switch-language TTS failed for turn %d", turn_id, exc_info=True)
+            session.set_cooldown(1.5)
             return
 
-        remaining = max(1.0, _LLM_TIMEOUT_S - (time.perf_counter() - t))
-        try:
-            result = await asyncio.wait_for(asyncio.shield(llm_task), timeout=remaining)
-        except asyncio.TimeoutError:
-            logger.error("LLM timed out after %ds for turn %d", _LLM_TIMEOUT_S, turn_id)
-            raise RuntimeError(f"LLM response timed out after {_LLM_TIMEOUT_S}s") from None
-    finally:
-        if llm_task.done() and not llm_task.cancelled():
-            llm_task.exception()  # retrieve to avoid "exception never retrieved"
-        else:
-            llm_task.cancel()
-
-    if respond_fn:
-        response_text, tool_invocations = result
-    else:
-        response_text = result
-    llm_ms = round((time.perf_counter() - t) * 1000)
-    logger.info("LLM responded in %dms (turn %d, tools=%d)", llm_ms, turn_id, len(tool_invocations))
-    if turn_id != session.turn_id:
-        return
-
-    session.history.append({"role": "assistant", "content": response_text})
-    # Keep history bounded to last 10 exchanges (20 messages)
-    if len(session.history) > 20:
-        session.history = session.history[-20:]
-
-    for invocation in tool_invocations:
+        language = resolve_language(session, detected)
+        trace.language = language
+        # Warm the in-language filler in the background so a later slow turn in this
+        # language can play it without blocking on generation.
+        asyncio.ensure_future(_warm_filler(bundle, language))
         yield {
-            "type": "tool.called",
+            "type": "transcript.final",
             "turn_id": turn_id,
-            "name": invocation["name"],
-            "arguments": invocation.get("arguments"),
-            "result": invocation.get("result"),
+            "text": transcript,
+            "language": language,
+            "stt_ms": stt_ms,
         }
 
-    yield {
-        "type": "response.text",
-        "turn_id": turn_id,
-        "text": response_text,
-        "llm_ms": llm_ms,
-    }
+        session.history.append({"role": "user", "content": transcript})
 
-    async for event in stream_tts(bundle, session, turn_id, response_text, language):
-        yield event
+        tool_ctx = ToolContext(
+            customer_id=session.config.customer_id,
+            call_id=session.config.call_id,
+            _detected_language=language,
+        )
+        t = time.perf_counter()
+        respond_fn = getattr(bundle.llm, "respond_with_tools", None)
+        tool_invocations: list[dict] = []
 
-    # After TTS completes, suppress turn finalization for 1.5s to prevent
-    # speaker→mic echo from immediately triggering a false follow-up turn.
-    session.set_cooldown(1.5)
+        # Snapshot the history the LLM will actually see this turn (text-only —
+        # tool calls are NOT persisted across turns). This is the single most
+        # useful field for diagnosing why a confirmation turn re-confirms instead
+        # of applying: you can read exactly what context the model had.
+        history_for_turn = [dict(m) for m in session.history[:-1]]
+        trace.span("history", "GUARD", input={"messages": history_for_turn}).set_output(
+            {"message_count": len(history_for_turn)}
+        ).end()
+
+        # Run the LLM (+tools) as a background task so we can cover its latency with a
+        # spoken acknowledgment. The task keeps running while we stream the filler.
+        if respond_fn:
+            llm_task = asyncio.ensure_future(
+                asyncio.to_thread(
+                    respond_fn, transcript, language=language, context=context,
+                    tool_ctx=tool_ctx, history=session.history[:-1], trace=trace,
+                )
+            )
+        else:
+            llm_task = asyncio.ensure_future(
+                asyncio.to_thread(
+                    bundle.llm.respond, transcript, language=language, context=context, tool_ctx=tool_ctx
+                )
+            )
+
+        try:
+            await asyncio.wait({llm_task}, timeout=_FILLER_GRACE_S)
+            if not llm_task.done():
+                filler = _FILLER_CACHE.get(base_code(language))
+                if filler:
+                    try:
+                        async for event in stream_tts(
+                            bundle, session, turn_id, filler, language,
+                            mark_final=False, emit_text=False,
+                        ):
+                            if turn_id != session.turn_id:
+                                break
+                            yield event
+                    except Exception:  # noqa: BLE001
+                        logger.warning("filler TTS failed for turn %d", turn_id, exc_info=True)
+
+            if turn_id != session.turn_id:
+                llm_task.cancel()
+                trace.status = "superseded"
+                return
+
+            remaining = max(1.0, _LLM_TIMEOUT_S - (time.perf_counter() - t))
+            try:
+                result = await asyncio.wait_for(asyncio.shield(llm_task), timeout=remaining)
+            except asyncio.TimeoutError:
+                logger.error("LLM timed out after %ds for turn %d", _LLM_TIMEOUT_S, turn_id)
+                raise RuntimeError(f"LLM response timed out after {_LLM_TIMEOUT_S}s") from None
+        finally:
+            if llm_task.done() and not llm_task.cancelled():
+                llm_task.exception()  # retrieve to avoid "exception never retrieved"
+            else:
+                llm_task.cancel()
+
+        if respond_fn:
+            response_text, tool_invocations = result
+        else:
+            response_text = result
+        llm_ms = round((time.perf_counter() - t) * 1000)
+        trace.output_text = response_text
+        logger.info("LLM responded in %dms (turn %d, tools=%d)", llm_ms, turn_id, len(tool_invocations))
+        if turn_id != session.turn_id:
+            trace.status = "superseded"
+            return
+
+        session.history.append({"role": "assistant", "content": response_text})
+        # Keep history bounded to last 10 exchanges (20 messages)
+        if len(session.history) > 20:
+            session.history = session.history[-20:]
+
+        for invocation in tool_invocations:
+            yield {
+                "type": "tool.called",
+                "turn_id": turn_id,
+                "name": invocation["name"],
+                "arguments": invocation.get("arguments"),
+                "result": invocation.get("result"),
+            }
+
+        yield {
+            "type": "response.text",
+            "turn_id": turn_id,
+            "text": response_text,
+            "llm_ms": llm_ms,
+        }
+
+        tts_span = trace.span("tts", "TTS", input={"text": response_text, "language": language})
+        tts_chunks = 0
+        async for event in stream_tts(bundle, session, turn_id, response_text, language):
+            if event.get("type") == "response.audio":
+                tts_chunks += 1
+            yield event
+        tts_span.set_output({"chunks": tts_chunks}).end()
+
+        # After TTS completes, suppress turn finalization for 1.5s to prevent
+        # speaker→mic echo from immediately triggering a false follow-up turn.
+        session.set_cooldown(1.5)
+    except asyncio.CancelledError:
+        trace.status = "cancelled"
+        raise
+    except Exception as exc:  # noqa: BLE001
+        trace.status = "error"
+        trace.error = repr(exc)
+        raise
+    finally:
+        submit_trace(trace)

@@ -52,6 +52,90 @@ def ensure_billing_adjustments_table(settings: Settings | None = None) -> None:
     execute_sql(settings, MODEL[T_BILLING_ADJUSTMENTS].render_ddl(settings.fqtn))
 
 
+def ensure_voice_traces_table(settings: Settings | None = None) -> None:
+    """Idempotent governed UC Delta table: the retained system-of-record for
+    voice observability traces (STT → LLM iterations + tool calls → TTS).
+
+    Lakebase Postgres backs the live UI; this Delta table is the durable,
+    SQL-queryable copy eval workflows read from. ``spans``/``trace`` are stored as
+    JSON strings (parse with ``from_json`` at query time)."""
+    settings = settings or get_settings()
+    tbl = settings.fqtn("voice_traces")
+    execute_sql(
+        settings,
+        f"""
+        CREATE TABLE IF NOT EXISTS {tbl} (
+            trace_id                    STRING,
+            session_id                  STRING,
+            turn_id                     INT,
+            call_id                     STRING,
+            customer_id                 STRING,
+            capability                  STRING,
+            language                    STRING,
+            detected_language           STRING,
+            status                      STRING,
+            input_transcript            STRING,
+            output_text                 STRING,
+            tool_names                  STRING,
+            apply_billing_action_called BOOLEAN,
+            lookup_account_count        INT,
+            llm_iterations              INT,
+            total_ms                    DOUBLE,
+            trace                       STRING,
+            created_at                  TIMESTAMP
+        ) USING DELTA
+        """,
+    )
+
+
+def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str, Any]:
+    """Append one turn trace to the governed UC Delta table.
+
+    Governed write boundary: every value is bound as a named STRING parameter and
+    cast to its typed column in SQL (never string-interpolated); the table
+    identifier comes from trusted config only.
+    """
+    import json
+
+    tbl = settings.fqtn("voice_traces")
+    stmt = f"""
+        INSERT INTO {tbl} (
+          trace_id, session_id, turn_id, call_id, customer_id, capability,
+          language, detected_language, status, input_transcript, output_text,
+          tool_names, apply_billing_action_called, lookup_account_count,
+          llm_iterations, total_ms, trace, created_at
+        ) VALUES (
+          :trace_id, :session_id, CAST(:turn_id AS INT), :call_id, :customer_id, :capability,
+          :language, :detected_language, :status, :input_transcript, :output_text,
+          :tool_names, CAST(:apply_billing_action_called AS BOOLEAN), CAST(:lookup_account_count AS INT),
+          CAST(:llm_iterations AS INT), CAST(:total_ms AS DOUBLE), :trace, current_timestamp()
+        )
+    """
+    params = _params(
+        {
+            "trace_id": str(trace.get("trace_id") or ""),
+            "session_id": str(trace.get("session_id") or ""),
+            "turn_id": str(int(trace.get("turn_id") or 0)),
+            "call_id": str(trace.get("call_id") or ""),
+            "customer_id": str(trace.get("customer_id") or ""),
+            "capability": str(trace.get("capability") or ""),
+            "language": str(trace.get("language") or ""),
+            "detected_language": str(trace.get("detected_language") or ""),
+            "status": str(trace.get("status") or ""),
+            "input_transcript": str(trace.get("input_transcript") or ""),
+            "output_text": str(trace.get("output_text") or ""),
+            "tool_names": json.dumps(trace.get("tool_names") or []),
+            "apply_billing_action_called": str(bool(trace.get("apply_billing_action_called"))).lower(),
+            "lookup_account_count": str(int(trace.get("lookup_account_count") or 0)),
+            "llm_iterations": str(int(trace.get("llm_iterations") or 0)),
+            "total_ms": str(float(trace.get("total_ms") or 0.0)),
+            "trace": json.dumps(trace),
+        }
+    )
+    execute_sql(settings, stmt, parameters=params)
+    return {"ok": True, "trace_id": trace.get("trace_id")}
+
+
 def apply_billing_resolution_uc(
     settings: Settings,
     adjustment: dict[str, Any],

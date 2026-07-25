@@ -172,6 +172,7 @@ async def handle_voice_ws(
                     )
                     continue
                 session = VoiceSession(start)
+                session.session_id = session_id
                 log_event(
                     "session.start",
                     session_id=session_id,

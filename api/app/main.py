@@ -31,7 +31,16 @@ from fastapi.staticfiles import StaticFiles
 from genie_voice.config import get_settings
 
 from .deps import serving
-from .routers import accounts, agent_assist, asr_benchmark, genie, health, mic_stream, pipeline_status
+from .routers import (
+    accounts,
+    agent_assist,
+    asr_benchmark,
+    genie,
+    health,
+    mic_stream,
+    pipeline_status,
+    traces,
+)
 
 # Built React UI (populated by deploy_app.sh: `frontend build` -> here). When
 # present (e.g. on Databricks Apps, which runs a single web process) the API also
@@ -59,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(genie.router)
     app.include_router(asr_benchmark.router)
     app.include_router(pipeline_status.router)
+    app.include_router(traces.router)
 
     @app.on_event("startup")
     def _ensure_lakebase_serving_schema() -> None:
@@ -89,11 +99,13 @@ def create_app() -> FastAPI:
             try:
                 from genie_voice.databricks.warehouse_sql import (
                     ensure_billing_adjustments_table,
+                    ensure_voice_traces_table,
                     warehouse_configured,
                 )
 
                 if warehouse_configured(settings):
                     ensure_billing_adjustments_table(settings)
+                    ensure_voice_traces_table(settings)
             except Exception as exc:  # noqa: BLE001
                 print(f"[api-startup] UC billing_adjustments ensure skipped: {exc}")
 
