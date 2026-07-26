@@ -415,6 +415,67 @@ export interface TraceSessionRollup {
   latest?: string | null;
 }
 
+// ---- Multilingual voice benchmarks (realtime STT->LLM->TTS pipeline) ------ //
+// Served by the realtime API (mounted at /realtime) straight from the Delta
+// benchmark_runs table. FLEURS reports an error rate (WER/CER, lower better);
+// Belebele/CCFQA report accuracy (higher better). Baselines are published
+// reference numbers for the same datasets (not re-measured here).
+export interface VoiceBenchmarkLatencyStat {
+  p50?: number | null;
+  p95?: number | null;
+  p99?: number | null;
+  mean?: number | null;
+}
+
+export interface VoiceBenchmarkRun {
+  system?: string;
+  system_label?: string;
+  source?: string; // "measured"
+  dataset: string; // fleurs | belebele | ccfqa
+  language?: string | null;
+  evaluator?: string; // asr | mcq | qa
+  samples?: number | null;
+  errors?: number | null;
+  primary_score?: number | null;
+  primary_metric?: string | null;
+  scores?: Record<string, unknown>;
+  latency_ms?: Record<string, VoiceBenchmarkLatencyStat | number | null>;
+  issues?: { count?: number | null; by_kind?: Record<string, number> };
+  wall_seconds?: number | null;
+  status?: string | null;
+  timestamp?: string | null;
+}
+
+export interface VoiceBenchmarkBaseline {
+  system?: string;
+  system_label?: string;
+  source?: string; // "reference"
+  dataset: string;
+  evaluator?: string;
+  language?: string | null;
+  scope?: "aggregate" | "language";
+  primary_metric?: string | null;
+  primary_score?: number | null;
+  scores?: Record<string, number>;
+  reference_source?: string;
+  reference_url?: string;
+  note?: string;
+}
+
+export interface VoiceBenchmarksResponse {
+  available: boolean;
+  message?: string;
+  source?: string;
+  table?: string;
+  run_id?: string | null;
+  generated_at?: string | null;
+  datasets?: string[];
+  languages?: string[];
+  runs?: VoiceBenchmarkRun[];
+  our_system?: { id: string; label: string };
+  baselines?: VoiceBenchmarkBaseline[];
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -527,6 +588,7 @@ export const api = {
   voiceTraceSessions: (limit = 200) =>
     getJSON<{ sessions: TraceSessionRollup[]; count: number }>(`/traces/sessions?limit=${limit}`),
   voiceTrace: (traceId: string) => getJSON<TraceDetail>(`/traces/${encodeURIComponent(traceId)}`),
+  voiceBenchmarks: () => getJSON<VoiceBenchmarksResponse>("/realtime/v1/benchmarks"),
   zhAsrComparisons: (callId?: string, limit = 10) => {
     const params = new URLSearchParams();
     if (callId) params.set("call_id", callId);

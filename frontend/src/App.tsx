@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { CSSProperties, useEffect, useState } from "react";
 import { api, CustomerWithIssue, InteractionLanguage, StatusResponse } from "./api/client";
 import { useUiLocale } from "./i18n";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
 import { CockpitPage } from "./components/CockpitPage";
 import { TracesPage } from "./components/TracesPage";
+import { VoiceBenchmarksPage } from "./components/VoiceBenchmarksPage";
 import { SentientShell } from "./components/sentient/Sentient";
 
 export default function App() {
@@ -65,6 +66,7 @@ export default function App() {
 
   const showBenchmark = page === "#/asr-benchmark";
   const showTraces = page === "#/traces";
+  const showVoiceBenchmarks = page === "#/voice-benchmarks";
 
   useEffect(() => {
     // The UI language picker defaults to English and stays where the agent puts
@@ -76,37 +78,48 @@ export default function App() {
     }
   }, [status?.languages, interactionLanguage]);
 
-  // The trace explorer is a full-screen observability surface (its own dark
-  // theme), rendered outside the Sentient shell like a dedicated tool.
+  // Full-screen tool surfaces (their own dark theme), rendered outside the
+  // Sentient shell like dedicated tools.
   if (showTraces) {
     return <TracesPage />;
   }
+  if (showVoiceBenchmarks) {
+    return <VoiceBenchmarksPage />;
+  }
+
+  const navPill: CSSProperties = {
+    padding: "6px 14px",
+    borderRadius: 999,
+    border: "1px solid rgba(110,168,254,0.5)",
+    background: "rgba(20,28,48,0.75)",
+    color: "#cfe0ff",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    backdropFilter: "blur(6px)",
+  };
 
   return (
     <SentientShell>
       {error && <div className="error">API error: {error} — is the backend running?</div>}
-      <button
-        type="button"
-        onClick={() => (window.location.hash = "#/traces")}
-        title="Open the voice trace explorer"
-        style={{
-          position: "fixed",
-          top: 14,
-          right: 16,
-          zIndex: 50,
-          padding: "6px 14px",
-          borderRadius: 999,
-          border: "1px solid rgba(110,168,254,0.5)",
-          background: "rgba(20,28,48,0.75)",
-          color: "#cfe0ff",
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: "pointer",
-          backdropFilter: "blur(6px)",
-        }}
-      >
-        Traces
-      </button>
+      <div style={{ position: "fixed", top: 14, right: 16, zIndex: 50, display: "flex", gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => (window.location.hash = "#/voice-benchmarks")}
+          title="See how the voice API scores across languages"
+          style={navPill}
+        >
+          Benchmarks
+        </button>
+        <button
+          type="button"
+          onClick={() => (window.location.hash = "#/traces")}
+          title="Open the voice trace explorer"
+          style={navPill}
+        >
+          Traces
+        </button>
+      </div>
       {showBenchmark ? (
         <ASRBenchmarkPage />
       ) : (
