@@ -320,7 +320,14 @@ class LakebaseServing:
             timeout=15.0,
             name="lakebase",
             open=True,
-            check=ConnectionPool.check_connection,
+            # No per-checkout health ping: ``check=ConnectionPool.check_connection``
+            # adds a full server round-trip to EVERY checkout, which is pure latency
+            # on the voice tool path (account lookups / billing writes run several
+            # checkouts per turn). Staleness is bounded instead by ``max_idle`` (idle
+            # connections are recycled well under Postgres' server-side idle timeout)
+            # and ``max_lifetime``; the pool is also rebuilt whenever the OAuth token
+            # rotates. A rare dropped connection surfaces as a query error rather than
+            # costing every healthy call an extra RTT.
         )
         self._pool_token = cred["password"]
 
@@ -442,7 +449,75 @@ class LakebaseServing:
                 """
             )
             cur.execute(f"ALTER TABLE {adjustments_tbl} REPLICA IDENTITY FULL")
+            self._ensure_reference_tables(cur)
             self._ensure_traces_table(cur)
+
+    def _ensure_reference_tables(self, cur) -> None:
+        """Create the customers/invoices/payments serving cache (idempotent).
+
+        These are a low-latency SERVING CACHE of the UC Delta source of truth,
+        snapshot-loaded by snapshot_reference_tables(). They are read on the
+        lookup_account hot path so it never touches the SQL warehouse.
+        Deliberately left at the DEFAULT replica identity (NOT full) so Lakebase
+        CDF SKIPS them — reference data flows Delta -> Lakebase, never the
+        reverse. Split out from ensure_schema so a reference refresh never has to
+        touch (and re-own) unrelated tables like voice_traces.
+        """
+        customers_tbl = self._table("customers")
+        invoices_tbl = self._table("invoices")
+        payments_tbl = self._table("payments")
+        self._ensure_serving_schema(cur)
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {customers_tbl} (
+                customer_id     TEXT PRIMARY KEY,
+                full_name       TEXT,
+                segment         TEXT,
+                region          TEXT,
+                plan            TEXT,
+                monthly_charge  NUMERIC(10,2),
+                tenure_months   INTEGER,
+                status          TEXT,
+                autopay_enabled BOOLEAN,
+                email           TEXT,
+                signup_date     DATE
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {invoices_tbl} (
+                invoice_id  TEXT PRIMARY KEY,
+                customer_id TEXT NOT NULL,
+                period      TEXT,
+                issue_date  DATE,
+                due_date    DATE,
+                amount      NUMERIC(10,2),
+                late_fee    NUMERIC(10,2),
+                status      TEXT,
+                paid_date   DATE
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {payments_tbl} (
+                payment_id   TEXT PRIMARY KEY,
+                invoice_id   TEXT NOT NULL,
+                customer_id  TEXT NOT NULL,
+                amount       NUMERIC(10,2),
+                payment_date DATE,
+                method       TEXT,
+                status       TEXT
+            )
+            """
+        )
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS invoices_customer_idx ON {invoices_tbl} (customer_id)"
+        )
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS payments_customer_idx ON {payments_tbl} (customer_id)"
+        )
 
     # ---- voice traces (observability) ------------------------------------- #
     def _ensure_traces_table(self, cur) -> None:
@@ -660,8 +735,10 @@ class LakebaseServing:
                 _MEM[call_id] = {"call_id": call_id, "customer_id": customer_id, "state": state}
             return
         tbl = self._table(self.settings.lakebase.serving_table)
+        # Schema + tables are created once at startup via ensure_schema(); the
+        # per-write CREATE SCHEMA IF NOT EXISTS was a redundant round-trip (and
+        # never created the table anyway), so it's dropped from the hot path.
         with self._conn() as conn, conn.cursor() as cur:
-            self._ensure_serving_schema(cur)
             cur.execute(
                 f"""
                 INSERT INTO {tbl} (call_id, customer_id, state, updated_at)
@@ -673,7 +750,13 @@ class LakebaseServing:
                 """,
                 (call_id, customer_id, json.dumps(state)),
             )
-            self._replace_live_utterances(cur, call_id, state.get("utterances") or [])
+            # The in-progress live conversation lives ONLY in call_state (the
+            # state JSON above); it is intentionally NOT written into
+            # live_call_utterances. That table is the immutable, analytics-facing
+            # transcript owned solely by the seed/ingest path. Keeping the live
+            # overlay out of it means a live or demo session (and its reset) can
+            # never mutate or wipe a call's durable transcript, so the
+            # "every call has >=1 utterance" invariant holds by construction.
 
     def get_call_state(self, call_id: str) -> dict[str, Any] | None:
         if not self.enabled:
@@ -696,17 +779,30 @@ class LakebaseServing:
         return self._load_account_facts_source(customer_id)
 
     def _load_account_facts_source(self, customer_id: str) -> dict[str, Any]:
+        # Reference facts are served exclusively from the Lakebase serving cache
+        # (sub-ms Postgres, never the SQL warehouse on the hot path); the cache is
+        # populated by snapshot_reference_tables() at deploy/refresh time. Local
+        # mode (Lakebase disabled) reads the datagen JSON. No warehouse fallback:
+        # if Lakebase is the serving store, it is the ONLY serving read path.
         if not self.enabled:
             return self._account_facts_local(customer_id)
-        try:
-            return self._account_facts_uc(customer_id)
-        except Exception:
-            return self._account_facts_local(customer_id)
+        return self._account_facts_lakebase(customer_id)
 
     def get_account_facts(self, customer_id: str) -> dict[str, Any]:
-        """Serve account facts from UC/local source merged with persisted billing adjustments."""
-        facts = self._load_account_facts_source(customer_id)
-        return _apply_billing_adjustments(facts, self.list_billing_adjustments(customer_id))
+        """Serve account facts from UC/local source merged with persisted billing adjustments.
+
+        On the Lakebase path this reads facts (customers/invoices/payments) AND
+        billing adjustments on a SINGLE pooled connection — one checkout per
+        lookup instead of two, cutting a full connect/round-trip off the voice
+        tool hot path.
+        """
+        if not self.enabled:
+            facts = self._account_facts_local(customer_id)
+            return _apply_billing_adjustments(facts, self.list_billing_adjustments(customer_id))
+        with self._conn() as conn, conn.cursor() as cur:
+            facts = self._account_facts_lakebase_cur(cur, customer_id)
+            adjustments = self._list_billing_adjustments_cur(cur, customer_id)
+        return _apply_billing_adjustments(facts, adjustments)
 
     def get_call_account_facts(self, call_id: str) -> dict[str, Any]:
         state = self.get_call_state(call_id)
@@ -723,9 +819,17 @@ class LakebaseServing:
         """Postgres identifier for a Lakebase-native serving table."""
         return self._table(table)
 
-    def _replace_live_utterances(self, cur, call_id: str, utterances: list[dict[str, Any]]) -> None:
+    def _upsert_live_utterances(self, cur, call_id: str, utterances: list[dict[str, Any]]) -> None:
+        """Append-only, idempotent upsert of transcript turns keyed by utterance_id.
+
+        Utterances are immutable events, so this NEVER deletes: a call's turns can
+        never be wiped by a write path (which is what previously let the live/demo
+        reset flow empty a seed call's transcript and break the DQ invariant). The
+        DO UPDATE is change-aware — it only writes when a column actually differs —
+        so re-running an identical ingest produces ZERO CDF change-rows (no churn,
+        no delete+reinsert window that could lose data mid-run).
+        """
         tbl = self._table(self.settings.lakebase.live_utterances_table)
-        cur.execute(f"DELETE FROM {tbl} WHERE call_id = %s", (call_id,))
         for idx, item in enumerate(utterances):
             speaker = item.get("speaker") or item.get("speaker_role")
             turn_index = int(item.get("turn_index", idx))
@@ -747,6 +851,14 @@ class LakebaseServing:
                               text = EXCLUDED.text,
                               confidence = EXCLUDED.confidence,
                               updated_at = now()
+                WHERE {tbl}.call_id IS DISTINCT FROM EXCLUDED.call_id
+                   OR {tbl}.turn_index IS DISTINCT FROM EXCLUDED.turn_index
+                   OR {tbl}.channel IS DISTINCT FROM EXCLUDED.channel
+                   OR {tbl}.speaker_role IS DISTINCT FROM EXCLUDED.speaker_role
+                   OR {tbl}.start_sec IS DISTINCT FROM EXCLUDED.start_sec
+                   OR {tbl}.end_sec IS DISTINCT FROM EXCLUDED.end_sec
+                   OR {tbl}.text IS DISTINCT FROM EXCLUDED.text
+                   OR {tbl}.confidence IS DISTINCT FROM EXCLUDED.confidence
                 """,
                 (
                     utterance_id,
@@ -795,12 +907,18 @@ class LakebaseServing:
                 ),
             )
 
-    def replace_live_utterances(self, call_id: str, utterances: list[dict[str, Any]]) -> None:
+    def upsert_live_utterances(self, call_id: str, utterances: list[dict[str, Any]]) -> None:
+        """Append-only ingest of a call's transcript turns (see _upsert_live_utterances).
+
+        Only the seed/ingest path writes durable transcripts here; the live voice
+        path keeps its in-progress turns in call_state (state JSON), so a live or
+        demo session can never mutate or delete this analytics-facing table.
+        """
         if not self.enabled:
             return
         with self._conn() as conn, conn.cursor() as cur:
             self._ensure_serving_schema(cur)
-            self._replace_live_utterances(cur, call_id, utterances)
+            self._upsert_live_utterances(cur, call_id, utterances)
 
     def append_resolution_event(
         self,
@@ -835,8 +953,8 @@ class LakebaseServing:
                 _MEM_EVENTS.setdefault(call_id, []).append(entry)
             return True
         tbl = self._table("resolution_events")
+        # Bootstrap ensure_schema() owns DDL; no per-write schema round-trip.
         with self._conn() as conn, conn.cursor() as cur:
-            self._ensure_serving_schema(cur)
             cur.execute(
                 f"""
                 INSERT INTO {tbl}
@@ -915,50 +1033,66 @@ class LakebaseServing:
             if active_only:
                 rows = [r for r in rows if not r.get("reverted_at")]
             return rows
-        tbl = self._table("billing_adjustments")
         with self._conn() as conn, conn.cursor() as cur:
-            self._ensure_serving_schema(cur)
-            clauses = ["customer_id = %s"]
-            params: list[Any] = [customer_id]
-            if call_id:
-                clauses.append("call_id = %s")
-                params.append(call_id)
-            if active_only:
-                clauses.append("reverted_at IS NULL")
-            where = " AND ".join(clauses)
-            cur.execute(
-                f"""
-                SELECT adjustment_id, call_id, customer_id, invoice_id,
-                       waiver_applied, payment_plan_applied,
-                       amount_before, late_fee_before, status_before,
-                       amount_after, late_fee_after, status_after,
-                       applied_at, reverted_at
-                FROM {tbl}
-                WHERE {where}
-                ORDER BY applied_at DESC
-                """,
-                tuple(params),
+            return self._list_billing_adjustments_cur(
+                cur, customer_id, call_id=call_id, active_only=active_only
             )
-            rows = cur.fetchall()
-            return [
-                {
-                    "adjustment_id": r[0],
-                    "call_id": r[1],
-                    "customer_id": r[2],
-                    "invoice_id": r[3],
-                    "waiver_applied": r[4],
-                    "payment_plan_applied": r[5],
-                    "amount_before": float(r[6]),
-                    "late_fee_before": float(r[7]),
-                    "status_before": r[8],
-                    "amount_after": float(r[9]),
-                    "late_fee_after": float(r[10]),
-                    "status_after": r[11],
-                    "applied_at": r[12].isoformat() if hasattr(r[12], "isoformat") else r[12],
-                    "reverted_at": r[13].isoformat() if r[13] and hasattr(r[13], "isoformat") else r[13],
-                }
-                for r in rows
-            ]
+
+    def _list_billing_adjustments_cur(
+        self,
+        cur,
+        customer_id: str,
+        *,
+        call_id: str | None = None,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Run the billing-adjustments SELECT on an existing cursor.
+
+        Factored out so get_account_facts can share one connection for facts +
+        adjustments. Bootstrap ensure_schema() owns DDL; no per-read schema DDL.
+        """
+        tbl = self._table("billing_adjustments")
+        clauses = ["customer_id = %s"]
+        params: list[Any] = [customer_id]
+        if call_id:
+            clauses.append("call_id = %s")
+            params.append(call_id)
+        if active_only:
+            clauses.append("reverted_at IS NULL")
+        where = " AND ".join(clauses)
+        cur.execute(
+            f"""
+            SELECT adjustment_id, call_id, customer_id, invoice_id,
+                   waiver_applied, payment_plan_applied,
+                   amount_before, late_fee_before, status_before,
+                   amount_after, late_fee_after, status_after,
+                   applied_at, reverted_at
+            FROM {tbl}
+            WHERE {where}
+            ORDER BY applied_at DESC
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "adjustment_id": r[0],
+                "call_id": r[1],
+                "customer_id": r[2],
+                "invoice_id": r[3],
+                "waiver_applied": r[4],
+                "payment_plan_applied": r[5],
+                "amount_before": float(r[6]),
+                "late_fee_before": float(r[7]),
+                "status_before": r[8],
+                "amount_after": float(r[9]),
+                "late_fee_after": float(r[10]),
+                "status_after": r[11],
+                "applied_at": r[12].isoformat() if hasattr(r[12], "isoformat") else r[12],
+                "reverted_at": r[13].isoformat() if r[13] and hasattr(r[13], "isoformat") else r[13],
+            }
+            for r in rows
+        ]
 
     def apply_billing_resolution(
         self,
@@ -983,31 +1117,24 @@ class LakebaseServing:
         call_id = adjustment["call_id"]
         customer_id = adjustment["customer_id"]
 
-        uc_result: dict[str, Any] = {"ok": False, "skipped": True}
-        if warehouse_configured(self.settings):
-            try:
-                from genie_voice.databricks import warehouse_sql
-
-                uc_result = warehouse_sql.apply_billing_resolution_uc(self.settings, adjustment)
-                uc_result["skipped"] = False
-            except Exception as exc:  # noqa: BLE001
-                return {"applied": False, "reason": f"uc_write_failed: {exc}"}
-        elif self.enabled:
-            return {
-                "applied": False,
-                "reason": "sql_warehouse_required_for_uc_billing_writes",
-            }
-
+        # Write ONLY to Lakebase (fast OLTP, low-ms). The governed UC copy is
+        # produced off the hot path by Lakebase Change Data Feed
+        # (billing_adjustments -> lb_billing_adjustments_history, ~15s), so no
+        # synchronous SQL-warehouse statement ever sits on the voice turn. The
+        # waiver/plan is expressed purely as this adjustment row and overlaid on
+        # reads (_apply_billing_adjustments); the canonical invoices table is
+        # never mutated in place, which keeps Delta the single source of truth
+        # and avoids a Postgres->Delta write-back loop on reference data.
         if not self.enabled:
             with _LOCK:
                 rows = _MEM_ADJUSTMENTS.setdefault(customer_id, [])
                 rows[:] = [r for r in rows if r.get("adjustment_id") != adjustment_id]
                 rows.append(adjustment)
-            return {"applied": True, "adjustment": adjustment, "uc": uc_result}
+            return {"applied": True, "adjustment": adjustment}
 
         tbl = self._table("billing_adjustments")
+        # Bootstrap ensure_schema() owns DDL; no per-write schema round-trip.
         with self._conn() as conn, conn.cursor() as cur:
-            self._ensure_serving_schema(cur)
             cur.execute(
                 f"""
                 INSERT INTO {tbl}
@@ -1038,9 +1165,12 @@ class LakebaseServing:
                     adjustment["status_after"],
                 ),
             )
-        return {"applied": True, "adjustment": adjustment, "uc": uc_result}
+        return {"applied": True, "adjustment": adjustment}
 
     def revert_billing_adjustments(self, call_id: str) -> dict[str, Any]:
+        # Revert is also Lakebase-only: marking reverted_at streams to UC via CDF
+        # (an update_postimage row), and reads honor reverted_at IS NULL. No
+        # synchronous SQL-warehouse write on this path either.
         reverted: list[str] = []
         if not self.enabled:
             with _LOCK:
@@ -1048,13 +1178,6 @@ class LakebaseServing:
                     kept: list[dict[str, Any]] = []
                     for row in rows:
                         if row.get("call_id") == call_id and not row.get("reverted_at"):
-                            if warehouse_configured(self.settings):
-                                try:
-                                    from genie_voice.databricks import warehouse_sql
-
-                                    warehouse_sql.revert_billing_resolution_uc(self.settings, row)
-                                except Exception:  # noqa: BLE001
-                                    pass
                             reverted.append(str(row.get("adjustment_id")))
                         else:
                             kept.append(row)
@@ -1066,37 +1189,25 @@ class LakebaseServing:
             self._ensure_serving_schema(cur)
             cur.execute(
                 f"""
-                SELECT adjustment_id, call_id, customer_id, invoice_id,
-                       amount_before, late_fee_before, status_before
-                FROM {tbl}
+                UPDATE {tbl} SET reverted_at = now()
                 WHERE call_id = %s AND reverted_at IS NULL
+                RETURNING adjustment_id
                 """,
                 (call_id,),
             )
-            rows = cur.fetchall()
-            for row in rows:
-                payload = {
-                    "adjustment_id": row[0],
-                    "call_id": row[1],
-                    "customer_id": row[2],
-                    "invoice_id": row[3],
-                    "amount_before": float(row[4]),
-                    "late_fee_before": float(row[5]),
-                    "status_before": row[6],
-                }
-                if warehouse_configured(self.settings):
-                    from genie_voice.databricks import warehouse_sql
-
-                    warehouse_sql.revert_billing_resolution_uc(self.settings, payload)
-                cur.execute(
-                    f"UPDATE {tbl} SET reverted_at = now() WHERE adjustment_id = %s",
-                    (row[0],),
-                )
-                reverted.append(row[0])
+            reverted = [row[0] for row in cur.fetchall()]
         return {"call_id": call_id, "reverted": reverted}
 
     def reset_demo_session(self, call_id: str) -> dict[str, Any]:
-        """Reset per-call runtime artifacts so the scenario can be replayed."""
+        """Reset per-call runtime artifacts so the scenario can be replayed.
+
+        Reset clears only the ephemeral live overlay (the call_state scratchpad),
+        reverts the customer's live billing adjustments, and clears this call's
+        resolution events. It deliberately does NOT touch live_call_utterances:
+        that table holds the immutable seed transcript that analytics/Genie/DQ
+        rely on, and previously deleting it here is exactly what left seed calls
+        with zero utterances. The durable transcript stays intact across replays.
+        """
         billing_reset = self.revert_billing_adjustments(call_id)
         events_cleared = self.clear_resolution_events(call_id)
         state = self.get_call_state(call_id)
@@ -1109,18 +1220,6 @@ class LakebaseServing:
         inner["utterances"] = []
         self.upsert_call_state(call_id, state.get("customer_id"), inner)
 
-        if not self.enabled:
-            return {
-                "call_id": call_id,
-                "reset": True,
-                "billing": billing_reset,
-                "resolution_events_cleared": events_cleared,
-            }
-
-        utterances_tbl = self._table(self.settings.lakebase.live_utterances_table)
-        with self._conn() as conn, conn.cursor() as cur:
-            self._ensure_serving_schema(cur)
-            cur.execute(f"DELETE FROM {utterances_tbl} WHERE call_id = %s", (call_id,))
         return {
             "call_id": call_id,
             "reset": True,
@@ -1158,41 +1257,104 @@ class LakebaseServing:
         payments = [p for p in load("payments") if p.get("customer_id") == customer_id]
         return _account_facts(customer_id, customer, invoices, payments)
 
-    def _account_facts_uc(self, customer_id: str) -> dict[str, Any]:
-        from genie_voice.databricks.client import get_workspace_client
+    def _account_facts_lakebase(self, customer_id: str) -> dict[str, Any]:
+        """Read account facts from the Lakebase serving cache (the sole serving
+        read path; never the SQL warehouse).
 
-        wh = self.settings.databricks.sql_warehouse_id
-        if not wh:
-            raise RuntimeError("databricks.sql_warehouse_id is required for account facts.")
-        client = get_workspace_client(self.settings)
+        Reads execute directly and let errors propagate — a missing/broken
+        serving cache must fail loudly, not silently degrade. A customer that is
+        genuinely absent returns found=False (correct semantics, not a fallback).
+        """
+        with self._conn() as conn, conn.cursor() as cur:
+            return self._account_facts_lakebase_cur(cur, customer_id)
 
-        def query(sql: str) -> list[dict[str, Any]]:
-            res = client.statement_execution.execute_statement(
-                warehouse_id=wh,
-                statement=sql,
-                wait_timeout="30s",
-            )
-            manifest = getattr(res, "manifest", None)
-            cols = [
-                c.name for c in (getattr(getattr(manifest, "schema", None), "columns", None) or [])
-            ]
-            rows = (res.result.data_array if res.result else None) or []
-            return [dict(zip(cols, row)) for row in rows]
+    def _account_facts_lakebase_cur(self, cur, customer_id: str) -> dict[str, Any]:
+        """Run the three account-facts SELECTs on an existing cursor.
 
-        safe_customer = customer_id.replace("'", "''")
-        customer = (
-            query(f"SELECT * FROM {self.settings.fqtn('customers')} WHERE customer_id = '{safe_customer}'")
-            or [None]
-        )[0]
-        invoices = query(
-            f"SELECT * FROM {self.settings.fqtn('invoices')} "
-            f"WHERE customer_id = '{safe_customer}' ORDER BY due_date DESC"
-        )
-        payments = query(
-            f"SELECT * FROM {self.settings.fqtn('payments')} "
-            f"WHERE customer_id = '{safe_customer}' ORDER BY payment_date DESC LIMIT 10"
+        Factored out so get_account_facts can read facts AND billing adjustments
+        on a single pooled connection (one checkout per lookup, not two).
+        """
+        def rows(sql: str) -> list[dict[str, Any]]:
+            cur.execute(sql, (customer_id,))
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        customers_tbl = self._table("customers")
+        invoices_tbl = self._table("invoices")
+        payments_tbl = self._table("payments")
+        customer_rows = rows(f"SELECT * FROM {customers_tbl} WHERE customer_id = %s")
+        customer = customer_rows[0] if customer_rows else None
+        invoices = rows(f"SELECT * FROM {invoices_tbl} WHERE customer_id = %s ORDER BY due_date DESC")
+        payments = rows(
+            f"SELECT * FROM {payments_tbl} WHERE customer_id = %s "
+            f"ORDER BY payment_date DESC LIMIT 10"
         )
         return _account_facts(customer_id, customer, invoices, payments)
+
+    # Reference table -> (primary key, [(column, postgres_cast_type), ...]). The
+    # SQL warehouse returns every value as a string, so each column is bound as
+    # text and CAST to its Postgres type in the INSERT (CAST(NULL AS t) is valid).
+    _REFERENCE_TABLE_SPECS: dict[str, tuple[str, list[tuple[str, str]]]] = {
+        "customers": ("customer_id", [
+            ("customer_id", "TEXT"), ("full_name", "TEXT"), ("segment", "TEXT"),
+            ("region", "TEXT"), ("plan", "TEXT"), ("monthly_charge", "NUMERIC(10,2)"),
+            ("tenure_months", "INTEGER"), ("status", "TEXT"),
+            ("autopay_enabled", "BOOLEAN"), ("email", "TEXT"), ("signup_date", "DATE"),
+        ]),
+        "invoices": ("invoice_id", [
+            ("invoice_id", "TEXT"), ("customer_id", "TEXT"), ("period", "TEXT"),
+            ("issue_date", "DATE"), ("due_date", "DATE"), ("amount", "NUMERIC(10,2)"),
+            ("late_fee", "NUMERIC(10,2)"), ("status", "TEXT"), ("paid_date", "DATE"),
+        ]),
+        "payments": ("payment_id", [
+            ("payment_id", "TEXT"), ("invoice_id", "TEXT"), ("customer_id", "TEXT"),
+            ("amount", "NUMERIC(10,2)"), ("payment_date", "DATE"),
+            ("method", "TEXT"), ("status", "TEXT"),
+        ]),
+    }
+
+    def snapshot_reference_tables(self) -> dict[str, int]:
+        """Snapshot reverse-ETL: copy UC Delta reference tables into Lakebase.
+
+        Reads customers/invoices/payments from the UC source of truth via the SQL
+        warehouse (a one-off setup/refresh cost, NOT on the hot path) and upserts
+        them into the Lakebase serving cache read by lookup_account. Idempotent
+        (INSERT ... ON CONFLICT DO UPDATE keyed on PK), so re-running only touches
+        changed rows and reference data is slowly-changing. Run from
+        infra/lakebase/setup_lakebase.py and the refresh schedule.
+        """
+        if not self.enabled:
+            return {}
+        if not warehouse_configured(self.settings):
+            raise RuntimeError("snapshot_reference_tables requires databricks.sql_warehouse_id")
+        from genie_voice.databricks.client import get_workspace_client
+
+        with self._conn() as conn, conn.cursor() as cur:
+            self._ensure_reference_tables(cur)
+        client = get_workspace_client(self.settings)
+        wh = self.settings.databricks.sql_warehouse_id
+        counts: dict[str, int] = {}
+        for table, (pk, colspecs) in self._REFERENCE_TABLE_SPECS.items():
+            cols = [c for c, _ in colspecs]
+            res = client.statement_execution.execute_statement(
+                warehouse_id=wh,
+                statement=f"SELECT {', '.join(cols)} FROM {self.settings.fqtn(table)}",
+                wait_timeout="50s",
+            )
+            rows = (res.result.data_array if res.result else None) or []
+            tbl = self._table(table)
+            placeholders = ", ".join(f"CAST(%s AS {t})" for _, t in colspecs)
+            updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != pk)
+            with self._conn() as conn, conn.cursor() as cur:
+                for row in rows:
+                    values = [(v if v not in ("", None) else None) for v in row]
+                    cur.execute(
+                        f"INSERT INTO {tbl} ({', '.join(cols)}) VALUES ({placeholders}) "
+                        f"ON CONFLICT ({pk}) DO UPDATE SET {updates}",
+                        tuple(values),
+                    )
+            counts[table] = len(rows)
+        return counts
 
     def list_call_states(self, limit: int = 50) -> list[dict[str, Any]]:
         if not self.enabled:

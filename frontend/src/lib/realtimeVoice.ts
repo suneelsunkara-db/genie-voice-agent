@@ -83,7 +83,18 @@ export async function startRealtimeVoice(
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   });
 
+  // Request a 16 kHz context; modern Chrome/Edge/Safari honor this and hand back
+  // high-quality (browser-resampled) 16 kHz audio. But some browsers/devices
+  // IGNORE the option and run the context at the hardware rate (typically
+  // 48 kHz). Previously we still declared 16 kHz to the server, so on those
+  // browsers the PCM was 48 kHz mislabeled as 16 kHz — STT then received 3x-fast
+  // audio and mis-transcribed. We therefore read the ACTUAL context rate and
+  // report it truthfully below; the server resamples to 16 kHz where it needs a
+  // fixed rate (endpointing). We do NOT hand-roll a streaming downsample here —
+  // naive linear decimation aliases sibilants into the speech band (see
+  // micStream.resampleTo16k).
   const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+  const actualSampleRate = Math.round(audioContext.sampleRate);
   const source = audioContext.createMediaStreamSource(stream);
   const analyser = audioContext.createAnalyser();
   analyser.fftSize = 256;
@@ -137,7 +148,7 @@ export async function startRealtimeVoice(
         JSON.stringify({
           type: "session.start",
           language: "auto",
-          sample_rate_hz: TARGET_SAMPLE_RATE,
+          sample_rate_hz: actualSampleRate,
           encoding: "pcm_s16le",
           call_id: callId,
           customer_id: customerId,

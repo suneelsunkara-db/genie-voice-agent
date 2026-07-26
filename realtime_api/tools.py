@@ -23,7 +23,25 @@ class ToolContext:
     customer_id: str | None = None
     call_id: str | None = None
     _detected_language: str | None = field(default=None, repr=False)
-    _account_cache: dict[str, Any] | None = field(default=None, repr=False)
+    # Per-SESSION account-facts cache (customer_id -> facts), shared across turns
+    # of one call (injected by the pipeline from VoiceSession). Lets a follow-up
+    # turn that only calls apply_billing_action reuse the facts read by an earlier
+    # lookup_account turn instead of re-reading Lakebase. None disables caching.
+    # Invalidated whenever a billing write changes the account.
+    account_store: dict[str, Any] | None = field(default=None, repr=False)
+
+    def cached_account(self, customer_id: str) -> dict[str, Any] | None:
+        if self.account_store is None:
+            return None
+        return self.account_store.get(customer_id)
+
+    def store_account(self, customer_id: str, facts: dict[str, Any]) -> None:
+        if self.account_store is not None:
+            self.account_store[customer_id] = facts
+
+    def invalidate_account(self, customer_id: str) -> None:
+        if self.account_store is not None:
+            self.account_store.pop(customer_id, None)
 
 
 # Registry: name -> (spec_dict, executor_fn)
@@ -67,8 +85,9 @@ def _run_lookup_account(arguments: dict[str, Any], ctx: ToolContext) -> str:
     if not customer_id:
         return json.dumps({"error": "No customer_id available. Ask the caller for their account number."})
 
-    if ctx._account_cache and ctx._account_cache.get("customer_id") == customer_id:
-        return json.dumps(ctx._account_cache)
+    cached = ctx.cached_account(customer_id)
+    if cached is not None:
+        return json.dumps(cached, default=str)
 
     try:
         from api.app.deps import serving
@@ -76,7 +95,7 @@ def _run_lookup_account(arguments: dict[str, Any], ctx: ToolContext) -> str:
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"Account lookup failed: {exc}"})
 
-    ctx._account_cache = facts
+    ctx.store_account(customer_id, facts)
     return json.dumps(facts, default=str)
 
 
@@ -258,9 +277,10 @@ def _run_apply_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> st
         from api.app.deps import serving
         svc = serving()
 
-        # Reuse cached account facts from lookup_account (avoids redundant Lakebase read)
-        account = ctx._account_cache
-        if not account or account.get("customer_id") != customer_id:
+        # Reuse account facts cached by a prior lookup_account (this turn OR an
+        # earlier turn of the same call); only read Lakebase on a cache miss.
+        account = ctx.cached_account(customer_id)
+        if account is None:
             account = svc.get_account_facts(customer_id)
         if not account.get("found"):
             return json.dumps({"error": f"No account found for {customer_id}"})
@@ -274,6 +294,10 @@ def _run_apply_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> st
         result = svc.apply_billing_resolution(call_id, customer_id, resolution, account)
         if not result.get("applied"):
             return json.dumps({"applied": False, "reason": result.get("reason", "unknown")})
+
+        # The account just changed (waiver/plan). Drop the cached facts so any
+        # later turn re-reads the adjusted state instead of serving stale facts.
+        ctx.invalidate_account(customer_id)
 
         # Close the issue in call state + timeline. apply_billing_resolution only
         # persists the invoice adjustment; the resolution state machine (status ->

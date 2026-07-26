@@ -8,3 +8,8 @@ websockets>=12
 pydantic>=2
 # Realtime Voice API (mounted at /realtime) uses requests for TTS SSE streaming.
 requests>=2.31
+# Semantic end-of-turn detection (Silero VAD + smart-turn v3) for the realtime
+# voice API. CPU-only, numpy + onnxruntime (no torch/transformers); ONNX models
+# are bundled under realtime_api/models/.
+numpy>=1.24
+onnxruntime>=1.17

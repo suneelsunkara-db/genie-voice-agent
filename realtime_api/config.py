@@ -31,6 +31,20 @@ class RealtimeSettings:
     # Minimum voiced audio before a turn can finalize; filters brief blips and
     # speaker->mic echo (e.g. the assistant's own voice) from firing turns.
     min_speech_ms: int = 400
+    # --- Semantic end-of-turn (Silero VAD + smart-turn) -------------------------
+    # When enabled and the ONNX models load, end-of-turn is decided by a Silero
+    # speech gate + the smart-turn v3 completeness model instead of the energy
+    # VAD (see endpointing.py). Falls back to the energy VAD automatically if the
+    # models can't load. Off keeps the pure energy VAD.
+    endpointing_enabled: bool = True
+    # Silero-detected trailing silence that triggers a smart-turn evaluation. Kept
+    # short so a completed utterance finalizes ~0.3s after the caller stops.
+    endpoint_stop_ms: int = 300
+    # smart-turn "utterance complete" probability threshold.
+    smart_turn_threshold: float = 0.5
+    # If Silero detects no speech for this long, the buffer is ambient noise, not
+    # a turn: discard it (instead of holding open to max_turn_seconds).
+    noise_discard_seconds: int = 4
     # While the assistant is replying, only a *sustained* talk-over of this much
     # voiced audio counts as a barge-in (interrupt). Long enough to reject echo
     # and backchannels ("mm-hmm"), short enough that a real interruption lands.
@@ -93,6 +107,10 @@ class RealtimeSettings:
             supported_languages=_supported_languages(rv),
             warmup_enabled=bool(rv.get("warmup", True)),
             stt_warmup_passes=max(1, int(rv.get("stt_warmup_passes", 3))),
+            endpointing_enabled=bool(_endpointing(rv).get("enabled", True)),
+            endpoint_stop_ms=int(_endpointing(rv).get("stop_ms", 300)),
+            smart_turn_threshold=float(_endpointing(rv).get("smart_turn_threshold", 0.5)),
+            noise_discard_seconds=int(_endpointing(rv).get("noise_discard_seconds", 4)),
             debug_audio=bool(rv.get("debug_audio", False)),
             debug_audio_dir=str(rv.get("debug_audio_dir", "/tmp/realtime_audio")),
         )
@@ -217,6 +235,11 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             out[key] = value
     return out
+
+
+def _endpointing(rv: dict[str, Any]) -> dict[str, Any]:
+    """Optional ``realtime_voice.endpointing`` overrides block."""
+    return rv.get("endpointing") or {}
 
 
 def _first_endpoint(candidates: dict[str, Any] | None) -> str:

@@ -134,7 +134,7 @@ def ingest_call_stream(settings: Settings | None = None) -> None:
     for call_id, fact in sorted(facts.items()):
         utterances = utterances_by_call.get(call_id, [])
         lb.upsert_call_fact(fact)
-        lb.replace_live_utterances(call_id, utterances)
+        lb.upsert_live_utterances(call_id, utterances)
         lb.upsert_call_state(
             call_id,
             fact.get("customer_id"),

@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from .benchmarks import load_benchmarks
 from .capabilities import LEGACY_VOICE_PATH, SPEECH_LLM_TOOLASSIST_SPEECH
 from .config import RealtimeSettings
+from .endpointing import EndpointModels
 from .languages import DEFAULT_TAG, language_options
 from .pipelines import ServingBundle
 from .services import DatabricksServing
@@ -172,15 +173,31 @@ def create_app(
             wav=wav_path,
         )
 
+    # Load the semantic end-of-turn models once (process-wide, thread-safe ONNX
+    # sessions). None when disabled or unloadable -> sessions keep the energy VAD.
+    endpoint_models = EndpointModels.load() if settings.endpointing_enabled else None
+
     assist_spec = next(r for r in ROUTES if r.capability == SPEECH_LLM_TOOLASSIST_SPEECH)
     for spec in ROUTES:
         app.websocket(spec.path)(
-            make_ws_handler(settings, bundle_factory, spec, on_turn_audio=_on_turn_audio)
+            make_ws_handler(
+                settings,
+                bundle_factory,
+                spec,
+                on_turn_audio=_on_turn_audio,
+                endpoint_models=endpoint_models,
+            )
         )
 
     # Deprecated alias for one release; routes to speech-llm-toolassist-speech.
     app.websocket(LEGACY_VOICE_PATH)(
-        make_ws_handler(settings, bundle_factory, assist_spec, on_turn_audio=_on_turn_audio)
+        make_ws_handler(
+            settings,
+            bundle_factory,
+            assist_spec,
+            on_turn_audio=_on_turn_audio,
+            endpoint_models=endpoint_models,
+        )
     )
 
     return app

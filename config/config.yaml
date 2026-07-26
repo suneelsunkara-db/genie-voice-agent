@@ -83,6 +83,9 @@ lakebase:
   cdf_required_tables:
     - call_facts
     - live_call_utterances
+    - billing_adjustments
+    - call_state
+    - resolution_events
   # Lakebase-native operational call tables loaded under lakebase.schema using
   # primary names. Customer/billing reference tables stay in UC Delta only.
   sync_tables:
@@ -227,6 +230,20 @@ realtime_voice:
   tts_defaults:
     inference_timesteps: 6
     cfg_value: 2.0
+  # Semantic end-of-turn detection: a Silero VAD speech gate + the smart-turn v3
+  # completeness model (bundled ONNX under realtime_api/models/, CPU-only). This
+  # replaces the energy-RMS VAD, which held turns open on ambient noise and
+  # mis-read long between-clause pauses (turns hit the 20s cap; the caller waited
+  # seconds for a reply). Validated on real captured turns: real speech finalizes
+  # ~0.3s after the caller stops (median ~9s saved vs the cap), 0 premature
+  # cutoffs, and no-speech turns are discarded early. Falls back to the energy
+  # VAD automatically if the models can't load. Languages outside smart-turn's
+  # 23 (el/fil/ms/sv/th here) use Silero pause + vad_silence_ms.
+  endpointing:
+    enabled: true
+    stop_ms: 300               # Silero pause that triggers a smart-turn check
+    smart_turn_threshold: 0.5  # "utterance complete" probability
+    noise_discard_seconds: 4   # no speech for this long -> drop the buffer as noise
   # Multilingual voice benchmark job targets this app's realtime WebSocket API and
   # writes scores to ``volume.multilingual_voice_benchmark_path``.
   benchmark:

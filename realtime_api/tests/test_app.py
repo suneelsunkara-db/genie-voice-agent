@@ -37,6 +37,11 @@ def _settings() -> RealtimeSettings:
         supported_languages=("en",),
         stt_languages=("en",),
         tts_languages=("en",),
+        # These behavioral tests drive turns with synthetic square-wave frames,
+        # which are (correctly) not real speech to the Silero gate. Exercise the
+        # energy-VAD turn flow here; the semantic endpointer is covered by its
+        # own tests below (test_endpointing.py logic + endpointer_for routing).
+        endpointing_enabled=False,
     )
 
 

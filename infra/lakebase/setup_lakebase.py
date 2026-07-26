@@ -134,8 +134,17 @@ def main() -> None:
     try:
         from genie_voice.serve import LakebaseServing
 
-        LakebaseServing(s).ensure_schema()
+        lb = LakebaseServing(s)
+        lb.ensure_schema()
         print(f"  ok: connected and ensured schema {s.lakebase.schema_name}")
+        # Snapshot reverse-ETL: land customers/invoices/payments from the UC Delta
+        # source of truth into the Lakebase serving cache so lookup_account reads
+        # sub-ms from Postgres. This cache is the ONLY serving read path (there is
+        # no warehouse fallback), so a snapshot failure must surface, not be
+        # swallowed — the error propagates and fails setup.
+        counts = lb.snapshot_reference_tables()
+        print("  ok: snapshotted reference tables -> Lakebase: "
+              + ", ".join(f"{t}={n}" for t, n in sorted(counts.items())))
     except Exception as exc:  # noqa: BLE001
         print(f"  WARNING: could not verify serving connectivity: {exc}")
         return

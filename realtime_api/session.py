@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 
 from .contracts import SessionStart
+from .endpointing import TurnEndpointer
 
 # --- Adaptive energy VAD tuning ---------------------------------------------
 # A single fixed RMS gate can't serve both a quiet mic (real speech falls under
@@ -47,6 +48,11 @@ class VoiceSession:
     noise_floor: float = _INITIAL_NOISE_FLOOR
     busy: bool = False
     history: list = field(default_factory=list)
+    # Session-scoped account-facts cache (customer_id -> facts), shared across
+    # turns and passed into each turn's ToolContext. Lets a confirmation turn
+    # that only calls apply_billing_action reuse facts read by an earlier
+    # lookup_account turn. Invalidated by the billing tool on any write.
+    account_store: dict = field(default_factory=dict)
     _cooldown_until: float = 0.0
     # Voice consistency: the agent's first synthesized turn is captured as a
     # reference clip (base64 WAV, set exactly once). Every later turn clones it
@@ -54,11 +60,33 @@ class VoiceSession:
     # whole call. Cloning from real audio is deterministic w.r.t. timbre, unlike
     # RNG seeding (which the deployed model does not even support).
     voice_reference_b64: str | None = None
+    # Semantic end-of-turn detector (Silero VAD + smart-turn). When set, it
+    # replaces the energy VAD for speech gating and end-of-turn decisions; None
+    # keeps the legacy energy VAD (also the graceful fallback when models can't
+    # load). Injected by the handler at session.start.
+    endpointer: TurnEndpointer | None = None
 
     def add_audio(self, frame: bytes) -> bool:
         """Append PCM audio and report whether this frame begins speech."""
         if len(frame) % 2:
             raise ValueError("PCM s16le audio frame must contain an even number of bytes")
+        if self.endpointer is not None:
+            return self._add_audio_smart(frame)
+        return self._add_audio_energy(frame)
+
+    def _add_audio_smart(self, frame: bytes) -> bool:
+        """Silero-gated ingest: mirror speech/silence counters from the endpointer."""
+        frame_ms = len(frame) / 2 / self.config.sample_rate_hz * 1000
+        self.last_rms = _pcm_s16le_rms(frame)
+        began = self.endpointer.feed(frame)
+        self.speech_active = self.endpointer.triggered
+        self.voiced_ms = self.endpointer.speech_ms
+        self.silence_ms = self.endpointer.silence_ms
+        self.turn_audio_ms += frame_ms
+        self.audio.extend(frame)
+        return began
+
+    def _add_audio_energy(self, frame: bytes) -> bool:
         frame_ms = len(frame) / 2 / self.config.sample_rate_hz * 1000
         rms = _pcm_s16le_rms(frame)
         self.last_rms = rms
@@ -121,12 +149,26 @@ class VoiceSession:
         """Drop audio captured while busy (echo/tail) without bumping turn_id."""
         self._reset_turn()
 
+    def is_noise_timeout(self, seconds: float) -> bool:
+        """Smart-path only: buffer has run this long with no confirmed speech.
+
+        Signals ambient noise that the energy VAD would have held open to the
+        cap; the handler discards it instead of transcribing silence.
+        """
+        return (
+            self.endpointer is not None
+            and not self.endpointer.has_speech
+            and self.turn_audio_ms >= seconds * 1000
+        )
+
     def _reset_turn(self) -> None:
         self.audio.clear()
         self.speech_active = False
         self.silence_ms = 0.0
         self.turn_audio_ms = 0.0
         self.voiced_ms = 0.0
+        if self.endpointer is not None:
+            self.endpointer.reset()
 
 
 def _pcm_s16le_rms(frame: bytes) -> float:

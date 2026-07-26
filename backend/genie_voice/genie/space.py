@@ -24,9 +24,25 @@ _ENTITY_COLUMNS: dict[str, list[str]] = {
     "customers": ["segment", "region", "plan", "status"],
     "invoices": ["status"],
     "payments": ["status", "method"],
-    "billing_adjustments": ["status_before", "status_after"],
+    "lb_billing_adjustments_history": ["status_before", "status_after"],
     "gold_call_insights": ["primary_intent", "disposition", "sentiment_label", "resolution_status"],
     "agents": ["team"],
+}
+
+# History (Lakebase CDF) tables carry no MODEL comment; describe them inline.
+_HISTORY_TABLE_DESCRIPTIONS: dict[str, str] = {
+    "lb_call_facts_history": (
+        "Lakebase CDF history for operational call_facts. Use the latest "
+        "non-delete row per call_id ordered by _sort_by for current call "
+        "metadata such as agent_id, call_ts, duration_sec, csat."
+    ),
+    "lb_billing_adjustments_history": (
+        "Lakebase CDF history for live billing adjustments (late-fee waivers / "
+        "payment plans) written by the voice agent. Use the latest non-delete "
+        "row per adjustment_id ordered by _sort_by, keeping only reverted_at IS "
+        "NULL, then overlay it on invoices for current billing state (the "
+        "invoices table itself is never mutated in place)."
+    ),
 }
 
 # Tables to expose in the space (logical names -> resolved to fqtn).
@@ -36,7 +52,7 @@ _ENTITY_COLUMNS: dict[str, list[str]] = {
 # verbose, not analytics-shaped, and would dilute Genie's accuracy.
 _SPACE_TABLES = [
     "gold_call_insights", "lb_call_facts_history", "customers", "invoices",
-    "payments", "agents", "billing_adjustments",
+    "payments", "agents", "lb_billing_adjustments_history",
 ]
 
 # Best practice: prefer example SQL over text instructions; keep text concise,
@@ -44,8 +60,9 @@ _SPACE_TABLES = [
 _TEXT_INSTRUCTIONS = [
     "Domain: contact-center billing/account support. gold_call_insights = one row of NLP insights per call (intent, sentiment, disposition, next_best_action, summary); lb_call_facts_history is Lakebase CDF history for operational call metadata (agent_id, call_ts, duration_sec, csat).\n",
     "Use current call metadata by selecting the latest non-delete lb_call_facts_history row per call_id: row_number() over (partition by call_id order by _sort_by desc)=1 and _pg_change_type <> 'delete'.\n",
-    "Joins: gold_call_insights.call_id = lb_call_facts_history.call_id after applying the latest-row filter; gold_call_insights.customer_id = customers.customer_id; gold_call_insights.mentioned_invoice_id = invoices.invoice_id; lb_call_facts_history.agent_id = agents.agent_id; invoices.customer_id = customers.customer_id; payments.invoice_id = invoices.invoice_id; billing_adjustments.customer_id = customers.customer_id; billing_adjustments.invoice_id = invoices.invoice_id; billing_adjustments.call_id links to call history operationally.\n",
-    "Semantics: handle time = current lb_call_facts_history.duration_sec (seconds); CSAT = current lb_call_facts_history.csat (1-5). A call is resolved when gold_call_insights.resolution_status = 'resolved'. invoices.status='overdue' = unpaid past due_date; 'disputed' = billing dispute. billing_adjustments rows are written by live agent-assist (waiver/payment plan) and UPDATE the linked invoice; use reverted_at IS NULL for active adjustments. A customer is at cancellation risk when customers.status='at_risk' OR array_contains(gold_call_insights.all_intents,'cancellation_risk').\n",
+    "Joins: gold_call_insights.call_id = lb_call_facts_history.call_id after applying the latest-row filter; gold_call_insights.customer_id = customers.customer_id; gold_call_insights.mentioned_invoice_id = invoices.invoice_id; lb_call_facts_history.agent_id = agents.agent_id; invoices.customer_id = customers.customer_id; payments.invoice_id = invoices.invoice_id; lb_billing_adjustments_history joins to invoices on invoice_id and to customers on customer_id AFTER applying its own latest-row filter; lb_billing_adjustments_history.call_id links to call history operationally.\n",
+    "Current billing adjustments: lb_billing_adjustments_history is Lakebase CDF change history. Derive current adjustments as the latest non-delete row per adjustment_id: row_number() over (partition by adjustment_id order by _sort_by desc)=1 and _pg_change_type <> 'delete', then keep only reverted_at IS NULL.\n",
+    "Semantics: handle time = current lb_call_facts_history.duration_sec (seconds); CSAT = current lb_call_facts_history.csat (1-5). A call is resolved when gold_call_insights.resolution_status = 'resolved'. invoices.status='overdue' = unpaid past due_date; 'disputed' = billing dispute. Late-fee waivers / payment plans are written by the live voice agent into lb_billing_adjustments_history; the invoices table is NEVER mutated in place, so effective (current) billing = invoices overlaid with the current adjustment's late_fee_after/amount_after/status_after when one exists for that invoice_id (else the invoice's own amount/late_fee/status). A customer is at cancellation risk when customers.status='at_risk' OR array_contains(gold_call_insights.all_intents,'cancellation_risk').\n",
     "Units: all dollar columns (invoices.amount, invoices.late_fee, gold_call_insights.mentioned_amount, customers.monthly_charge) are USD; round money to 2 decimals.\n",
     "Clarification: ONLY ask the user to specify a period when an AGGREGATE question about call volume or trends across many calls omits any time range. NEVER ask for clarification when the question already states a time window (e.g. 'last 90 days'), or when it is about a single named customer_id or invoice_id - answer those directly from the available columns.\n",
     "Single-customer account snapshot: when asked for one customer_id's billing situation, return overdue invoice count and total overdue amount (invoices.status='overdue'), declined payments in the stated window (payments.status='declined'), and account status (customers.status). Filter strictly to that customer_id and never aggregate other customers.\n",
@@ -64,6 +81,18 @@ def _example_sqls(fq) -> list[dict[str, Any]]:
         "    WHERE _pg_change_type IN ('insert', 'update_postimage', 'delete')\n"
         "  )\n"
         "  WHERE _rn = 1 AND _pg_change_type <> 'delete'\n"
+        ")"
+    )
+    adj_history = fq("lb_billing_adjustments_history")
+    current_billing_adjustments = (
+        "(\n"
+        "  SELECT *\n"
+        "  FROM (\n"
+        "    SELECT *, row_number() OVER (PARTITION BY adjustment_id ORDER BY _sort_by DESC) AS _rn\n"
+        f"    FROM {adj_history}\n"
+        "    WHERE _pg_change_type IN ('insert', 'update_postimage', 'delete')\n"
+        "  )\n"
+        "  WHERE _rn = 1 AND _pg_change_type <> 'delete' AND reverted_at IS NULL\n"
         ")"
     )
     return [
@@ -188,6 +217,23 @@ def _example_sqls(fq) -> list[dict[str, Any]]:
             ],
         },
         {
+            "question": [
+                "What is the effective current late fee, amount, and status for "
+                "customer CUST-4028's invoices after any live waivers or payment plans?"
+            ],
+            "sql": [
+                "SELECT i.invoice_id,\n",
+                "  round(coalesce(a.late_fee_after, i.late_fee), 2) AS effective_late_fee,\n",
+                "  round(coalesce(a.amount_after, i.amount), 2) AS effective_amount,\n",
+                "  coalesce(a.status_after, i.status) AS effective_status,\n",
+                "  (a.adjustment_id IS NOT NULL) AS adjustment_applied\n",
+                f"FROM {fq('invoices')} i\n",
+                f"LEFT JOIN {current_billing_adjustments} a ON a.invoice_id = i.invoice_id\n",
+                "WHERE i.customer_id = 'CUST-4028'\n",
+                "ORDER BY i.due_date DESC",
+            ],
+        },
+        {
             "question": ["Sum of overdue invoice amounts for customers in the enterprise segment."],
             "sql": [
                 "SELECT round(sum(i.amount), 2) AS overdue_amount\n",
@@ -209,12 +255,8 @@ def build_serialized_space(settings: Settings) -> str:
             {
                 "identifier": fq(name),
                 "description": [
-                    (
-                        "Lakebase CDF history for operational call_facts. Use the latest "
-                        "non-delete row per call_id ordered by _sort_by for current call "
-                        "metadata such as agent_id, call_ts, duration_sec, csat."
-                    )
-                    if name == "lb_call_facts_history"
+                    _HISTORY_TABLE_DESCRIPTIONS[name]
+                    if name in _HISTORY_TABLE_DESCRIPTIONS
                     else MODEL[name].comment
                 ],
                 "column_configs": sorted(

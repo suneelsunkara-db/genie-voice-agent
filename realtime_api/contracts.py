@@ -96,9 +96,13 @@ class SessionStart:
         if language != "auto" and not LANGUAGE_TAG_RE.fullmatch(language):
             raise ValueError("language must be 'auto' or a BCP 47 tag, for example en-US or th-TH")
         expected_language = _optional_language_tag(payload.get("expected_language"))
+        # Accept any plausible capture rate (the browser reports its actual
+        # AudioContext rate, which may be 44100/48000 on devices that ignore a
+        # 16 kHz request). The server resamples to 16 kHz where a fixed rate is
+        # required (VAD/endpointing); STT receives the true rate.
         sample_rate_hz = int(payload.get("sample_rate_hz") or 16_000)
-        if sample_rate_hz not in {8_000, 16_000, 24_000, 48_000}:
-            raise ValueError("sample_rate_hz must be one of 8000, 16000, 24000, or 48000")
+        if not 8_000 <= sample_rate_hz <= 192_000:
+            raise ValueError("sample_rate_hz must be between 8000 and 192000")
         encoding = str(payload.get("encoding") or "pcm_s16le")
         if encoding != "pcm_s16le":
             raise ValueError("Only pcm_s16le input is supported in v1")

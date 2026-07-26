@@ -187,6 +187,8 @@ async def process_turn(
             customer_id=session.config.customer_id,
             call_id=session.config.call_id,
             _detected_language=language,
+            # Share the session-scoped account cache across turns (see VoiceSession).
+            account_store=session.account_store,
         )
         t = time.perf_counter()
         respond_fn = getattr(bundle.llm, "respond_with_tools", None)
@@ -282,13 +284,21 @@ async def process_turn(
             "llm_ms": llm_ms,
         }
 
+        # The span's duration_ms is the FULL synthesis+stream (blocking) time.
+        # tts_first_ms is the server-side time-to-first-audio (what the caller
+        # perceives), captured separately so latency analysis can tell the two
+        # apart instead of only seeing the total.
         tts_span = trace.span("tts", "TTS", input={"text": response_text, "language": language})
         tts_chunks = 0
+        tts_first_ms: int | None = None
         async for event in stream_tts(bundle, session, turn_id, response_text, language):
             if event.get("type") == "response.audio":
                 tts_chunks += 1
+                if tts_first_ms is None and event.get("tts_first_ms") is not None:
+                    tts_first_ms = event.get("tts_first_ms")
+                    tts_span.set_attribute("tts_first_ms", tts_first_ms)
             yield event
-        tts_span.set_output({"chunks": tts_chunks}).end()
+        tts_span.set_output({"chunks": tts_chunks, "tts_first_ms": tts_first_ms}).end()
 
         # After TTS completes, suppress turn finalization for 1.5s to prevent
         # speaker→mic echo from immediately triggering a false follow-up turn.

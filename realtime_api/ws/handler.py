@@ -16,6 +16,7 @@ from ..capabilities import (
 )
 from ..config import RealtimeSettings
 from ..contracts import SessionStart
+from ..endpointing import EndpointModels, endpointer_for
 from ..observability import log_event, new_session_id
 from ..pipelines import ServingBundle
 from ..pipelines import speech_llm_toolassist_speech as assist_pipeline
@@ -98,6 +99,7 @@ async def handle_voice_ws(
     spec: RouteSpec,
     *,
     on_turn_audio: Callable[[bytes, int, int, str], None] | None = None,
+    endpoint_models: EndpointModels | None = None,
 ) -> None:
     await websocket.accept()
     session_id = new_session_id()
@@ -138,7 +140,26 @@ async def handle_voice_ws(
                     log_event("speech.started", session_id=session_id, turn_id=session.turn_id + 1)
                     await websocket.send_json({"type": "speech.started", "turn_id": session.turn_id + 1})
                 # Whole-utterance capture: no interim streaming. The turn is buffered
-                # until end-of-speech (trailing silence) and transcribed once.
+                # until end-of-speech and transcribed once. End-of-speech is decided
+                # by the semantic endpointer (Silero + smart-turn) when available,
+                # else the legacy energy VAD.
+                if session.endpointer is not None:
+                    if session.is_noise_timeout(settings.noise_discard_seconds):
+                        # Ambient noise, never real speech: drop without transcribing.
+                        log_event(
+                            "turn.discarded",
+                            session_id=session_id,
+                            turn_id=session.turn_id + 1,
+                            reason="no_speech",
+                            audio_ms=round(session.turn_audio_ms),
+                        )
+                        session.discard_buffer()
+                        continue
+                    if await _smart_should_finalize(session, settings):
+                        task = await _start_audio_turn(
+                            websocket, bundle, session, task, session_id, spec, settings, on_turn_audio
+                        )
+                    continue
                 if session.should_finalize(
                     silence_ms=session.config.vad_silence_ms or settings.vad_silence_ms,
                     max_turn_seconds=session.config.max_turn_seconds or settings.max_turn_seconds,
@@ -173,6 +194,14 @@ async def handle_voice_ws(
                     continue
                 session = VoiceSession(start)
                 session.session_id = session_id
+                if settings.endpointing_enabled and spec.accepts_audio:
+                    session.endpointer = endpointer_for(
+                        endpoint_models,
+                        sample_rate_hz=start.sample_rate_hz,
+                        stop_ms=settings.endpoint_stop_ms,
+                        min_speech_ms=settings.min_speech_ms,
+                        expected_language=start.expected_language,
+                    )
                 log_event(
                     "session.start",
                     session_id=session_id,
@@ -263,6 +292,37 @@ async def handle_voice_ws(
             await websocket.close()
         except RuntimeError:
             pass
+
+
+async def _smart_should_finalize(session: VoiceSession, settings: RealtimeSettings) -> bool:
+    """End-of-turn decision for the semantic endpointer path.
+
+    Hard cap first, then: for smart-turn languages, evaluate the completeness
+    model (off the event loop) at each debounced Silero pause; for the fallback
+    languages, finalize on a Silero pause of the configured end-of-utterance gap.
+    """
+    ep = session.endpointer
+    max_turn = session.config.max_turn_seconds or settings.max_turn_seconds
+    if session.turn_audio_ms >= max_turn * 1000:
+        return True
+    if not ep.has_speech:
+        return False
+    vad_silence = session.config.vad_silence_ms or settings.vad_silence_ms
+    if ep.use_smart_turn:
+        if ep.take_pause_candidate():
+            loop = asyncio.get_event_loop()
+            complete, _prob = await loop.run_in_executor(
+                None, ep.smart_turn_complete, settings.smart_turn_threshold
+            )
+            if complete:
+                return True
+        # Safety net: a very long pause ends the turn even when smart-turn is
+        # unsure (e.g. lower-accuracy languages like vi/zh). Bounds worst-case
+        # latency to vad_silence_ms instead of the max_turn_seconds cap.
+        return ep.silence_ms >= vad_silence
+    # VAD-only path (languages smart-turn wasn't trained on): finalize on a
+    # Silero pause of the configured end-of-utterance gap.
+    return ep.silence_ms >= vad_silence
 
 
 async def _start_audio_turn(
@@ -475,13 +535,19 @@ def make_ws_handler(
     spec: RouteSpec,
     *,
     on_turn_audio: Callable[[bytes, int, int, str], None] | None = None,
+    endpoint_models: EndpointModels | None = None,
 ):
     async def handler(websocket: WebSocket) -> None:
         bundle = bundle_factory(settings)
         if asyncio.iscoroutine(bundle):
             bundle = await bundle
         await handle_voice_ws(
-            websocket, settings, bundle, spec, on_turn_audio=on_turn_audio
+            websocket,
+            settings,
+            bundle,
+            spec,
+            on_turn_audio=on_turn_audio,
+            endpoint_models=endpoint_models,
         )
 
     return handler
