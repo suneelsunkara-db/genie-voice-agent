@@ -2,15 +2,24 @@
 #
 # Submit (default) or run locally the multilingual voice benchmark.
 #
-# Default: serverless Databricks job -> realtime app WebSocket APIs -> UC Volume.
+# FLEURS is an STT benchmark, so this only measures speech-to-text (WER/CER) —
+# TTS is intentionally NOT scored here (round-tripping ASR audio through TTS
+# conflates STT and TTS error; TTS quality needs its own benchmark).
+#
+# Default: serverless Databricks job -> realtime app WebSocket APIs -> UC Volume,
+# then a vendor STT comparison job (Deepgram) that reuses the SAME staged FLEURS
+# audio. The vendor job runs AFTER the main job so the staged data exists, so
+# `eval.sh` waits on the main job when vendors are enabled.
 # Results: volume.multilingual_voice_benchmark_path/summary.json
 # Logs:    volume.multilingual_voice_benchmark_path/logs/run_<timestamp>.log
 #          (read by GET /realtime/v1/benchmarks in the Databricks app)
 #
 # Usage:
-#   ./eval.sh                                    # submit full job
+#   ./eval.sh                                    # main + vendor STT jobs in sequence
 #   ./eval.sh --dataset fleurs --languages en,ja --limit 5
-#   ./eval.sh --wait                             # submit and block until done
+#   ./eval.sh --wait                             # also block on the vendor job
+#   ./eval.sh --no-vendors                       # skip the Deepgram STT comparison
+#   ./eval.sh --vendors deepgram                 # choose which vendor tracks to run
 #   ./eval.sh --local --languages en --limit 2   # run on this machine (dev only)
 #   ./eval.sh --fixture                          # offline fixture scoring
 #
@@ -23,6 +32,8 @@ DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-fe-vm-vdm-classic-rcn6ip}"
 LANGUAGES="${MLV_LANGUAGES:-}"
 DATASET="${MLV_DATASET:-all}"
 LIMIT="${MLV_LIMIT:-20}"
+VENDORS="${MLV_VENDORS:-deepgram}"
+VENDORS_ENABLED=1
 
 FIXTURE=0
 LOCAL=0
@@ -37,6 +48,8 @@ while [[ $# -gt 0 ]]; do
     --languages) LANGUAGES="$2"; shift 2 ;;
     --dataset) DATASET="$2"; shift 2 ;;
     --limit) LIMIT="$2"; shift 2 ;;
+    --vendors) VENDORS="$2"; shift 2 ;;
+    --no-vendors) VENDORS_ENABLED=0; shift ;;
     *) EXTRA_ARGS+=("$1"); shift ;;
   esac
 done
@@ -83,12 +96,29 @@ if [[ "$LOCAL" -eq 1 ]]; then
     --languages "$LANGUAGES" \
     --limit "$LIMIT" \
     --databricks-profile "$DATABRICKS_PROFILE" \
-    --tts-roundtrip \
     ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}
   exit 0
 fi
 
+# The vendor STT comparison (Deepgram) reuses the FLEURS audio the main job
+# stages on the Volume, so it only applies to the fleurs/all sweep.
+if [[ "$VENDORS_ENABLED" -eq 1 && "$DATASET" != "fleurs" && "$DATASET" != "all" ]]; then
+  echo "[submit] vendors skipped (only run on the fleurs/all sweep; dataset=$DATASET)"
+  VENDORS_ENABLED=0
+fi
+
 echo "[submit] multilingual voice benchmark Databricks job"
 SUBMIT_ARGS=(--dataset "$DATASET" --languages "$LANGUAGES" --limit "$LIMIT")
-[[ "$WAIT" -eq 1 ]] && SUBMIT_ARGS+=(--wait)
+# Wait on the main job when vendors follow it, so its staged FLEURS data exists
+# before the vendor job starts (vendors reuse that staged audio).
+if [[ "$VENDORS_ENABLED" -eq 1 || "$WAIT" -eq 1 ]]; then
+  SUBMIT_ARGS+=(--wait)
+fi
 python "$REPO_ROOT/scripts/ml_asr/submit_multilingual_voice_benchmark_job.py" "${SUBMIT_ARGS[@]}" ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}
+
+if [[ "$VENDORS_ENABLED" -eq 1 ]]; then
+  echo "[submit] vendor FLEURS STT comparison job (Deepgram): $VENDORS"
+  VENDOR_ARGS=(--vendors "$VENDORS" --languages "$LANGUAGES" --limit "$LIMIT")
+  [[ "$WAIT" -eq 1 ]] && VENDOR_ARGS+=(--wait)
+  python "$REPO_ROOT/scripts/ml_asr/submit_vendor_fleurs_benchmark_job.py" "${VENDOR_ARGS[@]}"
+fi

@@ -81,28 +81,34 @@ def load_benchmarks(run_id: str | None = None) -> dict[str, Any]:
 
         client = WorkspaceClient(profile=databricks_profile() or None)
 
-        if not run_id:
-            latest = client.statement_execution.execute_statement(
+        if run_id:
+            result = client.statement_execution.execute_statement(
                 warehouse_id=warehouse,
-                statement=f"SELECT max(run_id) AS run_id FROM {table}",  # noqa: S608 (trusted identifiers)
-                wait_timeout="30s",
+                statement=(
+                    "SELECT run_id, dataset, language, evaluator, samples, errors, primary_score, "
+                    "scores, latency_ms, issues_count, issues_by_kind, wall_seconds, "
+                    "timestamp, status "
+                    f"FROM {table} WHERE run_id = :run_id ORDER BY dataset, language"  # noqa: S608
+                ),
+                parameters=[StatementParameterListItem(name="run_id", value=run_id, type="STRING")],
+                wait_timeout="50s",
             )
-            data = getattr(getattr(latest, "result", None), "data_array", None) or []
-            run_id = data[0][0] if data and data[0] else None
-            if not run_id:
-                return {"available": False, "message": "No benchmark runs found in Delta yet."}
-
-        result = client.statement_execution.execute_statement(
-            warehouse_id=warehouse,
-            statement=(
-                "SELECT dataset, language, evaluator, samples, errors, primary_score, "
-                "scores, latency_ms, issues_count, issues_by_kind, wall_seconds, "
-                "timestamp, status "
-                f"FROM {table} WHERE run_id = :run_id ORDER BY dataset, language"  # noqa: S608
-            ),
-            parameters=[StatementParameterListItem(name="run_id", value=run_id, type="STRING")],
-            wait_timeout="50s",
-        )
+        else:
+            result = client.statement_execution.execute_statement(
+                warehouse_id=warehouse,
+                statement=(
+                    "SELECT run_id, dataset, language, evaluator, samples, errors, primary_score, "
+                    "scores, latency_ms, issues_count, issues_by_kind, wall_seconds, "
+                    "timestamp, status FROM ("
+                    "  SELECT *, row_number() OVER ("
+                    "    PARTITION BY dataset, language "
+                    "    ORDER BY timestamp DESC, run_id DESC"
+                    "  ) AS rn "
+                    f"  FROM {table} WHERE status = 'complete'"  # noqa: S608
+                    ") WHERE rn = 1 ORDER BY dataset, language"
+                ),
+                wait_timeout="50s",
+            )
     except Exception as exc:  # noqa: BLE001
         return {"available": False, "message": f"Benchmark Delta query failed: {exc}"}
 
@@ -114,6 +120,7 @@ def load_benchmarks(run_id: str | None = None) -> dict[str, Any]:
                 "system": OUR_SYSTEM_ID,
                 "system_label": OUR_SYSTEM_LABEL,
                 "source": "measured",
+                "run_id": row.get("run_id"),
                 "dataset": row.get("dataset"),
                 "language": row.get("language"),
                 "evaluator": row.get("evaluator"),
@@ -134,14 +141,16 @@ def load_benchmarks(run_id: str | None = None) -> dict[str, Any]:
         )
 
     if not runs:
-        return {"available": False, "message": f"No rows for run_id {run_id}."}
+        return {"available": False, "message": f"No benchmark rows found for run_id {run_id}."}
 
     baselines = reference_rows()
+    run_ids = sorted({str(r.get("run_id")) for r in runs if r.get("run_id")})
     return {
         "available": True,
         "source": "delta",
         "table": table,
-        "run_id": run_id,
+        "run_id": run_id or (run_ids[0] if len(run_ids) == 1 else None),
+        "run_ids": run_ids,
         "generated_at": max((r.get("timestamp") or "") for r in runs) or None,
         "datasets": sorted({r["dataset"] for r in runs if r.get("dataset")}),
         "languages": sorted({r["language"] for r in runs if r.get("language")}),

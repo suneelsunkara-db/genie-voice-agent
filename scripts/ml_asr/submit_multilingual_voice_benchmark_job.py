@@ -110,7 +110,6 @@ def _build_tasks(
     run_id: str,
     hf_token: str,
     limit: int,
-    tts_roundtrip: bool,
     max_audio_seconds: float,
     env_version: str,
     dataset_sel: str,
@@ -133,8 +132,6 @@ def _build_tasks(
     ]
     if hf_token:
         base_params += ["--hf-secret-key", HF_SECRET_KEY]
-    if tts_roundtrip:
-        base_params += ["--tts-roundtrip"]
     base_params += ["--max-audio-seconds", str(max_audio_seconds)]
 
     # Phase 1: one prepare task streams every pair from HuggingFace and stages
@@ -250,7 +247,7 @@ def main() -> None:
         benchmark_dir=benchmark_ws,
         api_host=api_host, api_prefix=api_prefix, results_dir=results_dir,
         host=host, client_id=client_id, run_id=run_id, hf_token=hf_token,
-        limit=args.limit, tts_roundtrip=True, max_audio_seconds=120.0,
+        limit=args.limit, max_audio_seconds=120.0,
         env_version=env_version,
         dataset_sel=args.dataset, languages_sel=args.languages,
         max_parallel=args.max_parallel,

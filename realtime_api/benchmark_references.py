@@ -1,10 +1,10 @@
-"""Published leaderboard baselines for the benchmarks we run ourselves.
+"""Published leaderboard baselines for the FLEURS benchmark.
 
-These are *reference* numbers copied from the papers / public leaderboards for
-the SAME datasets our realtime API is scored on (FLEURS, 2M-Belebele, CCFQA).
-They are NOT re-measured by us and are NOT apples-to-apples: subsets, decoding,
-ASR/LLM cascades and judges differ. The UI must label them as published
-references and show the citation. Every value carries its source + a caveat.
+These are *reference* numbers copied from papers / public leaderboards for
+FLEURS ASR. They are NOT re-measured by us and are NOT apples-to-apples:
+subsets, decoding, normalization, and supported-language intersections differ.
+The UI must label them as published references and show the citation. Every
+value carries its source + a caveat.
 
 Shape (flattened by ``reference_rows()`` into the same row schema the Delta
 results use, tagged ``source="reference"``):
@@ -16,15 +16,18 @@ results use, tagged ``source="reference"``):
   }
 
 Metric conventions match our own rows: FLEURS uses error rate (wer/cer, 0..1,
-lower better); Belebele/CCFQA use accuracy (0..100, higher better).
+lower better).
 """
 from __future__ import annotations
 
 from typing import Any
 
-# --- FLEURS: Whisper large-v3 ASR (error rate, lower is better) --------------
-# Per-language FLEURS WER (CER for non-spaced scripts) as published third-party
-# evaluations of Whisper large-v3 (OpenAI Whisper paper Appendix D / FLEURS).
+# --- FLEURS: published ASR references (error rate, lower is better) ----------
+#
+# Aggregates intentionally preserve each source's published evaluation slice
+# (e.g. FLEURS-54, FLEURS-77, or leaderboard average). They are references, not
+# exact same-subset re-runs. Per-language rows are only included where we have a
+# source with language-level numbers in the same metric convention.
 _WHISPER_FLEURS = {
     "en": {"wer": 0.042},
     "es": {"wer": 0.030},
@@ -54,46 +57,52 @@ REFERENCES: dict[str, dict[str, dict[str, Any]]] = {
             "aggregate": {"wer": 0.074},  # Open ASR Leaderboard mean
             "per_language": _WHISPER_FLEURS,
         },
-    },
-    # --- 2M-Belebele: cascaded speech comprehension (accuracy, higher better)
-    # ACL 2025 Findings, Table 2 (zero-shot, averaged over 39 languages at the
-    # Whisper/SeamlessM4T/2M-Belebele intersection). Directly comparable to our
-    # cascaded STT->LLM MCQ setup.
-    "belebele": {
-        "seamlessm4t-llama3-70b": {
-            "label": "SeamlessM4T + Llama-3 70B",
-            "source": "2M-Belebele (Costa-jussà et al., ACL 2025 Findings), Table 2, zero-shot",
-            "url": "https://aclanthology.org/2025.findings-acl.569/",
-            "note": "Cascaded ASR->LLM, 39-language average; English = 95.5%.",
-            "aggregate": {"acc": 84.8},
-            "per_language": {"en": {"acc": 95.5}},
-        },
-        "whisper-llama3-70b": {
-            "label": "Whisper + Llama-3 70B",
-            "source": "2M-Belebele (Costa-jussà et al., ACL 2025 Findings), Table 2, zero-shot",
-            "url": "https://aclanthology.org/2025.findings-acl.569/",
-            "note": "Cascaded ASR->LLM, 39-language average; English = 95.7%.",
-            "aggregate": {"acc": 79.1},
-            "per_language": {"en": {"acc": 95.7}},
-        },
-    },
-    # --- CCFQA: spoken question answering (LLM-judged accuracy, higher better)
-    # AAAI 2026, Table 6 / Table 8 (SQA average LLM-based accuracy).
-    "ccfqa": {
-        "gpt-4o-mini-audio": {
-            "label": "GPT-4o-mini-Audio",
-            "source": "CCFQA (Du et al., AAAI 2026), Table 8 (SQA avg LLM-accuracy)",
-            "url": "https://arxiv.org/abs/2508.07295",
-            "note": "End-to-end audio LLM; LLM-judged accuracy averaged over 8 languages.",
-            "aggregate": {"acc": 40.4},
+        "whisper-large-v2": {
+            "label": "Whisper large-v2",
+            "source": "SeamlessM4T / Nature 2024, Table 4",
+            "url": "https://www.nature.com/articles/s41586-024-08359-z/tables/4",
+            "note": "Published FLEURS ASR WER over the 77-language overlap used by SeamlessM4T.",
+            "aggregate": {"wer": 0.417},
             "per_language": {},
         },
-        "qwen2.5-omni-7b": {
-            "label": "Qwen2.5-Omni-7B",
-            "source": "CCFQA (Du et al., AAAI 2026), Table 8 (SQA avg LLM-accuracy)",
-            "url": "https://arxiv.org/abs/2508.07295",
-            "note": "Open-source omni model; LLM-judged accuracy averaged over 8 languages.",
-            "aggregate": {"acc": 33.2},
+        "mms-1b": {
+            "label": "MMS 1B",
+            "source": "Meta MMS (Pratap et al., JMLR 2024), Table 3",
+            "url": "https://www.jmlr.org/papers/v25/23-1318.html",
+            "note": "Published FLEURS-54 ASR WER with n-gram language models.",
+            "aggregate": {"wer": 0.207},
+            "per_language": {},
+        },
+        "mms-1b-lsah": {
+            "label": "MMS 1B LSAH",
+            "source": "Meta MMS (Pratap et al., JMLR 2024), Table 3",
+            "url": "https://www.jmlr.org/papers/v25/23-1318.html",
+            "note": "Published FLEURS-54 ASR WER with language-specific adapter heads and n-gram language models.",
+            "aggregate": {"wer": 0.191},
+            "per_language": {},
+        },
+        "seamlessm4t-medium": {
+            "label": "SeamlessM4T Medium",
+            "source": "SeamlessM4T / Nature 2024, Table 4",
+            "url": "https://www.nature.com/articles/s41586-024-08359-z/tables/4",
+            "note": "Published FLEURS ASR WER over the 77-language overlap used by SeamlessM4T.",
+            "aggregate": {"wer": 0.219},
+            "per_language": {},
+        },
+        "seamlessm4t-large": {
+            "label": "SeamlessM4T Large",
+            "source": "SeamlessM4T / Nature 2024, Table 4",
+            "url": "https://www.nature.com/articles/s41586-024-08359-z/tables/4",
+            "note": "Published FLEURS ASR WER over the 77-language overlap used by SeamlessM4T.",
+            "aggregate": {"wer": 0.226},
+            "per_language": {},
+        },
+        "seamlessm4t-large-v2": {
+            "label": "SeamlessM4T Large v2",
+            "source": "SeamlessM4T / Nature 2024, Table 4",
+            "url": "https://www.nature.com/articles/s41586-024-08359-z/tables/4",
+            "note": "Published FLEURS ASR WER over the 77-language overlap used by SeamlessM4T.",
+            "aggregate": {"wer": 0.185},
             "per_language": {},
         },
     },
@@ -101,7 +110,7 @@ REFERENCES: dict[str, dict[str, dict[str, Any]]] = {
 
 # Our own stack, for labelling the measured rows in the same vocabulary.
 OUR_SYSTEM_ID = "genie-voice"
-OUR_SYSTEM_LABEL = "Genie Voice (Qwen3-ASR + Qwen3-Next)"
+OUR_SYSTEM_LABEL = "Genie Voice (Qwen3-ASR + VoxCPM TTS)"
 
 
 def _primary_metric(dataset: str, metrics: dict[str, Any]) -> tuple[str | None, float | None]:
@@ -111,8 +120,6 @@ def _primary_metric(dataset: str, metrics: dict[str, Any]) -> tuple[str | None, 
             if key in metrics:
                 return key, float(metrics[key])
         return None, None
-    if "acc" in metrics:
-        return "acc", float(metrics["acc"])
     return None, None
 
 
@@ -125,14 +132,13 @@ def reference_rows() -> list[dict[str, Any]]:
     """
     rows: list[dict[str, Any]] = []
     for dataset, systems in REFERENCES.items():
-        evaluator = "asr" if dataset == "fleurs" else ("mcq" if dataset == "belebele" else "qa")
         for system_id, spec in systems.items():
             base = {
                 "system": system_id,
                 "system_label": spec["label"],
                 "source": "reference",
                 "dataset": dataset,
-                "evaluator": evaluator,
+                "evaluator": "asr",
                 "reference_source": spec.get("source"),
                 "reference_url": spec.get("url"),
                 "note": spec.get("note"),

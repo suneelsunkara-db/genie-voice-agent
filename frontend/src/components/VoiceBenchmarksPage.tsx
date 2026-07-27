@@ -9,8 +9,8 @@ import "../styles/voice-benchmarks.css";
 
 /**
  * Voice Benchmarks — a plain-language, new-user-friendly view of how the Genie
- * realtime voice pipeline (speech → understanding → speech) scores on public
- * academic benchmarks across dozens of languages.
+ * realtime voice APIs (speech-to-text and text-to-speech) score on public
+ * FLEURS benchmark audio/text across the supported languages.
  *
  * Design goals: (1) anyone can understand it without prior benchmark knowledge —
  * every metric is spelled out and colour-coded; (2) it covers ALL benchmarked
@@ -37,29 +37,20 @@ const CER_LANGS = new Set(["zh", "ja", "th", "lo", "km", "my", "yue"]);
 
 const DATASET_META: Record<
   string,
-  { title: string; blurb: string; kind: "error" | "acc"; asks: string }
+  { title: string; blurb: string; kind: "error"; asks: string }
 > = {
   fleurs: {
     title: "FLEURS",
-    blurb: "How accurately the agent transcribes speech to text.",
-    asks: "“Write down exactly what was said.”",
+    blurb: "How accurately the API transcribes real speech across the supported languages.",
+    asks: "Transcribe the spoken sentence and score against the reference.",
     kind: "error",
-  },
-  belebele: {
-    title: "2M-Belebele",
-    blurb: "Whether the agent understands a spoken passage well enough to answer multiple-choice questions.",
-    asks: "“Listen, then pick the correct answer.”",
-    kind: "acc",
-  },
-  ccfqa: {
-    title: "CCFQA",
-    blurb: "Whether the agent can answer open spoken questions correctly.",
-    asks: "“Answer this spoken question.”",
-    kind: "acc",
   },
 };
 
-const DATASET_ORDER = ["fleurs", "belebele", "ccfqa"];
+const DATASET_ORDER = ["fleurs"];
+
+// Vendor datasets are measured internally for comparison but not surfaced in the UI.
+const HIDDEN_DATASETS = new Set(["fleurs_deepgram_stt", "fleurs_elevenlabs_tts"]);
 
 // ---- number helpers -------------------------------------------------------- //
 function baseLang(code?: string | null): string {
@@ -101,16 +92,9 @@ function asrErr(run: VoiceBenchmarkRun): number | null {
   if (num(run.primary_score) != null) return num(run.primary_score);
   return CER_LANGS.has(baseLang(run.language)) ? sScore(run, "cer") : sScore(run, "wer");
 }
-function mcqAcc(run: VoiceBenchmarkRun): number | null {
-  return sScore(run, "acc") ?? num(run.primary_score);
-}
-function qaAcc(run: VoiceBenchmarkRun): number | null {
-  return sScore(run, "gpt_correct") ?? sScore(run, "match_acc") ?? num(run.primary_score);
-}
 function score(run: VoiceBenchmarkRun): number | null {
   if (run.evaluator === "asr") return asrErr(run);
-  if (run.evaluator === "mcq") return mcqAcc(run);
-  return qaAcc(run);
+  return asrErr(run);
 }
 function errRate(run: VoiceBenchmarkRun): number | null {
   return run.samples ? (run.errors || 0) / run.samples : 0;
@@ -184,7 +168,7 @@ function DatasetSection({
   langRef: Record<string, { value: number | null; label?: string }>;
   aggRefs: AggRef[];
 }) {
-  const meta = DATASET_META[dataset] || { title: dataset, blurb: "", asks: "", kind: "acc" as const };
+  const meta = DATASET_META[dataset] || { title: dataset, blurb: "", asks: "", kind: "error" as const };
   const isErr = meta.kind === "error";
   const refLabel = aggRefs[0]?.label || "Reference";
 
@@ -229,12 +213,10 @@ function DatasetSection({
             <tr>
               <th>Language</th>
               <th>{isErr ? "Transcription error" : "Accuracy"}</th>
-              <th className="num">{isErr ? "WER · CER" : "Detail"}</th>
+              <th className="num">Detail</th>
               {isErr && <th className="num">{refLabel}</th>}
               <th>Reliability</th>
               <th className="num" title="Median speech-to-text time">STT p50</th>
-              <th className="num" title="Median language-model time">LLM p50</th>
-              <th className="num" title="Median time to first spoken audio">TTS p50</th>
             </tr>
           </thead>
           <tbody>
@@ -301,8 +283,6 @@ function DatasetSection({
                     </span>
                   </td>
                   <td className="num">{fmtMs(lat(run, "stt_ms"))}</td>
-                  <td className="num">{fmtMs(lat(run, "llm_ms"))}</td>
-                  <td className="num">{fmtMs(lat(run, "tts_first_ms"))}</td>
                 </tr>
               );
             })}
@@ -368,6 +348,59 @@ function ComparisonStrip({
   );
 }
 
+function avgScoreForDataset(runs: VoiceBenchmarkRun[], dataset: string, key?: string): number | null {
+  const selected = runs.filter((r) => r.dataset === dataset && !r.errors);
+  if (!selected.length) return null;
+  return avg(selected.map((r) => (key ? sScore(r, key) : asrErr(r))));
+}
+
+function ModelComparisonSection({
+  runs,
+  refs,
+}: {
+  runs: VoiceBenchmarkRun[];
+  refs: AggRef[];
+}) {
+  const sttRows = [
+    { label: "Genie Voice API", value: avgScoreForDataset(runs, "fleurs"), kind: "measured" },
+    ...refs.map((r) => ({ label: r.label, value: r.value, kind: "published" })),
+  ].filter((r) => r.value != null);
+
+  if (!sttRows.length) return null;
+
+  const renderRows = (rows: typeof sttRows) =>
+    rows.map((row, i) => {
+      const v = row.value;
+      const pctV = v == null ? null : v <= 1 ? v * 100 : v;
+      const fill = pctV == null ? 0 : Math.max(0, 100 - pctV);
+      return (
+        <div key={`${row.label}-${i}`} className="vb-compare-row">
+          <div className="vb-compare-who">
+            <b>{row.label}</b>
+            <span className={`vb-tag2 ${row.kind === "measured" ? "ours" : "ref"}`}>{row.kind}</span>
+          </div>
+          <Bar pct={fill} cls={classErr(v)} label={fmtPct(v)} />
+        </div>
+      );
+    });
+
+  return (
+    <section className="vb-block">
+      <h2 className="vb-block-title">Model Comparison</h2>
+      <div className="vb-grid">
+        <div className="vb-card">
+          <h3>Speech-to-text on FLEURS</h3>
+          <p className="vb-muted">
+            Genie is measured on this benchmark table. Whisper, MMS, and SeamlessM4T rows are published FLEURS
+            references.
+          </p>
+          <div className="vb-compare">{renderRows(sttRows)}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ---- "where Genie shines" highlights (derived from the data) --------------- //
 interface Highlight {
   icon: string;
@@ -377,7 +410,6 @@ interface Highlight {
 function buildHighlights(
   runs: VoiceBenchmarkRun[],
   langByDs: Record<string, Record<string, { value: number | null; label?: string }>>,
-  aggByDs: Record<string, AggRef[]>,
   languageCount: number,
 ): Highlight[] {
   const out: Highlight[] = [];
@@ -386,8 +418,8 @@ function buildHighlights(
   if (languageCount > 0) {
     out.push({
       icon: "🌐",
-      title: `${languageCount} languages, one pipeline`,
-      body: "The same realtime speech agent is evaluated end-to-end across every language below — no per-language rebuild.",
+      title: `${languageCount} languages, one voice API`,
+      body: "The same deployed realtime STT API is evaluated across every language below.",
     });
   }
 
@@ -428,36 +460,7 @@ function buildHighlights(
     }
   }
 
-  // 3. Spoken comprehension (Belebele).
-  const bele = runs.filter((r) => r.dataset === "belebele" && !r.errors);
-  const beleAcc = avg(bele.map(mcqAcc));
-  if (beleAcc != null) {
-    const ref = (aggByDs["belebele"] || [])[0];
-    out.push({
-      icon: "🧠",
-      title: `${fmtPct(beleAcc, 0)} spoken-comprehension accuracy`,
-      body: ref?.value != null
-        ? `Across ${bele.length} languages on 2M-Belebele. Published ${ref.label}: ${fmtPct(ref.value, 0)}.`
-        : `Listens to a passage and answers multiple-choice questions across ${bele.length} languages.`,
-    });
-  }
-
-  // 4. Spoken Q&A (CCFQA) vs published audio LLMs.
-  const qa = runs.filter((r) => r.dataset === "ccfqa" && !r.errors);
-  const qaAvg = avg(qa.map(qaAcc));
-  if (qaAvg != null) {
-    const ref = (aggByDs["ccfqa"] || []).sort((a, b) => (b.value ?? 0) - (a.value ?? 0))[0];
-    const beats = ref?.value != null && qaAvg > ref.value;
-    out.push({
-      icon: "💬",
-      title: `${fmtPct(qaAvg, 0)} spoken question-answering`,
-      body: ref?.value != null
-        ? `${beats ? "Ahead of" : "Compared with"} ${ref.label} (${fmtPct(ref.value, 0)}) on CCFQA, averaged over ${qa.length} languages.`
-        : `Answers open spoken questions across ${qa.length} languages.`,
-    });
-  }
-
-  // 5. Reliability across the whole sweep.
+  // 3. Reliability across the whole sweep.
   const totSamples = runs.reduce((a, r) => a + (r.samples || 0), 0);
   const totErrors = runs.reduce((a, r) => a + (r.errors || 0), 0);
   if (totSamples > 0) {
@@ -469,16 +472,13 @@ function buildHighlights(
     });
   }
 
-  // 6. Latency.
+  // 5. Latency.
   const medStt = avg(runs.map((r) => lat(r, "stt_ms")));
-  const medLlm = avg(runs.map((r) => lat(r, "llm_ms")));
   if (medStt != null) {
     out.push({
       icon: "⚡",
       title: `Median speech-to-text in ${fmtMs(medStt)}`,
-      body: medLlm != null
-        ? `Understanding adds a median ${fmtMs(medLlm)} — fast enough for back-and-forth conversation.`
-        : "Median p50 latency of the speech-to-text stage.",
+      body: "Median p50 latency of the speech-to-text stage.",
     });
   }
 
@@ -504,7 +504,10 @@ export function VoiceBenchmarksPage() {
   };
   useEffect(load, []);
 
-  const runs = useMemo(() => (data?.runs || []).filter((r) => r && r.dataset), [data]);
+  const runs = useMemo(
+    () => (data?.runs || []).filter((r) => r && r.dataset && !HIDDEN_DATASETS.has(r.dataset)),
+    [data],
+  );
   const { aggByDs, langByDs } = useMemo(() => indexBaselines(data?.baselines), [data]);
   const byDataset = useMemo(() => {
     const m: Record<string, VoiceBenchmarkRun[]> = {};
@@ -519,8 +522,8 @@ export function VoiceBenchmarksPage() {
     [byDataset],
   );
   const highlights = useMemo(
-    () => buildHighlights(runs, langByDs, aggByDs, (data?.languages || []).length),
-    [runs, langByDs, aggByDs, data],
+    () => buildHighlights(runs, langByDs, (data?.languages || []).length),
+    [runs, langByDs, data],
   );
 
   const generatedAt = (data?.generated_at || "").replace("T", " ").replace(/\.\d+.*/, "").replace(/Z?$/, " UTC");
@@ -546,11 +549,11 @@ export function VoiceBenchmarksPage() {
       <div className="vb-scroll">
         {/* Intro / what am I looking at */}
         <section className="vb-hero">
-          <h1>How well does the voice agent understand the world?</h1>
+          <h1>How well does the voice API hear?</h1>
           <p>
-            These are <b>real, measured results</b> from the Genie realtime voice pipeline — speech in, understanding,
-            speech out — run against public academic benchmarks in dozens of languages. Everything below is what the
-            same live API actually produced, not a marketing estimate.
+            These are <b>real, measured results</b> from the Genie realtime STT API on FLEURS: speech transcription
+            accuracy and latency across the supported languages. Published model rows are references from papers or
+            leaderboards, not re-measured competitor runs.
           </p>
           {data?.available && (
             <div className="vb-run-meta">
@@ -565,7 +568,7 @@ export function VoiceBenchmarksPage() {
                 <b>{(data.languages || []).length}</b> languages
               </span>
               <span>
-                <b>{(data.datasets || []).length}</b> benchmarks
+                <b>{datasetOrder.length}</b> benchmarks
               </span>
             </div>
           )}
@@ -620,9 +623,9 @@ export function VoiceBenchmarksPage() {
                   </div>
                 </div>
                 <div className="vb-legend-item">
-                  <div className="vb-legend-k">STT / LLM / TTS p50</div>
+                  <div className="vb-legend-k">STT p50</div>
                   <div className="vb-legend-v">
-                    Median time for each stage: speech-to-text, the language model, and the first spoken audio out.
+                    Median time for the speech-to-text stage.
                   </div>
                 </div>
                 <div className="vb-legend-swatches">
@@ -632,6 +635,8 @@ export function VoiceBenchmarksPage() {
                 </div>
               </div>
             </section>
+
+            <ModelComparisonSection runs={runs} refs={aggByDs["fleurs"] || []} />
 
             {/* Per-dataset per-language detail */}
             <section className="vb-block">
@@ -648,10 +653,9 @@ export function VoiceBenchmarksPage() {
             </section>
 
             <footer className="vb-footnote">
-              FLEURS (Whisper large-v3 reference), 2M-Belebele (ACL 2025) and CCFQA (AAAI 2026) are public benchmarks.
-              Reference numbers are published by their authors and may use different language subsets, ASR/LLM cascades
-              or judges — treat cross-system gaps as directional, not exact. Genie numbers are measured from the live
-              realtime pipeline and stored in Delta.
+              FLEURS is the public multilingual speech benchmark used here. Published model references may use different
+              language subsets and decoding settings, so treat cross-system gaps as directional. Genie and vendor rows are
+              measured by jobs that write to Delta.
             </footer>
           </>
         )}

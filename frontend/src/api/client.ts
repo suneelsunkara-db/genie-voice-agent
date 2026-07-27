@@ -415,11 +415,11 @@ export interface TraceSessionRollup {
   latest?: string | null;
 }
 
-// ---- Multilingual voice benchmarks (realtime STT->LLM->TTS pipeline) ------ //
+// ---- Multilingual voice benchmarks (realtime STT + TTS pipeline) ---------- //
 // Served by the realtime API (mounted at /realtime) straight from the Delta
-// benchmark_runs table. FLEURS reports an error rate (WER/CER, lower better);
-// Belebele/CCFQA report accuracy (higher better). Baselines are published
-// reference numbers for the same datasets (not re-measured here).
+// benchmark_runs table. FLEURS reports error rates (WER/CER, lower better) and
+// TTS round-trip intelligibility. Baselines are published FLEURS ASR reference
+// numbers, not re-measured here.
 export interface VoiceBenchmarkLatencyStat {
   p50?: number | null;
   p95?: number | null;
@@ -431,9 +431,10 @@ export interface VoiceBenchmarkRun {
   system?: string;
   system_label?: string;
   source?: string; // "measured"
-  dataset: string; // fleurs | belebele | ccfqa
+  run_id?: string | null;
+  dataset: string; // fleurs
   language?: string | null;
-  evaluator?: string; // asr | mcq | qa
+  evaluator?: string; // asr
   samples?: number | null;
   errors?: number | null;
   primary_score?: number | null;
@@ -468,6 +469,7 @@ export interface VoiceBenchmarksResponse {
   source?: string;
   table?: string;
   run_id?: string | null;
+  run_ids?: string[];
   generated_at?: string | null;
   datasets?: string[];
   languages?: string[];
