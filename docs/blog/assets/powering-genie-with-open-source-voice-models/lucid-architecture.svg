@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">Open-source realtime voice architecture on Databricks</title>
+  <desc id="desc">A browser client streams audio over a WebSocket to a FastAPI realtime API exposing three capabilities. On Databricks, Qwen3-ASR and VoxCPM2 are self-served on GPU Model Serving endpoints as MLflow ResponsesAgents, while Qwen3-Next is consumed as a managed Foundation Model endpoint. Qwen3-Next calls tools over governed data: Databricks Genie for grounded reasoning and Lakebase for account facts and billing writes.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#3f6091"/>
+    </marker>
+    <marker id="arrow-muted" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-tool" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7c6cff"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .zone { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; filter: url(#shadow); }
+      .zone-title { font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .zone-sub { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #64748b; }
+      .node { fill: #f8fbff; stroke: #7aa2e3; stroke-width: 2; }
+      .node-gpu { fill: #f0fdf4; stroke: #22a06b; stroke-width: 2; }
+      .node-managed { fill: #fff7ed; stroke: #e0862f; stroke-width: 2; }
+      .node-tool { fill: #f5f3ff; stroke: #7c6cff; stroke-width: 2; }
+      .label { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .sub { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #5f6b7a; }
+      .badge-box-gpu { fill: #dcfce7; }
+      .badge-box-managed { fill: #ffedd5; }
+      .badge { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .badge-gpu { fill: #166534; }
+      .badge-managed { fill: #9a4a12; }
+      .arrow { stroke: #3f6091; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .arrow-muted { stroke: #94a3b8; stroke-width: 2.5; fill: none; marker-end: url(#arrow-muted); stroke-dasharray: 8 7; }
+      .arrow-tool { stroke: #7c6cff; stroke-width: 2.5; fill: none; marker-end: url(#arrow-tool); }
+      .flow-label { font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1400" height="760"/>
+
+  <!-- ===================== Client ===================== -->
+  <rect class="zone" x="40" y="270" width="210" height="220" rx="24"/>
+  <text class="zone-title" x="70" y="308">Client</text>
+  <rect class="node" x="64" y="326" width="162" height="68" rx="14"/>
+  <text class="label" x="86" y="357">Browser mic</text>
+  <text class="sub" x="86" y="379">PCM 16 kHz in</text>
+  <rect class="node" x="64" y="408" width="162" height="68" rx="14"/>
+  <text class="label" x="86" y="439">Audio playback</text>
+  <text class="sub" x="86" y="461">streamed out</text>
+
+  <!-- ===================== Realtime API ===================== -->
+  <rect class="zone" x="290" y="110" width="320" height="540" rx="24"/>
+  <text class="zone-title" x="318" y="148">Realtime API</text>
+  <text class="zone-sub" x="318" y="170">FastAPI, WebSocket</text>
+  <rect class="node" x="316" y="196" width="268" height="80" rx="14"/>
+  <text class="label" x="338" y="228">/v1/speech-to-text</text>
+  <text class="sub" x="338" y="252">STT only</text>
+  <rect class="node" x="316" y="300" width="268" height="104" rx="14"/>
+  <text class="label" x="338" y="331">/v1/speech-llm-</text>
+  <text class="label" x="338" y="353">toolassist-speech</text>
+  <text class="sub" x="338" y="381">full agent loop: STT, LLM, TTS</text>
+  <rect class="node" x="316" y="430" width="268" height="80" rx="14"/>
+  <text class="label" x="338" y="462">/v1/text-to-speech</text>
+  <text class="sub" x="338" y="486">TTS only, SSE stream</text>
+
+  <!-- ===================== Databricks Model Serving ===================== -->
+  <rect class="zone" x="660" y="90" width="400" height="580" rx="24"/>
+  <text class="zone-title" x="688" y="128">Databricks Model Serving</text>
+  <text class="zone-sub" x="688" y="150">models registered in Unity Catalog</text>
+
+  <rect class="node-gpu" x="688" y="178" width="344" height="118" rx="16"/>
+  <text class="label" x="712" y="212">Qwen3-ASR-1.7B</text>
+  <text class="sub" x="712" y="236">speech to text, auto language detect</text>
+  <rect class="badge-box-gpu" x="712" y="252" width="304" height="28" rx="8"/>
+  <text class="badge badge-gpu" x="724" y="271">GPU serving | MLflow ResponsesAgent</text>
+
+  <rect class="node-managed" x="688" y="322" width="344" height="118" rx="16"/>
+  <text class="label" x="712" y="356">Qwen3-Next-80B</text>
+  <text class="sub" x="712" y="380">reason, select and call tools</text>
+  <rect class="badge-box-managed" x="712" y="396" width="304" height="28" rx="8"/>
+  <text class="badge badge-managed" x="724" y="415">Managed Foundation Model endpoint</text>
+
+  <rect class="node-gpu" x="688" y="466" width="344" height="118" rx="16"/>
+  <text class="label" x="712" y="500">VoxCPM2</text>
+  <text class="sub" x="712" y="524">text to speech, same language</text>
+  <rect class="badge-box-gpu" x="712" y="540" width="304" height="28" rx="8"/>
+  <text class="badge badge-gpu" x="724" y="559">GPU serving | MLflow ResponsesAgent</text>
+
+  <!-- ===================== Governed data / tools ===================== -->
+  <rect class="zone" x="1100" y="228" width="260" height="316" rx="24"/>
+  <text class="zone-title" x="1128" y="266">Governed data</text>
+  <text class="zone-sub" x="1128" y="288">Unity Catalog</text>
+  <rect class="node-tool" x="1124" y="306" width="212" height="86" rx="14"/>
+  <text class="label" x="1144" y="338">Databricks Genie</text>
+  <text class="sub" x="1144" y="361">ask_genie, grounded</text>
+  <text class="sub" x="1144" y="379">reasoning</text>
+  <rect class="node-tool" x="1124" y="410" width="212" height="104" rx="14"/>
+  <text class="label" x="1144" y="442">Lakebase</text>
+  <text class="sub" x="1144" y="465">lookup_account, facts</text>
+  <text class="sub" x="1144" y="485">apply_billing_action, write</text>
+
+  <!-- ===================== Flow arrows ===================== -->
+  <!-- client audio in -> agent loop -->
+  <path class="arrow" d="M226 352 L316 342"/>
+  <text class="flow-label" x="232" y="330">audio in</text>
+  <!-- agent loop -> ASR (transcribe first) -->
+  <path class="arrow" d="M584 340 L688 232"/>
+  <!-- ASR -> Next -> Vox pipeline -->
+  <path class="arrow" d="M860 296 L860 322"/>
+  <path class="arrow" d="M860 440 L860 466"/>
+  <!-- Vox synth back to API -->
+  <path class="arrow-muted" d="M688 520 L584 470"/>
+  <!-- API -> client audio out -->
+  <path class="arrow-muted" d="M316 466 L226 442"/>
+  <text class="flow-label" x="232" y="486">audio out</text>
+  <!-- Next -> tools over governed data -->
+  <path class="arrow-tool" d="M1032 356 L1124 344"/>
+  <path class="arrow-tool" d="M1032 392 L1124 452"/>
+</svg>

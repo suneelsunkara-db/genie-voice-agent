@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Powering Genie with Open-Source Voice Models on Databricks — Publish View</title>
+  <style>
+    body { margin: 0; background: #f8fafc; }
+  </style>
+  <style>
+    :root {
+      color-scheme: light;
+      --text: #17202a;
+      --muted: #5f6b7a;
+      --border: #d9dee7;
+      --code-bg: #f6f8fa;
+      --accent: #1f6feb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f8fafc;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.68;
+    }
+    .preview-shell {
+      max-width: 920px;
+      margin: 40px auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 48px;
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+    }
+    .preview-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 32px;
+      color: var(--muted);
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 18px;
+    }
+    article { font-size: 17px; }
+    h1 {
+      font-size: 36px;
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+      margin: 0 0 20px;
+    }
+    h2 {
+      font-size: 26px;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      margin: 48px 0 16px;
+    }
+    h3 { font-size: 22px; line-height: 1.3; margin: 34px 0 12px; }
+    p { margin: 0 0 20px; }
+    ul, ol { padding-left: 1.4em; margin: 0 0 24px; }
+    li { margin: 8px 0; }
+    blockquote {
+      margin: 28px 0;
+      border-left: 4px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    pre {
+      overflow: auto;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+      background: var(--code-bg);
+      border-radius: 5px;
+      padding: 0.15em 0.35em;
+    }
+    pre code { background: transparent; padding: 0; }
+    .mermaid {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      margin: 28px 0;
+      text-align: center;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 0.92em; }
+    th, td { border: 1px solid var(--border); padding: 10px; text-align: left; }
+    img { max-width: 100%; border-radius: 12px; }
+    .preview-hero {
+      width: 100%;
+      aspect-ratio: 1200 / 630;
+      object-fit: cover;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      margin: 0 0 32px;
+      display: block;
+    }
+    .publish-panel {
+      background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin: 0 0 32px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .publish-panel h2 { font-size: 22px; margin: 0 0 10px; letter-spacing: -0.01em; }
+    .publish-panel p { margin: 0 0 12px; color: var(--muted); }
+    .publish-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+    .publish-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+    .publish-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .publish-actions .publish-copy {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .publish-actions .publish-copy:hover {
+      filter: brightness(1.05);
+      color: #fff;
+    }
+    .publish-actions .publish-copy-secondary {
+      background: #fff;
+      color: var(--accent);
+    }
+    .publish-actions .publish-direct {
+      background: #fff;
+      color: var(--text);
+    }
+    .publish-advanced {
+      width: 100%;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .publish-advanced summary {
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .publish-import-url {
+      width: 100%;
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .publish-actions .publish-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-decoration: none;
+    }
+    .copy-status { min-height: 18px; color: var(--accent); font-size: 13px; margin-top: 8px; }
+    .publish-note { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    @media (max-width: 820px) {
+      .preview-shell { margin: 0; border-radius: 0; padding: 28px; }
+      h1 { font-size: 34px; }
+      h2 { font-size: 25px; }
+    }
+    </style>
+  <style>
+    .publish-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 14px 20px;
+      background: #fff;
+      border-bottom: 1px solid #d9dee7;
+      box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+    }
+    .publish-toolbar button {
+      border: 1px solid #d9dee7;
+      border-radius: 10px;
+      background: #1f6feb;
+      color: #fff;
+      padding: 9px 12px;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+    .publish-toolbar button.secondary {
+      background: #fff;
+      color: #17202a;
+    }
+    .publish-toolbar .status {
+      color: #1f6feb;
+      font-size: 13px;
+    }
+    #publish-content {
+      max-width: 760px;
+      margin: 32px auto;
+      background: #fff;
+      border: 1px solid #d9dee7;
+      border-radius: 18px;
+      padding: 40px;
+    }
+    #publish-content img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+    #publish-content figure {
+      margin: 24px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="publish-toolbar">
+    <button type="button" id="select-all">1. Select all</button>
+    <button type="button" id="copy-all" class="secondary">2. Copy</button>
+    <button type="button" id="open-medium" class="secondary">3. Open Medium</button>
+    <span class="status" id="status"></span>
+  </div>
+  <div id="publish-content">
+    <img class="preview-hero" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjAwIiBoZWlnaHQ9IjYzMCIgdmlld0JveD0iMCAwIDEyMDAgNjMwIiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0idGl0bGUiPgogIDx0aXRsZSBpZD0idGl0bGUiPlBvd2VyaW5nIEdlbmllIHdpdGggT3Blbi1Tb3VyY2UgVm9pY2UgTW9kZWxzIG9uIERhdGFicmlja3M8L3RpdGxlPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJiZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMGIyNTQ1Ii8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzFlNGE3YSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZGJ4IiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNGRjVGNDYiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjRkYzNjIxIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJ3YXZlIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMCI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMzOGJkZjgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjN2RkM2ZjIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPG1hcmtlciBpZD0iYXIiIG1hcmtlcldpZHRoPSIxMCIgbWFya2VySGVpZ2h0PSIxMCIgcmVmWD0iNyIgcmVmWT0iNSIgb3JpZW50PSJhdXRvIj4KICAgICAgPHBhdGggZD0iTTEsMSBMOCw1IEwxLDkgWiIgZmlsbD0iIzdkZDNmYyIvPgogICAgPC9tYXJrZXI+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSIxMjAwIiBoZWlnaHQ9IjYzMCIgZmlsbD0idXJsKCNiZykiLz4KCiAgPCEtLSBicmFuZCBsb2NrdXA6IERhdGFicmlja3MgbWFyayArIHdvcmRtYXJrLCB0aGVuIHRoZSBHZW5pZSBtYXJrIC0tPgogIDwhLS0gRGF0YWJyaWNrczogdGhyZWUgc3RhY2tlZCBwYXJhbGxlbG9ncmFtcyAoZnJvbSB0aGUgYXBwIGJyYW5kIG1hcmtzKSAtLT4KICA8ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSg4MCw1MikiPgogICAgPHBhdGggZD0iTTIsMTAgTDI2LC0yIEw1MCwxMCBMMjYsMjIgWiIgZmlsbD0iI0ZGMzYyMSIvPgogICAgPHBhdGggZD0iTTIsMjIgTDI2LDEwIEw1MCwyMiBMMjYsMzQgWiIgZmlsbD0iI0ZGNEQzQSIvPgogICAgPHBhdGggZD0iTTIsMzQgTDI2LDIyIEw1MCwzNCBMMjYsNDYgWiIgZmlsbD0iI0ZGNkI1QyIvPgogIDwvZz4KICA8dGV4dCB4PSIxNDgiIHk9IjkyIiBmaWxsPSIjZmZmZmZmIiBmb250LWZhbWlseT0iLWFwcGxlLXN5c3RlbSxCbGlua01hY1N5c3RlbUZvbnQsU2Vnb2UgVUksc2Fucy1zZXJpZiIgZm9udC1zaXplPSIzMCIgZm9udC13ZWlnaHQ9IjcwMCI+RGF0YWJyaWNrczwvdGV4dD4KICA8bGluZSB4MT0iMzYwIiB5MT0iNTQiIHgyPSIzNjAiIHkyPSI5OCIgc3Ryb2tlPSIjM2I1YTg2IiBzdHJva2Utd2lkdGg9IjIiLz4KICA8IS0tIEdlbmllOiB0aGUgYXBwIGljb24gKGNvcmFsIGdlbmllIGxhbXAgKyBzcGFya2xlIG9uIGEgbGlnaHQgcm91bmRlZCBzcXVhcmUpIC0tPgogIDxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDM4OCw0OCkiPgogICAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9IiNGMkVERTgiLz4KICAgIDwhLS0gNC1wb2ludCBzcGFya2xlIC0tPgogICAgPHBhdGggZD0iTTI0LDggTDI2LjQsMTUuNiBMMzQsMTggTDI2LjQsMjAuNCBMMjQsMjggTDIxLjYsMjAuNCBMMTQsMTggTDIxLjYsMTUuNiBaIiBmaWxsPSIjRTE0NDJCIi8+CiAgICA8IS0tIGxhbXAgYm9keSAtLT4KICAgIDxlbGxpcHNlIGN4PSIyMy41IiBjeT0iMzMuNSIgcng9IjEzIiByeT0iNi40IiBmaWxsPSIjRTlBNDkxIi8+CiAgICA8IS0tIHNwb3V0IHRvIHRoZSBsZWZ0IC0tPgogICAgPHBhdGggZD0iTTExLjUsMzEuNSBMMi41LDI4LjUgTDQuMiwzNCBMMTIuNSwzNiBaIiBmaWxsPSIjRTlBNDkxIi8+CiAgICA8IS0tIGxpZCBrbm9iIC0tPgogICAgPGNpcmNsZSBjeD0iMjMuNSIgY3k9IjI2LjYiIHI9IjIuMiIgZmlsbD0iI0U5QTQ5MSIvPgogICAgPCEtLSBiYXNlIGZvb3QgLS0+CiAgICA8cmVjdCB4PSIxNy41IiB5PSIzOS41IiB3aWR0aD0iMTIiIGhlaWdodD0iMy40IiByeD0iMS43IiBmaWxsPSIjRTE0NDJCIi8+CiAgPC9nPgogIDx0ZXh0IHg9IjQ0NiIgeT0iOTIiIGZpbGw9IiNmZmZmZmYiIGZvbnQtZmFtaWx5PSItYXBwbGUtc3lzdGVtLEJsaW5rTWFjU3lzdGVtRm9udCxTZWdvZSBVSSxzYW5zLXNlcmlmIiBmb250LXNpemU9IjMwIiBmb250LXdlaWdodD0iNzAwIj5HZW5pZTwvdGV4dD4KCiAgPCEtLSBnaXN0OiBsaXN0ZW4gLT4gcmVhc29uIHdpdGggR2VuaWUgLT4gc3BlYWssIG5vIG1vZGVsIG5hbWVzIC0tPgogIDxnIGZvbnQtZmFtaWx5PSItYXBwbGUtc3lzdGVtLEJsaW5rTWFjU3lzdGVtRm9udCxTZWdvZSBVSSxzYW5zLXNlcmlmIj4KICAgIDxyZWN0IHg9IjgwIiB5PSIxNDAiIHdpZHRoPSIyNDQiIGhlaWdodD0iODQiIHJ4PSIxNiIgZmlsbD0iI2ZmZmZmZiIgb3BhY2l0eT0iMC4xMCIvPgogICAgPHRleHQgeD0iMTA0IiB5PSIxODIiIGZpbGw9IiNlMmU4ZjAiIGZvbnQtc2l6ZT0iMjMiIGZvbnQtd2VpZ2h0PSI3MDAiPlRyYW5zY3JpYmU8L3RleHQ+CiAgICA8dGV4dCB4PSIxMDQiIHk9IjIwNyIgZmlsbD0iIzkzYzVmZCIgZm9udC1zaXplPSIxNSI+YW55IGxhbmd1YWdlPC90ZXh0PgoKICAgIDxwYXRoIGQ9Ik0zMzAgMTgyIEwzNjYgMTgyIiBzdHJva2U9IiM3ZGQzZmMiIHN0cm9rZS13aWR0aD0iMyIgZmlsbD0ibm9uZSIgbWFya2VyLWVuZD0idXJsKCNhcikiLz4KCiAgICA8cmVjdCB4PSIzNzIiIHk9IjE0MCIgd2lkdGg9IjMwMCIgaGVpZ2h0PSI4NCIgcng9IjE2IiBmaWxsPSIjZmZmZmZmIiBvcGFjaXR5PSIwLjE0Ii8+CiAgICA8dGV4dCB4PSIzOTYiIHk9IjE4MiIgZmlsbD0iI2ZmZmZmZiIgZm9udC1zaXplPSIyMyIgZm9udC13ZWlnaHQ9IjcwMCI+UmVhc29uIHdpdGggR2VuaWU8L3RleHQ+CiAgICA8dGV4dCB4PSIzOTYiIHk9IjIwNyIgZmlsbD0iIzkzYzVmZCIgZm9udC1zaXplPSIxNSI+Z3JvdW5kZWQgaW4gZ292ZXJuZWQgZGF0YTwvdGV4dD4KCiAgICA8cGF0aCBkPSJNNjc4IDE4MiBMNzE0IDE4MiIgc3Ryb2tlPSIjN2RkM2ZjIiBzdHJva2Utd2lkdGg9IjMiIGZpbGw9Im5vbmUiIG1hcmtlci1lbmQ9InVybCgjYXIpIi8+CgogICAgPHJlY3QgeD0iNzIwIiB5PSIxNDAiIHdpZHRoPSIyNDQiIGhlaWdodD0iODQiIHJ4PSIxNiIgZmlsbD0iI2ZmZmZmZiIgb3BhY2l0eT0iMC4xMCIvPgogICAgPHRleHQgeD0iNzQ0IiB5PSIxODIiIGZpbGw9IiNlMmU4ZjAiIGZvbnQtc2l6ZT0iMjMiIGZvbnQtd2VpZ2h0PSI3MDAiPlN5bnRoZXNpemU8L3RleHQ+CiAgICA8dGV4dCB4PSI3NDQiIHk9IjIwNyIgZmlsbD0iIzkzYzVmZCIgZm9udC1zaXplPSIxNSI+c2FtZSBsYW5ndWFnZTwvdGV4dD4KICA8L2c+CgogIDwhLS0gdGl0bGUgLS0+CiAgPHRleHQgeD0iODAiIHk9IjMyMiIgZmlsbD0iI2Y4ZmFmYyIgZm9udC1mYW1pbHk9Ii1hcHBsZS1zeXN0ZW0sQmxpbmtNYWNTeXN0ZW1Gb250LFNlZ29lIFVJLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNTYiIGZvbnQtd2VpZ2h0PSI4MDAiPlBvd2VyaW5nIEdlbmllIHdpdGg8L3RleHQ+CiAgPHRleHQgeD0iODAiIHk9IjM4OCIgZmlsbD0iI2Y4ZmFmYyIgZm9udC1mYW1pbHk9Ii1hcHBsZS1zeXN0ZW0sQmxpbmtNYWNTeXN0ZW1Gb250LFNlZ29lIFVJLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNTYiIGZvbnQtd2VpZ2h0PSI4MDAiPk9wZW4tU291cmNlIFZvaWNlIE1vZGVsczwvdGV4dD4KICA8dGV4dCB4PSI4MCIgeT0iNDU0IiBmaWxsPSIjY2JkNWUxIiBmb250LWZhbWlseT0iLWFwcGxlLXN5c3RlbSxCbGlua01hY1N5c3RlbUZvbnQsU2Vnb2UgVUksc2Fucy1zZXJpZiIgZm9udC1zaXplPSI1NiIgZm9udC13ZWlnaHQ9IjgwMCI+b24gRGF0YWJyaWNrczwvdGV4dD4KCiAgPCEtLSBzdWJ0aXRsZSAtLT4KICA8dGV4dCB4PSI4MCIgeT0iNTEyIiBmaWxsPSIjOTRhM2I4IiBmb250LWZhbWlseT0iLWFwcGxlLXN5c3RlbSxCbGlua01hY1N5c3RlbUZvbnQsU2Vnb2UgVUksc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZm9udC13ZWlnaHQ9IjUwMCI+UmVhbC10aW1lLCBtdWx0aWxpbmd1YWwgdm9pY2UgZm9yIHlvdXIgZ292ZXJuZWQgZGF0YTwvdGV4dD4KCiAgPCEtLSB2b2ljZSB3YXZlZm9ybSBhY2NlbnQgLS0+CiAgPGcgZmlsbD0idXJsKCN3YXZlKSI+CiAgICA8cmVjdCB4PSIxMDA0IiB5PSIxNjAiIHdpZHRoPSI5IiBoZWlnaHQ9IjQ0IiByeD0iNC41Ii8+CiAgICA8cmVjdCB4PSIxMDIzIiB5PSIxNDAiIHdpZHRoPSI5IiBoZWlnaHQ9Ijg0IiByeD0iNC41Ii8+CiAgICA8cmVjdCB4PSIxMDQyIiB5PSIxMTgiIHdpZHRoPSI5IiBoZWlnaHQ9IjEyOCIgcng9IjQuNSIvPgogICAgPHJlY3QgeD0iMTA2MSIgeT0iMTQ0IiB3aWR0aD0iOSIgaGVpZ2h0PSI3NiIgcng9IjQuNSIvPgogICAgPHJlY3QgeD0iMTA4MCIgeT0iMTYyIiB3aWR0aD0iOSIgaGVpZ2h0PSI0MCIgcng9IjQuNSIvPgogIDwvZz4KPC9zdmc+Cg==" alt="Powering Genie with Open-Source Voice Models on Databricks" />
+    <article id="article">
+<h1>Powering Genie with Open-Source Voice Models on Databricks</h1>
+<p>In a <a href="https://medium.com/@suneel.sunkara/why-is-it-hard-to-build-voice-models-for-asian-languages-f2b5693492fe">previous post</a> we explored why building voice models for Asian languages is hard — the tonal systems, the script diversity, the lack of training data. This post is about what we did next: we took open-source models that handle those languages and wired them into <a href="https://docs.databricks.com/en/generative-ai/genie.html">Databricks Genie</a>, so a customer can call in their own language and get a grounded answer from <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a> data, spoken back to them.</p>
+<p>Two developments changed that. First, open-source speech models now cover broad language sets in a single checkpoint — <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR</a> recognizes ~30 languages and <a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> synthesizes ~30 — removing the need for a separate commercial service per language. Second, <strong>the entire voice stack runs on Databricks</strong>: the reasoning model (<a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next</a>) is available as a managed <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint, and we deployed the two speech models ourselves on <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a>. Everything sits next to Genie and the governed data, not in a third-party cloud.</p>
+<p>What that looks like in practice: a caller phones in and speaks Thai. The agent transcribes the request, looks up the account, offers to waive a late fee, applies the waiver once the customer agrees, and answers a follow-up analytical question by querying Genie — all spoken back in Thai. No language selection menu. No handoff to a different service.</p>
+<p>This post walks through how we assembled these models into a live conversation, how we deployed them on Databricks, and what we measured. The models are used as released — no fine-tuning.</p>
+<h2>Key Highlights</h2>
+<ol>
+<li><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR</a> recognizes speech in ~30 languages with automatic language detection; <a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> synthesizes the reply in the same language.</li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next</a> reasons over the transcript, calls tools to act on the account, and queries <a href="https://docs.databricks.com/en/generative-ai/genie.html">Databricks Genie</a> for grounded answers over governed data.</li>
+<li>End-of-turn is detected semantically — <a href="https://github.com/snakers4/silero-vad">Silero VAD</a> as a speech gate plus <a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a> as a completeness model — so the agent replies ~0.3s after the caller finishes, not on a fixed silence timer.</li>
+<li>The conversation runs over a <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API">WebSocket</a> API exposing three capabilities: speech-to-text, a full speech-to-speech agent loop, and text-to-speech.</li>
+<li>The two speech models are packaged as <a href="https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html">MLflow <code>ResponsesAgent</code></a> endpoints, registered in <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a>, and served on <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a>. The reasoning model is consumed as a managed <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint.</li>
+<li>Quality is measured end-to-end on public multilingual datasets (<a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a>, <a href="https://aclanthology.org/2025.findings-acl.569/">2M-Belebele</a>, <a href="https://arxiv.org/abs/2508.07295">CCFQA</a>) against baselines like <a href="https://huggingface.co/openai/whisper-large-v3">Whisper large-v3</a>.</li>
+</ol>
+<h2>Why Genie Needs a Voice</h2>
+<p><a href="https://docs.databricks.com/en/generative-ai/genie.html">Genie</a> already reasons over governed data — it can answer &quot;which accounts have overdue invoices above $5,000?&quot; by querying <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a> tables directly. But today, a customer can only reach that reasoning through a typed question in a browser. On a live phone call, the conversation needs more:</p>
+<ul>
+<li><strong>Multilingual recognition</strong> that preserves business entities — the invoice number, the dollar amount, the account name — in whatever language the caller speaks.</li>
+<li><strong>Grounded actions over real data.</strong> Genie answers the analytical questions (e.g., &quot;what&#x27;s my outstanding balance?&quot;). But the agent also needs to *act* — look up the account, waive a fee, confirm an action only once it actually succeeds — against governed operational data in <a href="https://www.databricks.com/product/lakebase">Lakebase</a>.</li>
+<li><strong>Sub-second turn-taking.</strong> A browser query can take seconds. A voice call cannot — the customer is waiting in silence. Every component must be fast enough to sustain a natural conversation.</li>
+<li><strong>Self-governed infrastructure.</strong> The enterprise must control the models and the data path — no audio leaving the platform, no third-party transcription service sitting between the customer and the governed tables.</li>
+</ul>
+<h2>How a Live Conversation Works</h2>
+<p><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDQwIiBoZWlnaHQ9IjU0MCIgdmlld0JveD0iMCAwIDEwNDAgNTQwIiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzYyI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+QSBsaXZlIGN1c3RvbWVyLXRvLWFnZW50IHZvaWNlIGNvbnZlcnNhdGlvbiBvdmVyIHRoZSByZWFsdGltZSBBUEk8L3RpdGxlPgogIDxkZXNjIGlkPSJkZXNjIj5BIGN1c3RvbWVyIHNwZWFrcyBhbmQgbGlzdGVucyBpbiB0aGVpciBvd24gbGFuZ3VhZ2UuIEF1ZGlvIHN0cmVhbXMgYm90aCB3YXlzIG92ZXIgdGhlIFJlYWx0aW1lIFZvaWNlIEFQSSAoV2ViU29ja2V0LCBzdHJlYW1pbmcgdHVybnMsIGJhcmdlLWluKS4gSW5zaWRlIGEgdHVybiwgUXdlbjMtQVNSIGxpc3RlbnMgYW5kIGRldGVjdHMgdGhlIGxhbmd1YWdlLCBRd2VuMy1OZXh0IHJlYXNvbnMgYW5kIGNhbGxzIHRvb2xzLCBhbmQgVm94Q1BNMiBzcGVha3MgdGhlIHJlcGx5IGluIHRoZSBzYW1lIGxhbmd1YWdlLiBRd2VuMy1OZXh0IHJlYWNoZXMgRGF0YWJyaWNrcyBHZW5pZSBmb3IgZ3JvdW5kZWQgYW5zd2VycyBvdmVyIGdvdmVybmVkIGRhdGEuPC9kZXNjPgogIDxkZWZzPgogICAgPGZpbHRlciBpZD0icyIgeD0iLTIwJSIgeT0iLTIwJSIgd2lkdGg9IjE0MCUiIGhlaWdodD0iMTQwJSI+CiAgICAgIDxmZURyb3BTaGFkb3cgZHg9IjAiIGR5PSI3IiBzdGREZXZpYXRpb249IjkiIGZsb29kLWNvbG9yPSIjMGYxNzJhIiBmbG9vZC1vcGFjaXR5PSIwLjEyIi8+CiAgICA8L2ZpbHRlcj4KICAgIDxtYXJrZXIgaWQ9ImFydyIgbWFya2VyV2lkdGg9IjEyIiBtYXJrZXJIZWlnaHQ9IjEyIiByZWZYPSI5IiByZWZZPSI2IiBvcmllbnQ9ImF1dG8iPgogICAgICA8cGF0aCBkPSJNMiwyIEwxMCw2IEwyLDEwIFoiIGZpbGw9IiM0ZjZmOWYiLz4KICAgIDwvbWFya2VyPgogICAgPHN0eWxlPgogICAgICAuYmcgeyBmaWxsOiAjZjhmYWZjOyB9CiAgICAgIC56b25lIHsgZmlsbDogI2VlZjRmZjsgc3Ryb2tlOiAjOWNjMGYwOyBzdHJva2Utd2lkdGg6IDI7IHN0cm9rZS1kYXNoYXJyYXk6IDcgNTsgfQogICAgICAuemxibCB7IGZvbnQ6IDcwMCAxNXB4IC1hcHBsZS1zeXN0ZW0sIEJsaW5rTWFjU3lzdGVtRm9udCwgIlNlZ29lIFVJIiwgc2Fucy1zZXJpZjsgZmlsbDogIzFmNGU4ZjsgfQogICAgICAubm9kZSB7IGZpbGw6ICNmZmZmZmY7IHN0cm9rZTogIzdhYTJlMzsgc3Ryb2tlLXdpZHRoOiAyOyBmaWx0ZXI6IHVybCgjcyk7IH0KICAgICAgLmN1c3QgeyBmaWxsOiAjZjhmYmZmOyBzdHJva2U6ICM1ZjZiN2E7IHN0cm9rZS13aWR0aDogMjsgZmlsdGVyOiB1cmwoI3MpOyB9CiAgICAgIC5vcmNoIHsgZmlsbDogI2VhZjFmZjsgc3Ryb2tlOiAjMWY2ZmViOyBzdHJva2Utd2lkdGg6IDIuNTsgZmlsdGVyOiB1cmwoI3MpOyB9CiAgICAgIC5nZW5pZSB7IGZpbGw6ICNmZmY3ZWQ7IHN0cm9rZTogI2UwYTkzMzsgc3Ryb2tlLXdpZHRoOiAyLjU7IGZpbHRlcjogdXJsKCNzKTsgfQogICAgICAubGJsIHsgZm9udDogNzAwIDIxcHggLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU2Vnb2UgVUkiLCBzYW5zLXNlcmlmOyBmaWxsOiAjMTcyMDMzOyB9CiAgICAgIC5zdWIgeyBmb250OiAxNHB4IC1hcHBsZS1zeXN0ZW0sIEJsaW5rTWFjU3lzdGVtRm9udCwgIlNlZ29lIFVJIiwgc2Fucy1zZXJpZjsgZmlsbDogIzVmNmI3YTsgfQogICAgICAuY2FwIHsgZm9udDogMTNweCAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIHNhbnMtc2VyaWY7IGZpbGw6ICM0ZjZmOWY7IH0KICAgICAgLmFydyB7IHN0cm9rZTogIzRmNmY5Zjsgc3Ryb2tlLXdpZHRoOiAyLjU7IGZpbGw6IG5vbmU7IG1hcmtlci1lbmQ6IHVybCgjYXJ3KTsgfQogICAgPC9zdHlsZT4KICA8L2RlZnM+CiAgPHJlY3QgY2xhc3M9ImJnIiB3aWR0aD0iMTA0MCIgaGVpZ2h0PSI1NDAiLz4KCiAgPCEtLSBDdXN0b21lciAtLT4KICA8cmVjdCBjbGFzcz0iY3VzdCIgeD0iMzAiIHk9IjE1MCIgd2lkdGg9IjE2MCIgaGVpZ2h0PSIxMTIiIHJ4PSIxNiIvPgogIDx0ZXh0IGNsYXNzPSJsYmwiIHg9IjUyIiB5PSIxOTYiPkN1c3RvbWVyPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJzdWIiIHg9IjUyIiB5PSIyMjEiPnNwZWFrcyAmYW1wOyBsaXN0ZW5zPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJzdWIiIHg9IjUyIiB5PSIyNDEiPmFueSBsYW5ndWFnZTwvdGV4dD4KCiAgPCEtLSBSZWFsdGltZSBBUEkgem9uZSAtLT4KICA8cmVjdCBjbGFzcz0iem9uZSIgeD0iMzAwIiB5PSIxMTIiIHdpZHRoPSI3MTIiIGhlaWdodD0iMTc4IiByeD0iMjAiLz4KICA8dGV4dCBjbGFzcz0iemxibCIgeD0iMzI0IiB5PSIxMzkiPlJlYWx0aW1lIFZvaWNlIEFQSSAgwrcgIHN0cmVhbWluZyB0dXJucyDCtyBiYXJnZS1pbjwvdGV4dD4KCiAgPHJlY3QgY2xhc3M9Im5vZGUiIHg9IjMyNCIgeT0iMTU4IiB3aWR0aD0iMTk2IiBoZWlnaHQ9IjEwNCIgcng9IjE1Ii8+CiAgPHRleHQgY2xhc3M9ImxibCIgeD0iMzQ2IiB5PSIyMDUiPlF3ZW4zLUFTUjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSIzNDYiIHk9IjIzMCI+bGlzdGVuIMK3IGRldGVjdCBsYW5ndWFnZTwvdGV4dD4KCiAgPHJlY3QgY2xhc3M9Im9yY2giIHg9IjU0NiIgeT0iMTU4IiB3aWR0aD0iMTk2IiBoZWlnaHQ9IjEwNCIgcng9IjE1Ii8+CiAgPHRleHQgY2xhc3M9ImxibCIgeD0iNTY4IiB5PSIyMDUiPlF3ZW4zLU5leHQ8L3RleHQ+CiAgPHRleHQgY2xhc3M9InN1YiIgeD0iNTY4IiB5PSIyMzAiPnJlYXNvbiDCtyBjYWxsIHRvb2xzPC90ZXh0PgoKICA8cmVjdCBjbGFzcz0ibm9kZSIgeD0iNzY4IiB5PSIxNTgiIHdpZHRoPSIxOTYiIGhlaWdodD0iMTA0IiByeD0iMTUiLz4KICA8dGV4dCBjbGFzcz0ibGJsIiB4PSI3OTAiIHk9IjIwNSI+Vm94Q1BNMjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSI3OTAiIHk9IjIzMCI+c3BlYWsgwrcgc2FtZSBsYW5ndWFnZTwvdGV4dD4KCiAgPCEtLSBHZW5pZSB0b29sIC0tPgogIDxyZWN0IGNsYXNzPSJnZW5pZSIgeD0iNTQ4IiB5PSIzOTIiIHdpZHRoPSIyMTIiIGhlaWdodD0iMTA0IiByeD0iMTYiLz4KICA8dGV4dCBjbGFzcz0ibGJsIiB4PSI1NzAiIHk9IjQzOSI+RGF0YWJyaWNrcyBHZW5pZTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSI1NzAiIHk9IjQ2NCI+Z3JvdW5kZWQgYW5zd2VycyDCtyBnb3Zlcm5lZCBkYXRhPC90ZXh0PgoKICA8IS0tIGNvbnZlcnNhdGlvbjogdHdvLXdheSBzdHJlYW1pbmcgYXVkaW8gYmV0d2VlbiBjdXN0b21lciBhbmQgQVBJIC0tPgogIDx0ZXh0IGNsYXNzPSJjYXAiIHg9IjE5OCIgeT0iMTcyIj5saXZlIGF1ZGlvIMK3IFdlYlNvY2tldDwvdGV4dD4KICA8cGF0aCBjbGFzcz0iYXJ3IiBkPSJNMTkyIDE5MiBMMzAwIDE5MiIvPgogIDxwYXRoIGNsYXNzPSJhcnciIGQ9Ik0zMDAgMjI0IEwxOTIgMjI0Ii8+CgogIDwhLS0gaW5zaWRlIGEgdHVybiAtLT4KICA8cGF0aCBjbGFzcz0iYXJ3IiBkPSJNNTIwIDIxMCBMNTQ2IDIxMCIvPgogIDxwYXRoIGNsYXNzPSJhcnciIGQ9Ik03NDIgMjEwIEw3NjggMjEwIi8+CgogIDwhLS0gUXdlbjMtTmV4dCByZWFjaGVzIEdlbmllIGFuZCBiYWNrIC0tPgogIDx0ZXh0IGNsYXNzPSJjYXAiIHg9IjY3MiIgeT0iMzM1Ij5hbmFseXRpY2FsIFEmYW1wO0E8L3RleHQ+CiAgPHBhdGggY2xhc3M9ImFydyIgZD0iTTYyOCAyNjIgTDYyOCAzOTIiLz4KICA8cGF0aCBjbGFzcz0iYXJ3IiBkPSJNNjY0IDM5MiBMNjY0IDI2MiIvPgo8L3N2Zz4K" alt="A live customer-to-agent voice conversation over the realtime API: audio streams both ways over a WebSocket; inside a turn, Qwen3-ASR listens and detects the language, Qwen3-Next reasons and calls tools, VoxCPM2 speaks the reply in the same language, and Qwen3-Next reaches Databricks Genie for grounded answers over governed data." /></p>
+<p>Audio streams both ways over a <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API">WebSocket</a>, one turn at a time. Here&#x27;s what happens in a single turn of the Thai billing call:</p>
+<ol>
+<li><strong>The customer speaks — and the agent knows when they&#x27;re done.</strong> Their audio streams into the API, where a lightweight speech gate (<a href="https://github.com/snakers4/silero-vad">Silero VAD</a>) confirms real speech and a semantic end-of-turn model (<a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a>) judges, at each pause, whether the sentence is actually complete. The turn finalizes about 0.3 seconds after the caller genuinely stops — not on a fixed timer — so the agent neither cuts them off mid-thought nor leaves them waiting.</li>
+<li><strong>Qwen3-ASR recognizes the speech.</strong> It detects that the language is Thai, transcribes the request, and returns the detected language tag so that every subsequent stage follows the caller&#x27;s language. The invoice number is preserved.</li>
+<li><strong>Qwen3-Next reasons and acts.</strong> It interprets the transcript and calls the appropriate tool: an account lookup for balances and overdue invoices, a billing action to waive a fee once the customer agrees, or a Genie query when the question is analytical and requires reasoning over governed data. The model is instructed to act rather than narrate — it performs the action and states the result in a single turn.</li>
+<li><strong>VoxCPM2 synthesizes the reply</strong> in Thai, streaming the audio in short segments so playback begins before the sentence has finished generating. If the customer speaks over the reply, barge-in stops playback.</li>
+</ol>
+<p>When the caller asks something the account lookup can&#x27;t answer — &quot;what&#x27;s my average monthly spend this year?&quot; — Qwen3-Next routes it to Genie, which queries the governed tables and returns a grounded answer. That answer gets spoken back in Thai.</p>
+<h2>The Realtime API</h2>
+<p>The conversation isn&#x27;t a single model call — it&#x27;s a session over a WebSocket, with three API capabilities you can use independently or together:</p>
+<ul>
+<li><strong><code>/v1/speech-to-text</code></strong> — stream audio in and receive the final transcript with the detected language.</li>
+<li><strong><code>/v1/speech-llm-toolassist-speech</code></strong> — the complete agent loop: audio in, transcript, reasoning with tools, and synthesized speech out. This capability carries the conversation.</li>
+<li><strong><code>/v1/text-to-speech</code></strong> — stream text in and receive synthesized speech out.</li>
+</ul>
+<p>The loop is turn-based, not a continuous duplex stream. A <a href="https://docs.databricks.com/en/machine-learning/model-serving/index.html">Databricks Model Serving</a> endpoint answers one request at a time and can stream its *output* back over <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events">server-sent events</a> (SSE), but it does not hold an open bidirectional audio socket the way a dedicated real-time service like <a href="https://deepgram.com">Deepgram</a> does.</p>
+<p>What that means in practice: recognition is not word-by-word. Once end-of-turn is detected, the caller&#x27;s full utterance is transcribed in a single request. The reply is generated in full, and only the synthesized audio streams back — in ~80ms segments over SSE — so playback begins before synthesis finishes. The API also supports barge-in (the caller can interrupt) and pre-generates a brief spoken acknowledgment so that slower, tool-heavy turns are covered by a response rather than silence.</p>
+<p>&quot;Real-time,&quot; here, means responsive turn-taking with low-latency streamed audio out — not incremental recognition or token streaming.</p>
+<h2>Choosing the Models</h2>
+<p>We needed three models — recognition, reasoning, and synthesis — and picked each for a different reason.</p>
+<p><strong>Recognition — <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B</a>.</strong> The hardest stage: it has to get invoice numbers, amounts, and names right in a language nobody told it to expect. Qwen3-ASR covers ~30 languages in one checkpoint and auto-detects the spoken language, handing back the tag so the rest of the turn follows the caller. The obvious alternative — a commercial recognizer per language — means a new service and uneven coverage for every market. One model, one endpoint, same behavior everywhere.</p>
+<p><strong>Synthesis — <a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a>.</strong> Speaks ~30 languages from a single model, clones a reference voice so the agent keeps one voice for the whole call, and streams audio in short segments so it starts talking almost immediately. One catch worth stating plainly: the languages the product *actually* supports are the intersection of what both models handle — a model card&#x27;s language count is not a conversation.</p>
+<p><strong>Reasoning — <a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next-80B</a>.</strong> Here latency and control outweighed raw quality. Across English, Thai, Indonesian, and Chinese it answered in ~1.17s at the median, with reliable tool-calling and the generation controls the pipeline needs; a stronger frontier model (<a href="https://www.anthropic.com/claude/sonnet">Claude Sonnet</a>) was roughly twice as slow and rejected those controls. Tool-calling isn&#x27;t optional — it&#x27;s how the agent looks up accounts, applies billing actions, and reaches Genie.</p>
+<h2>Serving on Databricks</h2>
+<p>All three models run on Databricks — but they got there two different ways. Use the managed path where it exists; deploy from open source where it doesn&#x27;t.</p>
+<p><strong>The managed path — Qwen3-Next.</strong> It is available as a <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint on Databricks, so we just point at it. Nothing to size, warm, or scale, and it&#x27;s billed per request.</p>
+<p><strong>The self-served path — Qwen3-ASR and VoxCPM2.</strong> Neither has a managed option, so we deployed them ourselves with a repeatable pipeline that runs on serverless compute:</p>
+<ol>
+<li><strong>Package.</strong> Download the open-source checkpoint from <a href="https://huggingface.co">Hugging Face</a> and wrap it in an <a href="https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html">MLflow <code>ResponsesAgent</code></a>. MLflow infers the fixed <code>agent/v1/responses</code> signature, so Model Serving treats it as an agent endpoint: audio rides inside the request over the Responses <code>custom_inputs</code>/<code>custom_outputs</code> channel, and synthesis streams its segments back over SSE.</li>
+<li><strong>Register.</strong> Log the model into <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a> with pinned dependencies, then move a <code>candidate</code> alias onto the new version — so promoting a model is an alias flip, not a rebuild.</li>
+<li><strong>Deploy.</strong> Create, or update, a <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a> endpoint pointed at the aliased version, on <code>GPU_MEDIUM</code> with scale-to-zero disabled.</li>
+</ol>
+<p>One gotcha cost us real time: the GPU serving image ships a CUDA build the model wheels won&#x27;t load against, so we pin the whole <a href="https://pytorch.org">PyTorch</a> stack (<code>torch==2.7.1</code> on cu118, with a matching <code>torchvision</code>). Left unpinned, dependency resolution drifts to an incompatible wheel and inference fails at predict time with missing-operator errors — worth pinning from the start.</p>
+<p><strong>Keeping the GPUs warm.</strong> A fresh replica needs several inferences to reach steady-state latency, so scale-to-zero stays off and every endpoint is primed at startup. The first real customer turn lands fast, not slow.</p>
+<p><strong>One governance model.</strong> Whichever path a model takes, its endpoint is a Unity Catalog asset, so the voice layer inherits the same access control and lineage as <a href="https://docs.databricks.com/en/generative-ai/genie.html">Genie</a> and the tables it reads. Nothing new to secure.</p>
+<h2>Architecture at a Glance</h2>
+<p><img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNDAwIiBoZWlnaHQ9Ijc2MCIgdmlld0JveD0iMCAwIDE0MDAgNzYwIiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzYyI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+T3Blbi1zb3VyY2UgcmVhbHRpbWUgdm9pY2UgYXJjaGl0ZWN0dXJlIG9uIERhdGFicmlja3M8L3RpdGxlPgogIDxkZXNjIGlkPSJkZXNjIj5BIGJyb3dzZXIgY2xpZW50IHN0cmVhbXMgYXVkaW8gb3ZlciBhIFdlYlNvY2tldCB0byBhIEZhc3RBUEkgcmVhbHRpbWUgQVBJIGV4cG9zaW5nIHRocmVlIGNhcGFiaWxpdGllcy4gT24gRGF0YWJyaWNrcywgUXdlbjMtQVNSIGFuZCBWb3hDUE0yIGFyZSBzZWxmLXNlcnZlZCBvbiBHUFUgTW9kZWwgU2VydmluZyBlbmRwb2ludHMgYXMgTUxmbG93IFJlc3BvbnNlc0FnZW50cywgd2hpbGUgUXdlbjMtTmV4dCBpcyBjb25zdW1lZCBhcyBhIG1hbmFnZWQgRm91bmRhdGlvbiBNb2RlbCBlbmRwb2ludC4gUXdlbjMtTmV4dCBjYWxscyB0b29scyBvdmVyIGdvdmVybmVkIGRhdGE6IERhdGFicmlja3MgR2VuaWUgZm9yIGdyb3VuZGVkIHJlYXNvbmluZyBhbmQgTGFrZWJhc2UgZm9yIGFjY291bnQgZmFjdHMgYW5kIGJpbGxpbmcgd3JpdGVzLjwvZGVzYz4KICA8ZGVmcz4KICAgIDxmaWx0ZXIgaWQ9InNoYWRvdyIgeD0iLTIwJSIgeT0iLTIwJSIgd2lkdGg9IjE0MCUiIGhlaWdodD0iMTQwJSI+CiAgICAgIDxmZURyb3BTaGFkb3cgZHg9IjAiIGR5PSIxMCIgc3RkRGV2aWF0aW9uPSIxMiIgZmxvb2QtY29sb3I9IiMwZjE3MmEiIGZsb29kLW9wYWNpdHk9IjAuMTIiLz4KICAgIDwvZmlsdGVyPgogICAgPG1hcmtlciBpZD0iYXJyb3ciIG1hcmtlcldpZHRoPSIxMiIgbWFya2VySGVpZ2h0PSIxMiIgcmVmWD0iOSIgcmVmWT0iNiIgb3JpZW50PSJhdXRvIj4KICAgICAgPHBhdGggZD0iTTIsMiBMMTAsNiBMMiwxMCBaIiBmaWxsPSIjM2Y2MDkxIi8+CiAgICA8L21hcmtlcj4KICAgIDxtYXJrZXIgaWQ9ImFycm93LW11dGVkIiBtYXJrZXJXaWR0aD0iMTIiIG1hcmtlckhlaWdodD0iMTIiIHJlZlg9IjkiIHJlZlk9IjYiIG9yaWVudD0iYXV0byI+CiAgICAgIDxwYXRoIGQ9Ik0yLDIgTDEwLDYgTDIsMTAgWiIgZmlsbD0iIzk0YTNiOCIvPgogICAgPC9tYXJrZXI+CiAgICA8bWFya2VyIGlkPSJhcnJvdy10b29sIiBtYXJrZXJXaWR0aD0iMTIiIG1hcmtlckhlaWdodD0iMTIiIHJlZlg9IjkiIHJlZlk9IjYiIG9yaWVudD0iYXV0byI+CiAgICAgIDxwYXRoIGQ9Ik0yLDIgTDEwLDYgTDIsMTAgWiIgZmlsbD0iIzdjNmNmZiIvPgogICAgPC9tYXJrZXI+CiAgICA8c3R5bGU+CiAgICAgIC5iZyB7IGZpbGw6ICNmOGZhZmM7IH0KICAgICAgLnpvbmUgeyBmaWxsOiAjZmZmZmZmOyBzdHJva2U6ICNjYmQ1ZTE7IHN0cm9rZS13aWR0aDogMjsgZmlsdGVyOiB1cmwoI3NoYWRvdyk7IH0KICAgICAgLnpvbmUtdGl0bGUgeyBmb250OiA3MDAgMjJweCAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIHNhbnMtc2VyaWY7IGZpbGw6ICMwZjE3MmE7IH0KICAgICAgLnpvbmUtc3ViIHsgZm9udDogMTRweCAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIHNhbnMtc2VyaWY7IGZpbGw6ICM2NDc0OGI7IH0KICAgICAgLm5vZGUgeyBmaWxsOiAjZjhmYmZmOyBzdHJva2U6ICM3YWEyZTM7IHN0cm9rZS13aWR0aDogMjsgfQogICAgICAubm9kZS1ncHUgeyBmaWxsOiAjZjBmZGY0OyBzdHJva2U6ICMyMmEwNmI7IHN0cm9rZS13aWR0aDogMjsgfQogICAgICAubm9kZS1tYW5hZ2VkIHsgZmlsbDogI2ZmZjdlZDsgc3Ryb2tlOiAjZTA4NjJmOyBzdHJva2Utd2lkdGg6IDI7IH0KICAgICAgLm5vZGUtdG9vbCB7IGZpbGw6ICNmNWYzZmY7IHN0cm9rZTogIzdjNmNmZjsgc3Ryb2tlLXdpZHRoOiAyOyB9CiAgICAgIC5sYWJlbCB7IGZvbnQ6IDcwMCAxOHB4IC1hcHBsZS1zeXN0ZW0sIEJsaW5rTWFjU3lzdGVtRm9udCwgIlNlZ29lIFVJIiwgc2Fucy1zZXJpZjsgZmlsbDogIzE3MjAzMzsgfQogICAgICAuc3ViIHsgZm9udDogMTRweCAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIHNhbnMtc2VyaWY7IGZpbGw6ICM1ZjZiN2E7IH0KICAgICAgLmJhZGdlLWJveC1ncHUgeyBmaWxsOiAjZGNmY2U3OyB9CiAgICAgIC5iYWRnZS1ib3gtbWFuYWdlZCB7IGZpbGw6ICNmZmVkZDU7IH0KICAgICAgLmJhZGdlIHsgZm9udDogNzAwIDEycHggLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU2Vnb2UgVUkiLCBzYW5zLXNlcmlmOyB9CiAgICAgIC5iYWRnZS1ncHUgeyBmaWxsOiAjMTY2NTM0OyB9CiAgICAgIC5iYWRnZS1tYW5hZ2VkIHsgZmlsbDogIzlhNGExMjsgfQogICAgICAuYXJyb3cgeyBzdHJva2U6ICMzZjYwOTE7IHN0cm9rZS13aWR0aDogMzsgZmlsbDogbm9uZTsgbWFya2VyLWVuZDogdXJsKCNhcnJvdyk7IH0KICAgICAgLmFycm93LW11dGVkIHsgc3Ryb2tlOiAjOTRhM2I4OyBzdHJva2Utd2lkdGg6IDIuNTsgZmlsbDogbm9uZTsgbWFya2VyLWVuZDogdXJsKCNhcnJvdy1tdXRlZCk7IHN0cm9rZS1kYXNoYXJyYXk6IDggNzsgfQogICAgICAuYXJyb3ctdG9vbCB7IHN0cm9rZTogIzdjNmNmZjsgc3Ryb2tlLXdpZHRoOiAyLjU7IGZpbGw6IG5vbmU7IG1hcmtlci1lbmQ6IHVybCgjYXJyb3ctdG9vbCk7IH0KICAgICAgLmZsb3ctbGFiZWwgeyBmb250OiA2MDAgMTNweCAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIHNhbnMtc2VyaWY7IGZpbGw6ICM0NzU1Njk7IH0KICAgIDwvc3R5bGU+CiAgPC9kZWZzPgoKICA8cmVjdCBjbGFzcz0iYmciIHdpZHRoPSIxNDAwIiBoZWlnaHQ9Ijc2MCIvPgoKICA8IS0tID09PT09PT09PT09PT09PT09PT09PSBDbGllbnQgPT09PT09PT09PT09PT09PT09PT09IC0tPgogIDxyZWN0IGNsYXNzPSJ6b25lIiB4PSI0MCIgeT0iMjcwIiB3aWR0aD0iMjEwIiBoZWlnaHQ9IjIyMCIgcng9IjI0Ii8+CiAgPHRleHQgY2xhc3M9InpvbmUtdGl0bGUiIHg9IjcwIiB5PSIzMDgiPkNsaWVudDwvdGV4dD4KICA8cmVjdCBjbGFzcz0ibm9kZSIgeD0iNjQiIHk9IjMyNiIgd2lkdGg9IjE2MiIgaGVpZ2h0PSI2OCIgcng9IjE0Ii8+CiAgPHRleHQgY2xhc3M9ImxhYmVsIiB4PSI4NiIgeT0iMzU3Ij5Ccm93c2VyIG1pYzwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSI4NiIgeT0iMzc5Ij5QQ00gMTYga0h6IGluPC90ZXh0PgogIDxyZWN0IGNsYXNzPSJub2RlIiB4PSI2NCIgeT0iNDA4IiB3aWR0aD0iMTYyIiBoZWlnaHQ9IjY4IiByeD0iMTQiLz4KICA8dGV4dCBjbGFzcz0ibGFiZWwiIHg9Ijg2IiB5PSI0MzkiPkF1ZGlvIHBsYXliYWNrPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJzdWIiIHg9Ijg2IiB5PSI0NjEiPnN0cmVhbWVkIG91dDwvdGV4dD4KCiAgPCEtLSA9PT09PT09PT09PT09PT09PT09PT0gUmVhbHRpbWUgQVBJID09PT09PT09PT09PT09PT09PT09PSAtLT4KICA8cmVjdCBjbGFzcz0iem9uZSIgeD0iMjkwIiB5PSIxMTAiIHdpZHRoPSIzMjAiIGhlaWdodD0iNTQwIiByeD0iMjQiLz4KICA8dGV4dCBjbGFzcz0iem9uZS10aXRsZSIgeD0iMzE4IiB5PSIxNDgiPlJlYWx0aW1lIEFQSTwvdGV4dD4KICA8dGV4dCBjbGFzcz0iem9uZS1zdWIiIHg9IjMxOCIgeT0iMTcwIj5GYXN0QVBJLCBXZWJTb2NrZXQ8L3RleHQ+CiAgPHJlY3QgY2xhc3M9Im5vZGUiIHg9IjMxNiIgeT0iMTk2IiB3aWR0aD0iMjY4IiBoZWlnaHQ9IjgwIiByeD0iMTQiLz4KICA8dGV4dCBjbGFzcz0ibGFiZWwiIHg9IjMzOCIgeT0iMjI4Ij4vdjEvc3BlZWNoLXRvLXRleHQ8L3RleHQ+CiAgPHRleHQgY2xhc3M9InN1YiIgeD0iMzM4IiB5PSIyNTIiPlNUVCBvbmx5PC90ZXh0PgogIDxyZWN0IGNsYXNzPSJub2RlIiB4PSIzMTYiIHk9IjMwMCIgd2lkdGg9IjI2OCIgaGVpZ2h0PSIxMDQiIHJ4PSIxNCIvPgogIDx0ZXh0IGNsYXNzPSJsYWJlbCIgeD0iMzM4IiB5PSIzMzEiPi92MS9zcGVlY2gtbGxtLTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFiZWwiIHg9IjMzOCIgeT0iMzUzIj50b29sYXNzaXN0LXNwZWVjaDwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSIzMzgiIHk9IjM4MSI+ZnVsbCBhZ2VudCBsb29wOiBTVFQsIExMTSwgVFRTPC90ZXh0PgogIDxyZWN0IGNsYXNzPSJub2RlIiB4PSIzMTYiIHk9IjQzMCIgd2lkdGg9IjI2OCIgaGVpZ2h0PSI4MCIgcng9IjE0Ii8+CiAgPHRleHQgY2xhc3M9ImxhYmVsIiB4PSIzMzgiIHk9IjQ2MiI+L3YxL3RleHQtdG8tc3BlZWNoPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJzdWIiIHg9IjMzOCIgeT0iNDg2Ij5UVFMgb25seSwgU1NFIHN0cmVhbTwvdGV4dD4KCiAgPCEtLSA9PT09PT09PT09PT09PT09PT09PT0gRGF0YWJyaWNrcyBNb2RlbCBTZXJ2aW5nID09PT09PT09PT09PT09PT09PT09PSAtLT4KICA8cmVjdCBjbGFzcz0iem9uZSIgeD0iNjYwIiB5PSI5MCIgd2lkdGg9IjQwMCIgaGVpZ2h0PSI1ODAiIHJ4PSIyNCIvPgogIDx0ZXh0IGNsYXNzPSJ6b25lLXRpdGxlIiB4PSI2ODgiIHk9IjEyOCI+RGF0YWJyaWNrcyBNb2RlbCBTZXJ2aW5nPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJ6b25lLXN1YiIgeD0iNjg4IiB5PSIxNTAiPm1vZGVscyByZWdpc3RlcmVkIGluIFVuaXR5IENhdGFsb2c8L3RleHQ+CgogIDxyZWN0IGNsYXNzPSJub2RlLWdwdSIgeD0iNjg4IiB5PSIxNzgiIHdpZHRoPSIzNDQiIGhlaWdodD0iMTE4IiByeD0iMTYiLz4KICA8dGV4dCBjbGFzcz0ibGFiZWwiIHg9IjcxMiIgeT0iMjEyIj5Rd2VuMy1BU1ItMS43QjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSI3MTIiIHk9IjIzNiI+c3BlZWNoIHRvIHRleHQsIGF1dG8gbGFuZ3VhZ2UgZGV0ZWN0PC90ZXh0PgogIDxyZWN0IGNsYXNzPSJiYWRnZS1ib3gtZ3B1IiB4PSI3MTIiIHk9IjI1MiIgd2lkdGg9IjMwNCIgaGVpZ2h0PSIyOCIgcng9IjgiLz4KICA8dGV4dCBjbGFzcz0iYmFkZ2UgYmFkZ2UtZ3B1IiB4PSI3MjQiIHk9IjI3MSI+R1BVIHNlcnZpbmcgfCBNTGZsb3cgUmVzcG9uc2VzQWdlbnQ8L3RleHQ+CgogIDxyZWN0IGNsYXNzPSJub2RlLW1hbmFnZWQiIHg9IjY4OCIgeT0iMzIyIiB3aWR0aD0iMzQ0IiBoZWlnaHQ9IjExOCIgcng9IjE2Ii8+CiAgPHRleHQgY2xhc3M9ImxhYmVsIiB4PSI3MTIiIHk9IjM1NiI+UXdlbjMtTmV4dC04MEI8L3RleHQ+CiAgPHRleHQgY2xhc3M9InN1YiIgeD0iNzEyIiB5PSIzODAiPnJlYXNvbiwgc2VsZWN0IGFuZCBjYWxsIHRvb2xzPC90ZXh0PgogIDxyZWN0IGNsYXNzPSJiYWRnZS1ib3gtbWFuYWdlZCIgeD0iNzEyIiB5PSIzOTYiIHdpZHRoPSIzMDQiIGhlaWdodD0iMjgiIHJ4PSI4Ii8+CiAgPHRleHQgY2xhc3M9ImJhZGdlIGJhZGdlLW1hbmFnZWQiIHg9IjcyNCIgeT0iNDE1Ij5NYW5hZ2VkIEZvdW5kYXRpb24gTW9kZWwgZW5kcG9pbnQ8L3RleHQ+CgogIDxyZWN0IGNsYXNzPSJub2RlLWdwdSIgeD0iNjg4IiB5PSI0NjYiIHdpZHRoPSIzNDQiIGhlaWdodD0iMTE4IiByeD0iMTYiLz4KICA8dGV4dCBjbGFzcz0ibGFiZWwiIHg9IjcxMiIgeT0iNTAwIj5Wb3hDUE0yPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJzdWIiIHg9IjcxMiIgeT0iNTI0Ij50ZXh0IHRvIHNwZWVjaCwgc2FtZSBsYW5ndWFnZTwvdGV4dD4KICA8cmVjdCBjbGFzcz0iYmFkZ2UtYm94LWdwdSIgeD0iNzEyIiB5PSI1NDAiIHdpZHRoPSIzMDQiIGhlaWdodD0iMjgiIHJ4PSI4Ii8+CiAgPHRleHQgY2xhc3M9ImJhZGdlIGJhZGdlLWdwdSIgeD0iNzI0IiB5PSI1NTkiPkdQVSBzZXJ2aW5nIHwgTUxmbG93IFJlc3BvbnNlc0FnZW50PC90ZXh0PgoKICA8IS0tID09PT09PT09PT09PT09PT09PT09PSBHb3Zlcm5lZCBkYXRhIC8gdG9vbHMgPT09PT09PT09PT09PT09PT09PT09IC0tPgogIDxyZWN0IGNsYXNzPSJ6b25lIiB4PSIxMTAwIiB5PSIyMjgiIHdpZHRoPSIyNjAiIGhlaWdodD0iMzE2IiByeD0iMjQiLz4KICA8dGV4dCBjbGFzcz0iem9uZS10aXRsZSIgeD0iMTEyOCIgeT0iMjY2Ij5Hb3Zlcm5lZCBkYXRhPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJ6b25lLXN1YiIgeD0iMTEyOCIgeT0iMjg4Ij5Vbml0eSBDYXRhbG9nPC90ZXh0PgogIDxyZWN0IGNsYXNzPSJub2RlLXRvb2wiIHg9IjExMjQiIHk9IjMwNiIgd2lkdGg9IjIxMiIgaGVpZ2h0PSI4NiIgcng9IjE0Ii8+CiAgPHRleHQgY2xhc3M9ImxhYmVsIiB4PSIxMTQ0IiB5PSIzMzgiPkRhdGFicmlja3MgR2VuaWU8L3RleHQ+CiAgPHRleHQgY2xhc3M9InN1YiIgeD0iMTE0NCIgeT0iMzYxIj5hc2tfZ2VuaWUsIGdyb3VuZGVkPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJzdWIiIHg9IjExNDQiIHk9IjM3OSI+cmVhc29uaW5nPC90ZXh0PgogIDxyZWN0IGNsYXNzPSJub2RlLXRvb2wiIHg9IjExMjQiIHk9IjQxMCIgd2lkdGg9IjIxMiIgaGVpZ2h0PSIxMDQiIHJ4PSIxNCIvPgogIDx0ZXh0IGNsYXNzPSJsYWJlbCIgeD0iMTE0NCIgeT0iNDQyIj5MYWtlYmFzZTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSIxMTQ0IiB5PSI0NjUiPmxvb2t1cF9hY2NvdW50LCBmYWN0czwvdGV4dD4KICA8dGV4dCBjbGFzcz0ic3ViIiB4PSIxMTQ0IiB5PSI0ODUiPmFwcGx5X2JpbGxpbmdfYWN0aW9uLCB3cml0ZTwvdGV4dD4KCiAgPCEtLSA9PT09PT09PT09PT09PT09PT09PT0gRmxvdyBhcnJvd3MgPT09PT09PT09PT09PT09PT09PT09IC0tPgogIDwhLS0gY2xpZW50IGF1ZGlvIGluIC0+IGFnZW50IGxvb3AgLS0+CiAgPHBhdGggY2xhc3M9ImFycm93IiBkPSJNMjI2IDM1MiBMMzE2IDM0MiIvPgogIDx0ZXh0IGNsYXNzPSJmbG93LWxhYmVsIiB4PSIyMzIiIHk9IjMzMCI+YXVkaW8gaW48L3RleHQ+CiAgPCEtLSBhZ2VudCBsb29wIC0+IEFTUiAodHJhbnNjcmliZSBmaXJzdCkgLS0+CiAgPHBhdGggY2xhc3M9ImFycm93IiBkPSJNNTg0IDM0MCBMNjg4IDIzMiIvPgogIDwhLS0gQVNSIC0+IE5leHQgLT4gVm94IHBpcGVsaW5lIC0tPgogIDxwYXRoIGNsYXNzPSJhcnJvdyIgZD0iTTg2MCAyOTYgTDg2MCAzMjIiLz4KICA8cGF0aCBjbGFzcz0iYXJyb3ciIGQ9Ik04NjAgNDQwIEw4NjAgNDY2Ii8+CiAgPCEtLSBWb3ggc3ludGggYmFjayB0byBBUEkgLS0+CiAgPHBhdGggY2xhc3M9ImFycm93LW11dGVkIiBkPSJNNjg4IDUyMCBMNTg0IDQ3MCIvPgogIDwhLS0gQVBJIC0+IGNsaWVudCBhdWRpbyBvdXQgLS0+CiAgPHBhdGggY2xhc3M9ImFycm93LW11dGVkIiBkPSJNMzE2IDQ2NiBMMjI2IDQ0MiIvPgogIDx0ZXh0IGNsYXNzPSJmbG93LWxhYmVsIiB4PSIyMzIiIHk9IjQ4NiI+YXVkaW8gb3V0PC90ZXh0PgogIDwhLS0gTmV4dCAtPiB0b29scyBvdmVyIGdvdmVybmVkIGRhdGEgLS0+CiAgPHBhdGggY2xhc3M9ImFycm93LXRvb2wiIGQ9Ik0xMDMyIDM1NiBMMTEyNCAzNDQiLz4KICA8cGF0aCBjbGFzcz0iYXJyb3ctdG9vbCIgZD0iTTEwMzIgMzkyIEwxMTI0IDQ1MiIvPgo8L3N2Zz4K" alt="Realtime voice architecture on Databricks: a browser client streams audio over a WebSocket to a FastAPI realtime API exposing three capabilities; on Databricks, Qwen3-ASR and VoxCPM2 are self-served on GPU Model Serving endpoints as MLflow ResponsesAgents while Qwen3-Next is a managed Foundation Model API endpoint; Qwen3-Next calls tools over governed data — Genie for grounded reasoning and Lakebase for account facts and billing writes." /></p>
+<p>The diagram shows the full data path. A browser streams audio over a <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API">WebSocket</a> to a <a href="https://fastapi.tiangolo.com">FastAPI</a> API. Inside each turn, the API drives the three models in sequence — transcribe, reason, synthesize — and streams audio back. The two speech models run on <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a> (packaged as <a href="https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html">MLflow <code>ResponsesAgent</code></a>); the reasoning model is a managed <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint. When Qwen3-Next needs to act, it calls tools against <a href="https://www.databricks.com/product/lakebase">Lakebase</a> (account lookups, billing actions) or <a href="https://docs.databricks.com/en/generative-ai/genie.html">Genie</a> (analytical questions). Account changes go through the governed billing tool — the model proposes, the tool executes.</p>
+<h2>Benchmarks Across Languages</h2>
+<p>How well does the agent understand speech in each language? We tested on <a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a>, a standard multilingual speech dataset, across all 24 supported languages. Each bar shows the percentage the agent got right — taller bars mean better understanding.</p>
+<p><img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNDAwIiBoZWlnaHQ9IjYyMCIgdmlld0JveD0iMCAwIDE0MDAgNjIwIiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzYyI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+U3BlZWNoIHJlY29nbml0aW9uIGFjY3VyYWN5IGFjcm9zcyAyNCBsYW5ndWFnZXM8L3RpdGxlPgogIDxkZXNjIGlkPSJkZXNjIj5WZXJ0aWNhbCBiYXIgY2hhcnQgc2hvd2luZyBob3cgYWNjdXJhdGVseSB0aGUgdm9pY2UgYWdlbnQgdW5kZXJzdGFuZHMgc3BlZWNoIGluIGVhY2ggb2YgMjQgbGFuZ3VhZ2VzLCB0ZXN0ZWQgb24gdGhlIEZMRVVSUyBkYXRhc2V0LiBIaWdoZXIgYmFycyBtZWFuIGJldHRlciByZWNvZ25pdGlvbi4gSmFwYW5lc2UsIEVuZ2xpc2gsIFNwYW5pc2gsIE1hbGF5LCBhbmQgQXJhYmljIHBlcmZvcm0gYmVzdCBhdCA4MSB0byA4MyBwZXJjZW50LjwvZGVzYz4KICA8ZGVmcz4KICAgIDxzdHlsZT4KICAgICAgLmJnIHsgZmlsbDogI2ZmZmZmZjsgfQogICAgICAudGl0bGUgeyBmb250OiA3MDAgMjRweCAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIHNhbnMtc2VyaWY7IGZpbGw6ICMwZjE3MmE7IH0KICAgICAgLnN1YnRpdGxlIHsgZm9udDogMTVweCAtYXBwbGUtc3lzdGVtLCBCbGlua01hY1N5c3RlbUZvbnQsICJTZWdvZSBVSSIsIHNhbnMtc2VyaWY7IGZpbGw6ICM2NDc0OGI7IH0KICAgICAgLmdyaWQgeyBzdHJva2U6ICNlMmU4ZjA7IHN0cm9rZS13aWR0aDogMTsgfQogICAgICAuYXhpcyB7IHN0cm9rZTogIzk0YTNiODsgc3Ryb2tlLXdpZHRoOiAxLjU7IH0KICAgICAgLnlsYWJlbCB7IGZvbnQ6IDEzcHggLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU2Vnb2UgVUkiLCBzYW5zLXNlcmlmOyBmaWxsOiAjNjQ3NDhiOyB9CiAgICAgIC5iYXItd29yZCB7IGZpbGw6ICMzYjZmYjA7IH0KICAgICAgLmJhci1jaGFyIHsgZmlsbDogIzFmOWU4OTsgfQogICAgICAudmFsIHsgZm9udDogNzAwIDEycHggLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU2Vnb2UgVUkiLCBzYW5zLXNlcmlmOyBmaWxsOiAjMzM0MTU1OyB9CiAgICAgIC5sYW5nIHsgZm9udDogNzAwIDEzcHggLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU2Vnb2UgVUkiLCBzYW5zLXNlcmlmOyBmaWxsOiAjMzM0MTU1OyB9CiAgICAgIC5sZWdlbmQgeyBmb250OiAxM3B4IC1hcHBsZS1zeXN0ZW0sIEJsaW5rTWFjU3lzdGVtRm9udCwgIlNlZ29lIFVJIiwgc2Fucy1zZXJpZjsgZmlsbDogIzQ3NTU2OTsgfQogICAgICAuZm9vdCB7IGZvbnQ6IDEycHggLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU2Vnb2UgVUkiLCBzYW5zLXNlcmlmOyBmaWxsOiAjOTRhM2I4OyB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KCiAgPHJlY3QgY2xhc3M9ImJnIiB3aWR0aD0iMTQwMCIgaGVpZ2h0PSI2MjAiLz4KCiAgPHRleHQgY2xhc3M9InRpdGxlIiB4PSI2MCIgeT0iNDAiPlNwZWVjaCByZWNvZ25pdGlvbiBhY2N1cmFjeSBhY3Jvc3MgMjQgbGFuZ3VhZ2VzPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJzdWJ0aXRsZSIgeD0iNjAiIHk9IjY0Ij5Ib3cgbXVjaCB0aGUgYWdlbnQgY29ycmVjdGx5IHVuZGVyc3Rvb2QsIHRlc3RlZCBvbiBGTEVVUlMuIEhpZ2hlciBpcyBiZXR0ZXIuPC90ZXh0PgoKICA8IS0tIGxlZ2VuZCAtLT4KICA8cmVjdCB4PSIxMDYwIiB5PSIzMCIgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgY2xhc3M9ImJhci13b3JkIi8+CiAgPHRleHQgY2xhc3M9ImxlZ2VuZCIgeD0iMTA4MiIgeT0iNDMiPldvcmQgYWNjdXJhY3k8L3RleHQ+CiAgPHJlY3QgeD0iMTIyMCIgeT0iMzAiIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgcng9IjMiIGNsYXNzPSJiYXItY2hhciIvPgogIDx0ZXh0IGNsYXNzPSJsZWdlbmQiIHg9IjEyNDIiIHk9IjQzIj5DaGFyYWN0ZXIgYWNjdXJhY3k8L3RleHQ+CgogIDwhLS0gZ3JpZGxpbmVzICgwIHRvIDEwMCUpIC0tPgogIDxsaW5lIGNsYXNzPSJncmlkIiB4MT0iMTAwIiB5MT0iNTIwIiB4Mj0iMTM2MCIgeTI9IjUyMCIvPgogIDxsaW5lIGNsYXNzPSJncmlkIiB4MT0iMTAwIiB5MT0iNDM0IiB4Mj0iMTM2MCIgeTI9IjQzNCIvPgogIDxsaW5lIGNsYXNzPSJncmlkIiB4MT0iMTAwIiB5MT0iMzQ4IiB4Mj0iMTM2MCIgeTI9IjM0OCIvPgogIDxsaW5lIGNsYXNzPSJncmlkIiB4MT0iMTAwIiB5MT0iMjYyIiB4Mj0iMTM2MCIgeTI9IjI2MiIvPgogIDxsaW5lIGNsYXNzPSJncmlkIiB4MT0iMTAwIiB5MT0iMTc2IiB4Mj0iMTM2MCIgeTI9IjE3NiIvPgogIDxsaW5lIGNsYXNzPSJncmlkIiB4MT0iMTAwIiB5MT0iOTAiIHgyPSIxMzYwIiB5Mj0iOTAiLz4KICA8dGV4dCBjbGFzcz0ieWxhYmVsIiB4PSI5MCIgeT0iNTI0IiB0ZXh0LWFuY2hvcj0iZW5kIj4wJTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ieWxhYmVsIiB4PSI5MCIgeT0iNDM4IiB0ZXh0LWFuY2hvcj0iZW5kIj4yMCU8L3RleHQ+CiAgPHRleHQgY2xhc3M9InlsYWJlbCIgeD0iOTAiIHk9IjM1MiIgdGV4dC1hbmNob3I9ImVuZCI+NDAlPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJ5bGFiZWwiIHg9IjkwIiB5PSIyNjYiIHRleHQtYW5jaG9yPSJlbmQiPjYwJTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ieWxhYmVsIiB4PSI5MCIgeT0iMTgwIiB0ZXh0LWFuY2hvcj0iZW5kIj44MCU8L3RleHQ+CiAgPHRleHQgY2xhc3M9InlsYWJlbCIgeD0iOTAiIHk9Ijk0IiB0ZXh0LWFuY2hvcj0iZW5kIj4xMDAlPC90ZXh0PgogIDxsaW5lIGNsYXNzPSJheGlzIiB4MT0iMTAwIiB5MT0iOTAiIHgyPSIxMDAiIHkyPSI1MjAiLz4KCiAgPCEtLSBiYXJzOiBzb3J0ZWQgZGVzY2VuZGluZyBieSBhY2N1cmFjeSAoYmVzdCBmaXJzdCkgLS0+CiAgPCEtLSBqYSA4MyUgKGNoYXIpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItY2hhciIgeD0iMTA5IiB5PSIxNjIiIHdpZHRoPSIzNCIgaGVpZ2h0PSIzNTgiIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iMTI2IiB5PSIxNTYiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjgzJTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iMTI2IiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPmphPC90ZXh0PgogIDwhLS0gZW4gODMlICh3b3JkKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLXdvcmQiIHg9IjE2MSIgeT0iMTY1IiB3aWR0aD0iMzQiIGhlaWdodD0iMzU1IiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9IjE3OCIgeT0iMTU5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj44MyU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9IjE3OCIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5lbjwvdGV4dD4KICA8IS0tIGVzIDgyJSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSIyMTMiIHk9IjE2NiIgd2lkdGg9IjM0IiBoZWlnaHQ9IjM1NCIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSIyMzAiIHk9IjE2MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+ODIlPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsYW5nIiB4PSIyMzAiIHk9IjU0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+ZXM8L3RleHQ+CiAgPCEtLSBtcyA4MiUgKHdvcmQpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItd29yZCIgeD0iMjY1IiB5PSIxNjciIHdpZHRoPSIzNCIgaGVpZ2h0PSIzNTMiIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iMjgyIiB5PSIxNjEiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjgyJTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iMjgyIiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPm1zPC90ZXh0PgogIDwhLS0gYXIgODElICh3b3JkKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLXdvcmQiIHg9IjMxNyIgeT0iMTczIiB3aWR0aD0iMzQiIGhlaWdodD0iMzQ3IiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9IjMzNCIgeT0iMTY3IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj44MSU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9IjMzNCIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5hcjwvdGV4dD4KICA8IS0tIG5sIDc3JSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSIzNjkiIHk9IjE4OSIgd2lkdGg9IjM0IiBoZWlnaHQ9IjMzMSIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSIzODYiIHk9IjE4MyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+NzclPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsYW5nIiB4PSIzODYiIHk9IjU0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+bmw8L3RleHQ+CiAgPCEtLSB0ciA3NCUgKHdvcmQpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItd29yZCIgeD0iNDIxIiB5PSIyMDEiIHdpZHRoPSIzNCIgaGVpZ2h0PSIzMTkiIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iNDM4IiB5PSIxOTUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjc0JTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iNDM4IiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPnRyPC90ZXh0PgogIDwhLS0gdGggNzQlIChjaGFyKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLWNoYXIiIHg9IjQ3MyIgeT0iMjAxIiB3aWR0aD0iMzQiIGhlaWdodD0iMzE5IiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9IjQ5MCIgeT0iMTk1IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj43NCU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9IjQ5MCIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj50aDwvdGV4dD4KICA8IS0tIGlkIDcyJSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSI1MjUiIHk9IjIxMyIgd2lkdGg9IjM0IiBoZWlnaHQ9IjMwNyIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSI1NDIiIHk9IjIwNyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+NzIlPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsYW5nIiB4PSI1NDIiIHk9IjU0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+aWQ8L3RleHQ+CiAgPCEtLSBmciA3MSUgKHdvcmQpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItd29yZCIgeD0iNTc3IiB5PSIyMTYiIHdpZHRoPSIzNCIgaGVpZ2h0PSIzMDQiIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iNTk0IiB5PSIyMTAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjcxJTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iNTk0IiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPmZyPC90ZXh0PgogIDwhLS0ga28gNjklICh3b3JkKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLXdvcmQiIHg9IjYyOSIgeT0iMjIyIiB3aWR0aD0iMzQiIGhlaWdodD0iMjk4IiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9IjY0NiIgeT0iMjE2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj42OSU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9IjY0NiIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5rbzwvdGV4dD4KICA8IS0tIHJ1IDY4JSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSI2ODEiIHk9IjIyOSIgd2lkdGg9IjM0IiBoZWlnaHQ9IjI5MSIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSI2OTgiIHk9IjIyMyIgdGV4dC1hbmNob3I9Im1pZGRsZSI+NjglPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsYW5nIiB4PSI2OTgiIHk9IjU0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+cnU8L3RleHQ+CiAgPCEtLSBpdCA2NyUgKHdvcmQpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItd29yZCIgeD0iNzMzIiB5PSIyMzIiIHdpZHRoPSIzNCIgaGVpZ2h0PSIyODgiIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iNzUwIiB5PSIyMjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjY3JTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iNzUwIiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPml0PC90ZXh0PgogIDwhLS0gemggNjclIChjaGFyKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLWNoYXIiIHg9Ijc4NSIgeT0iMjMzIiB3aWR0aD0iMzQiIGhlaWdodD0iMjg3IiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9IjgwMiIgeT0iMjI3IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj42NyU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9IjgwMiIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj56aDwvdGV4dD4KICA8IS0tIHBsIDY2JSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSI4MzciIHk9IjIzNyIgd2lkdGg9IjM0IiBoZWlnaHQ9IjI4MyIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSI4NTQiIHk9IjIzMSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+NjYlPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsYW5nIiB4PSI4NTQiIHk9IjU0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+cGw8L3RleHQ+CiAgPCEtLSBkZSA2NCUgKHdvcmQpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItd29yZCIgeD0iODg5IiB5PSIyNDMiIHdpZHRoPSIzNCIgaGVpZ2h0PSIyNzciIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iOTA2IiB5PSIyMzciIHRleHQtYW5jaG9yPSJtaWRkbGUiPjY0JTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iOTA2IiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPmRlPC90ZXh0PgogIDwhLS0gZWwgNjIlICh3b3JkKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLXdvcmQiIHg9Ijk0MSIgeT0iMjU0IiB3aWR0aD0iMzQiIGhlaWdodD0iMjY2IiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9Ijk1OCIgeT0iMjQ4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj42MiU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9Ijk1OCIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5lbDwvdGV4dD4KICA8IS0tIHN2IDU5JSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSI5OTMiIHk9IjI2NSIgd2lkdGg9IjM0IiBoZWlnaHQ9IjI1NSIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSIxMDEwIiB5PSIyNTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjU5JTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iMTAxMCIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5zdjwvdGV4dD4KICA8IS0tIGhpIDU2JSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSIxMDQ1IiB5PSIyNzgiIHdpZHRoPSIzNCIgaGVpZ2h0PSIyNDIiIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iMTA2MiIgeT0iMjcyIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj41NiU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9IjEwNjIiIHk9IjU0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+aGk8L3RleHQ+CiAgPCEtLSBwdCA1NiUgKHdvcmQpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItd29yZCIgeD0iMTA5NyIgeT0iMjgwIiB3aWR0aD0iMzQiIGhlaWdodD0iMjQwIiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9IjExMTQiIHk9IjI3NCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+NTYlPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsYW5nIiB4PSIxMTE0IiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPnB0PC90ZXh0PgogIDwhLS0gZmkgNTMlICh3b3JkKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLXdvcmQiIHg9IjExNDkiIHk9IjI5MSIgd2lkdGg9IjM0IiBoZWlnaHQ9IjIyOSIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSIxMTY2IiB5PSIyODUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjUzJTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iMTE2NiIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5maTwvdGV4dD4KICA8IS0tIGRhIDQ4JSAod29yZCkgLS0+CiAgPHJlY3QgY2xhc3M9ImJhci13b3JkIiB4PSIxMjAxIiB5PSIzMTMiIHdpZHRoPSIzNCIgaGVpZ2h0PSIyMDciIHJ4PSIzIi8+CiAgPHRleHQgY2xhc3M9InZhbCIgeD0iMTIxOCIgeT0iMzA3IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj40OCU8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImxhbmciIHg9IjEyMTgiIHk9IjU0MCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+ZGE8L3RleHQ+CiAgPCEtLSBmaWwgMzMlICh3b3JkKSAtLT4KICA8cmVjdCBjbGFzcz0iYmFyLXdvcmQiIHg9IjEyNTMiIHk9IjM3OCIgd2lkdGg9IjM0IiBoZWlnaHQ9IjE0MiIgcng9IjMiLz4KICA8dGV4dCBjbGFzcz0idmFsIiB4PSIxMjcwIiB5PSIzNzIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPjMzJTwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibGFuZyIgeD0iMTI3MCIgeT0iNTQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5maWw8L3RleHQ+CiAgPCEtLSB2aSAzMCUgKHdvcmQpIC0tPgogIDxyZWN0IGNsYXNzPSJiYXItd29yZCIgeD0iMTMwNSIgeT0iMzkwIiB3aWR0aD0iMzQiIGhlaWdodD0iMTMwIiByeD0iMyIvPgogIDx0ZXh0IGNsYXNzPSJ2YWwiIHg9IjEzMjIiIHk9IjM4NCIgdGV4dC1hbmNob3I9Im1pZGRsZSI+MzAlPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsYW5nIiB4PSIxMzIyIiB5PSI1NDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiPnZpPC90ZXh0PgoKICA8dGV4dCBjbGFzcz0iZm9vdCIgeD0iNjAiIHk9IjU4MCI+VGVzdGVkIG9uIEZMRVVSUyAoZ29vZ2xlL2ZsZXVycyksIDIwIHNhbXBsZXMgcGVyIGxhbmd1YWdlLiBDaGFyYWN0ZXIgYWNjdXJhY3kgdXNlZCBmb3IgQ2hpbmVzZSwgSmFwYW5lc2UsIGFuZCBUaGFpIHdoZXJlIHdvcmRzIGFyZSBub3Qgc3BhY2Utc2VwYXJhdGVkLjwvdGV4dD4KICA8dGV4dCBjbGFzcz0iZm9vdCIgeD0iNjAiIHk9IjU5OCI+UnVuOiAyMDI2LTA3LTI2LiBNZWFzdXJlZCB0aHJvdWdoIHRoZSBmdWxsIHZvaWNlIEFQSSwgbm90IHRoZSBzcGVlY2ggbW9kZWwgaW4gaXNvbGF0aW9uLjwvdGV4dD4KPC9zdmc+Cg==" alt="Speech recognition accuracy across 24 languages, tested on FLEURS. Each bar shows the percentage of words or characters correctly recognized. Japanese, English, Spanish, Malay, and Arabic perform best at 81 to 83 percent." /></p>
+<p>Japanese, English, Spanish, Malay, and Arabic lead at 81–83%. Thai, Indonesian, and Chinese — the languages that carry the live demo — all land above 67%, strong enough to hold a real billing conversation. The tail (Vietnamese, Filipino) is where the model needs improvement and represents future fine-tuning targets.</p>
+<p>Every model update triggers a fresh benchmark run, and results land in a Delta table — so we always know where each language stands before promoting a version to production.</p>
+<h2>Lessons Learned</h2>
+<p><strong>Detecting when the caller is actually done speaking was the hardest problem we solved.</strong> On a phone call, people pause mid-sentence to think, take a breath, or look up a number. A simple silence timer can&#x27;t tell the difference between a thinking pause and a finished sentence — it either cuts the caller off or leaves dead air while it waits for the timeout. We solved this with a two-stage pipeline that runs entirely on CPU (<a href="https://onnxruntime.ai"><code>onnxruntime</code></a>, no GPU cost): first, <a href="https://github.com/snakers4/silero-vad">Silero VAD</a> filters out background noise and confirms the caller is actually speaking; then <a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a> listens to the audio at every pause and decides whether the sentence is linguistically complete — does it end on a question, a statement, or is the caller still mid-thought? The result: turns finalize ~0.3 seconds after the caller genuinely stops. No premature cutoffs in our validation set. Languages that smart-turn doesn&#x27;t cover fall back to a calibrated pause rule, and if the models fail to load the system degrades gracefully to energy-based detection.</p>
+<p><strong>Perceived speed comes from the gaps between models, not from the models themselves.</strong> We spent weeks optimizing model inference — and it barely moved the needle on how fast the conversation *felt*. What actually mattered was everything that happens in the transitions: how quickly we detect end-of-turn (above), how soon the first audio byte reaches the caller&#x27;s speaker (streaming synthesis starts playing in ~80ms via <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events">SSE</a> before the full sentence is generated), whether the caller hears silence or a brief spoken acknowledgment while the agent calls tools, and whether a cold <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU endpoint</a> is already warmed before the first real turn arrives. These systems-level choices — barge-in, endpoint priming, streamed first-byte — shaped the user experience more than any single model latency number.</p>
+<h2>Future Direction</h2>
+<ul>
+<li><strong><a href="https://www.databricks.com/blog/introducing-genie-agent-mode">Genie Agent Mode</a></strong> — today the reasoning stage queries Genie once per turn, like asking a single question. With Agent Mode, Genie can investigate like an analyst — planning, testing hypotheses, and iterating across multiple queries to answer complex follow-ups without leaving the call. That&#x27;s the natural next step: the caller asks &quot;why did our churn spike in Q3?&quot; and Genie reasons through it live.</li>
+<li><strong>Telephony (8 kHz)</strong> — the current path is built for wideband browser audio (16 kHz+). Narrowband telephone audio degrades recognition quality and needs dedicated handling via a <a href="https://www.rfc-editor.org/rfc/rfc3261">SIP</a> gateway with acoustic echo cancellation.</li>
+<li><strong>Fine-tuning on domain audio</strong> — the benchmark chart shows where the base model is weak. Targeted <a href="https://arxiv.org/abs/2106.09685">LoRA</a> fine-tuning on enterprise call recordings for the tail languages is the next accuracy lever.</li>
+</ul>
+<h2>Sources and Further Reading</h2>
+<p><strong>Open-source models</strong></p>
+<ul>
+<li><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B</a> — multilingual speech recognition with automatic language detection</li>
+<li><a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> — multilingual, voice-cloning speech synthesis</li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next-80B-A3B-Instruct</a> — reasoning and tool-calling</li>
+<li><a href="https://github.com/snakers4/silero-vad">Silero VAD</a> — streaming voice-activity detection (speech gate)</li>
+<li><a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a> — audio-native semantic end-of-turn detection</li>
+</ul>
+<p><strong>Benchmark datasets and baselines</strong></p>
+<ul>
+<li><a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a> — multilingual read-speech recognition</li>
+<li><a href="https://aclanthology.org/2025.findings-acl.569/">2M-Belebele</a> — spoken reading-comprehension (<a href="https://huggingface.co/datasets/facebook/2M-Belebele">dataset</a>)</li>
+<li><a href="https://arxiv.org/abs/2508.07295">CCFQA</a> — spoken factual question answering (<a href="https://huggingface.co/datasets/yxdu/ccfqa">dataset</a>)</li>
+<li><a href="https://huggingface.co/openai/whisper-large-v3">Whisper large-v3</a> — recognition baseline</li>
+<li><a href="https://huggingface.co/facebook/seamless-m4t-v2-large">SeamlessM4T</a> — recognition baseline (cascaded with Llama-3-70B)</li>
+</ul>
+<p><strong>Databricks</strong></p>
+<ul>
+<li><a href="https://docs.databricks.com/en/generative-ai/genie.html">AI/BI Genie</a></li>
+<li><a href="https://www.databricks.com/blog/introducing-genie-agent-mode">Introducing Genie Agent Mode</a></li>
+<li><a href="https://docs.databricks.com/en/generative-ai/agent-framework/index.html">Agent Framework</a></li>
+<li><a href="https://docs.databricks.com/en/machine-learning/model-serving/index.html">Model Serving</a></li>
+<li><a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a></li>
+<li><a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model APIs</a></li>
+<li><a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a></li>
+<li><a href="https://www.databricks.com/product/lakebase">Lakebase</a> — low-latency operational store for account facts and billing writes</li>
+</ul>
+<p><strong>Platform and tooling</strong></p>
+<ul>
+<li><a href="https://mlflow.org">MLflow</a> — model packaging and the <code>ResponsesAgent</code> contract</li>
+<li><a href="https://fastapi.tiangolo.com">FastAPI</a> — the realtime WebSocket API</li>
+<li><a href="https://pytorch.org">PyTorch</a> — speech-model runtime on the GPU endpoints</li>
+<li><a href="https://onnxruntime.ai">ONNX Runtime</a> — CPU inference for the endpointing models</li>
+<li><a href="https://deepgram.com">Deepgram</a> — dedicated real-time streaming speech API (referenced for contrast)</li>
+</ul>
+    </article>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script>
+    const content = document.getElementById("publish-content");
+    const status = document.getElementById("status");
+    const PUBLIC_MODE = false;
+
+    function wrapClipboardHtml(html) {
+      return `<!DOCTYPE html><html><body><!--StartFragment-->${html}<!--EndFragment--></body></html>`;
+    }
+
+    function flattenTables(root) {
+      root.querySelectorAll("table").forEach((table) => {
+        const rows = [];
+        table.querySelectorAll("thead tr").forEach((row) => rows.push(row.cloneNode(true)));
+        table.querySelectorAll("tbody tr").forEach((row) => rows.push(row.cloneNode(true)));
+        if (!rows.length) {
+          table.querySelectorAll("tr").forEach((row) => rows.push(row.cloneNode(true)));
+        }
+        const body = document.createElement("tbody");
+        rows.forEach((row) => body.appendChild(row));
+        table.innerHTML = "";
+        table.appendChild(body);
+      });
+    }
+
+    async function inlineLoadedImages(root) {
+      const images = Array.from(root.querySelectorAll("img"));
+      for (const img of images) {
+        if (img.src.startsWith("data:")) {
+          continue;
+        }
+        if (!img.complete || !img.naturalWidth) {
+          await new Promise((resolve) => {
+            img.addEventListener("load", resolve, { once: true });
+            img.addEventListener("error", resolve, { once: true });
+          });
+        }
+        if (!img.naturalWidth) {
+          continue;
+        }
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            continue;
+          }
+          ctx.drawImage(img, 0, 0);
+          img.src = canvas.toDataURL("image/png");
+        } catch (err) {
+          // Keep original src if canvas is tainted.
+        }
+      }
+    }
+
+    async function replaceTablesWithImages(root) {
+      if (typeof html2canvas !== "function") {
+        return;
+      }
+      const tables = Array.from(root.querySelectorAll("table"));
+      for (const table of tables) {
+        try {
+          const canvas = await html2canvas(table, {
+            backgroundColor: "#ffffff",
+            scale: 2,
+            logging: false,
+          });
+          const img = document.createElement("img");
+          img.src = canvas.toDataURL("image/png");
+          img.alt = "Table";
+          img.style.width = "100%";
+          img.style.maxWidth = "100%";
+          table.replaceWith(img);
+        } catch (err) {
+          // Keep HTML table if snapshot fails.
+        }
+      }
+    }
+
+    async function buildClipboardPayload() {
+      const root = content.cloneNode(true);
+      flattenTables(root);
+      if (!PUBLIC_MODE) {
+        // Local mode: embed images as data URLs and snapshot HTML tables.
+        await inlineLoadedImages(root);
+        await replaceTablesWithImages(root);
+      }
+      // Public mode keeps the raw.githubusercontent.com <img> URLs untouched
+      // so Medium fetches them on paste.
+      return { html: root.innerHTML, text: root.innerText };
+    }
+
+    function selectAll() {
+      const range = document.createRange();
+      range.selectNodeContents(content);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      status.textContent = "Selected. Click Copy or press Cmd+C.";
+    }
+
+    function copyRichHtmlSync(html, plain) {
+      const wrapped = wrapClipboardHtml(html);
+      function onCopy(event) {
+        event.clipboardData.setData("text/html", wrapped);
+        event.clipboardData.setData("text/plain", plain);
+        event.preventDefault();
+      }
+      document.addEventListener("copy", onCopy, { once: true });
+      const container = document.createElement("div");
+      container.contentEditable = "true";
+      container.innerHTML = html;
+      container.style.position = "fixed";
+      container.style.left = "0";
+      container.style.top = "0";
+      container.style.width = "1px";
+      container.style.height = "1px";
+      container.style.opacity = "0.01";
+      document.body.appendChild(container);
+      container.focus();
+      const range = document.createRange();
+      range.selectNodeContents(container);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const copied = document.execCommand("copy");
+      selection.removeAllRanges();
+      container.remove();
+      return copied;
+    }
+
+    async function copyAll() {
+      status.textContent = "Preparing tables and images...";
+      const payload = await buildClipboardPayload();
+      const copied = copyRichHtmlSync(payload.html, payload.text);
+      status.textContent = copied
+        ? "Copied with embedded images and table snapshots. Paste in Medium with Cmd+V."
+        : "Copy failed. Press Cmd+C manually after Select all.";
+      return copied;
+    }
+
+    document.getElementById("select-all").addEventListener("click", selectAll);
+    document.getElementById("copy-all").addEventListener("click", () => {
+      void copyAll();
+    });
+    document.getElementById("open-medium").addEventListener("click", () => {
+      window.open("https://medium.com/new-story", "_blank", "noopener");
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title">
+  <title id="title">Powering Genie with Open-Source Voice Models on Databricks</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b2545"/>
+      <stop offset="100%" stop-color="#1e4a7a"/>
+    </linearGradient>
+    <linearGradient id="dbx" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF5F46"/>
+      <stop offset="100%" stop-color="#FF3621"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#7dd3fc"/>
+    </linearGradient>
+    <marker id="ar" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto">
+      <path d="M1,1 L8,5 L1,9 Z" fill="#7dd3fc"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- brand lockup: Databricks mark + wordmark, then the Genie mark -->
+  <!-- Databricks: three stacked parallelograms (from the app brand marks) -->
+  <g transform="translate(80,52)">
+    <path d="M2,10 L26,-2 L50,10 L26,22 Z" fill="#FF3621"/>
+    <path d="M2,22 L26,10 L50,22 L26,34 Z" fill="#FF4D3A"/>
+    <path d="M2,34 L26,22 L50,34 L26,46 Z" fill="#FF6B5C"/>
+  </g>
+  <text x="148" y="92" fill="#ffffff" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="30" font-weight="700">Databricks</text>
+  <line x1="360" y1="54" x2="360" y2="98" stroke="#3b5a86" stroke-width="2"/>
+  <!-- Genie: the app icon (coral genie lamp + sparkle on a light rounded square) -->
+  <g transform="translate(388,48)">
+    <rect width="48" height="48" rx="12" fill="#F2EDE8"/>
+    <!-- 4-point sparkle -->
+    <path d="M24,8 L26.4,15.6 L34,18 L26.4,20.4 L24,28 L21.6,20.4 L14,18 L21.6,15.6 Z" fill="#E1442B"/>
+    <!-- lamp body -->
+    <ellipse cx="23.5" cy="33.5" rx="13" ry="6.4" fill="#E9A491"/>
+    <!-- spout to the left -->
+    <path d="M11.5,31.5 L2.5,28.5 L4.2,34 L12.5,36 Z" fill="#E9A491"/>
+    <!-- lid knob -->
+    <circle cx="23.5" cy="26.6" r="2.2" fill="#E9A491"/>
+    <!-- base foot -->
+    <rect x="17.5" y="39.5" width="12" height="3.4" rx="1.7" fill="#E1442B"/>
+  </g>
+  <text x="446" y="92" fill="#ffffff" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="30" font-weight="700">Genie</text>
+
+  <!-- gist: listen -> reason with Genie -> speak, no model names -->
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <rect x="80" y="140" width="244" height="84" rx="16" fill="#ffffff" opacity="0.10"/>
+    <text x="104" y="182" fill="#e2e8f0" font-size="23" font-weight="700">Transcribe</text>
+    <text x="104" y="207" fill="#93c5fd" font-size="15">any language</text>
+
+    <path d="M330 182 L366 182" stroke="#7dd3fc" stroke-width="3" fill="none" marker-end="url(#ar)"/>
+
+    <rect x="372" y="140" width="300" height="84" rx="16" fill="#ffffff" opacity="0.14"/>
+    <text x="396" y="182" fill="#ffffff" font-size="23" font-weight="700">Reason with Genie</text>
+    <text x="396" y="207" fill="#93c5fd" font-size="15">grounded in governed data</text>
+
+    <path d="M678 182 L714 182" stroke="#7dd3fc" stroke-width="3" fill="none" marker-end="url(#ar)"/>
+
+    <rect x="720" y="140" width="244" height="84" rx="16" fill="#ffffff" opacity="0.10"/>
+    <text x="744" y="182" fill="#e2e8f0" font-size="23" font-weight="700">Synthesize</text>
+    <text x="744" y="207" fill="#93c5fd" font-size="15">same language</text>
+  </g>
+
+  <!-- title -->
+  <text x="80" y="322" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="56" font-weight="800">Powering Genie with</text>
+  <text x="80" y="388" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="56" font-weight="800">Open-Source Voice Models</text>
+  <text x="80" y="454" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="56" font-weight="800">on Databricks</text>
+
+  <!-- subtitle -->
+  <text x="80" y="512" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="24" font-weight="500">Real-time, multilingual voice for your governed data</text>
+
+  <!-- voice waveform accent -->
+  <g fill="url(#wave)">
+    <rect x="1004" y="160" width="9" height="44" rx="4.5"/>
+    <rect x="1023" y="140" width="9" height="84" rx="4.5"/>
+    <rect x="1042" y="118" width="9" height="128" rx="4.5"/>
+    <rect x="1061" y="144" width="9" height="76" rx="4.5"/>
+    <rect x="1080" y="162" width="9" height="40" rx="4.5"/>
+  </g>
+</svg>

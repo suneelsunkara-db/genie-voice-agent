@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Powering Genie with Open-Source Voice Models on Databricks</title>
+  <meta name="description" content="Giving Databricks Genie a real-time, multilingual voice — so a customer can call, speak their own language, and hear a grounded answer back, on open models served entirely on Databricks." />
+  <meta property="og:title" content="Powering Genie with Open-Source Voice Models on Databricks" />
+  <meta property="og:description" content="Giving Databricks Genie a real-time, multilingual voice — so a customer can call, speak their own language, and hear a grounded answer back, on open models served entirely on Databricks." />
+  <meta property="og:type" content="article" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Powering Genie with Open-Source Voice Models on Databricks" />
+  <meta name="twitter:description" content="Giving Databricks Genie a real-time, multilingual voice — so a customer can call, speak their own language, and hear a grounded answer back, on open models served entirely on Databricks." />
+  <meta property="og:image" content="../assets/powering-genie-with-open-source-voice-models/header-thumbnail.svg" />
+  <meta name="twitter:image" content="../assets/powering-genie-with-open-source-voice-models/header-thumbnail.svg" />
+  <style>
+    :root {
+      color-scheme: light;
+      --text: #17202a;
+      --muted: #5f6b7a;
+      --border: #d9dee7;
+      --code-bg: #f6f8fa;
+      --accent: #1f6feb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f8fafc;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.68;
+    }
+    .preview-shell {
+      max-width: 760px;
+      margin: 40px auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 48px;
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+    }
+    .preview-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 32px;
+      color: var(--muted);
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 18px;
+    }
+    article { font-size: 20px; }
+    h1 {
+      font-size: 44px;
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+      margin: 0 0 20px;
+    }
+    h2 {
+      font-size: 30px;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      margin: 48px 0 16px;
+    }
+    h3 { font-size: 22px; line-height: 1.3; margin: 34px 0 12px; }
+    p { margin: 0 0 20px; }
+    ul, ol { padding-left: 1.4em; margin: 0 0 24px; }
+    li { margin: 8px 0; }
+    blockquote {
+      margin: 28px 0;
+      border-left: 4px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    pre {
+      overflow: auto;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+      background: var(--code-bg);
+      border-radius: 5px;
+      padding: 0.15em 0.35em;
+    }
+    pre code { background: transparent; padding: 0; }
+    .mermaid {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      margin: 28px 0;
+      text-align: center;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 0.92em; }
+    th, td { border: 1px solid var(--border); padding: 10px; text-align: left; }
+    img { max-width: 100%; border-radius: 12px; }
+    .preview-hero {
+      width: 100%;
+      aspect-ratio: 1200 / 630;
+      object-fit: cover;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      margin: 0 0 32px;
+      display: block;
+    }
+    .publish-panel {
+      background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin: 0 0 32px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .publish-panel h2 { font-size: 22px; margin: 0 0 10px; letter-spacing: -0.01em; }
+    .publish-panel p { margin: 0 0 12px; color: var(--muted); }
+    .publish-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+    .publish-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+    .publish-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .publish-actions .publish-copy {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .publish-actions .publish-copy:hover {
+      filter: brightness(1.05);
+      color: #fff;
+    }
+    .publish-actions .publish-copy-secondary {
+      background: #fff;
+      color: var(--accent);
+    }
+    .publish-actions .publish-direct {
+      background: #fff;
+      color: var(--text);
+    }
+    .publish-advanced {
+      width: 100%;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .publish-advanced summary {
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .publish-import-url {
+      width: 100%;
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .publish-actions .publish-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-decoration: none;
+    }
+    .copy-status { min-height: 18px; color: var(--accent); font-size: 13px; margin-top: 8px; }
+    .publish-note { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    @media (max-width: 820px) {
+      .preview-shell { margin: 0; border-radius: 0; padding: 28px; }
+      h1 { font-size: 34px; }
+      h2 { font-size: 25px; }
+    }
+    </style>
+</head>
+<body>
+  <main class="preview-shell">
+    <div class="preview-meta">
+      <span>Preview mode: <strong>medium</strong></span>
+      <span>docs/blog/powering-genie-with-open-source-voice-models.md</span>
+    </div>
+    <section class="publish-panel" aria-label="Publish controls">
+      <h2>Publish</h2>
+      <p>Use <strong>Open publish view</strong> for the most reliable Medium workflow: Select all → Copy → Open Medium → Paste. Or click <strong>Copy and open Medium</strong> after starting with <code>--serve --open</code>. Or use <strong>Import on Medium</strong> with the hosted preview URL below.</p>
+      <div class="publish-actions">
+        <button type="button" class="publish-copy" data-publish-url="https://medium.com/new-story">Copy and open Medium</button>
+<button type="button" class="publish-select">Select article (Cmd+C)</button>
+<button type="button" class="publish-copy publish-copy-secondary" data-publish-url="https://www.linkedin.com/article/new/">Copy and open LinkedIn</button>
+<a class="publish-link" href="powering-genie-with-open-source-voice-models-medium-publish-view.html" target="_blank" rel="noopener">Open publish view</a>
+<a class="publish-link" href="https://medium.com/p/import" target="_blank" rel="noopener">Import on Medium (from URL)</a><p class="publish-import-url">Paste this URL on Medium Import: <code>https://raw.githubusercontent.com/suneelsunkara-db/genie-voice-agent/main/docs/blog/previews/powering-genie-with-open-source-voice-models-medium.html</code></p>
+<details class="publish-advanced">
+<summary>Direct API publish (legacy Medium token only)</summary>
+<div class="publish-actions">
+<button type="button" class="publish-direct" data-publish-status="draft">Publish draft via API</button>
+<button type="button" class="publish-direct publish-direct-secondary" data-publish-status="public">Publish publicly via API</button>
+</div>
+<p>Medium stopped issuing new integration tokens in 2023. Skip this unless you already have one.</p>
+</details>
+      </div>
+      <div class="copy-status" id="copy-status"></div>
+    </section>
+    <img class="preview-hero" src="../assets/powering-genie-with-open-source-voice-models/header-thumbnail.svg" alt="Powering Genie with Open-Source Voice Models on Databricks" data-public-src="https://raw.githubusercontent.com/suneelsunkara-db/genie-voice-agent/main/docs/blog/assets/powering-genie-with-open-source-voice-models/header-thumbnail.svg" />
+    <article id="blog-preview">
+<h1>Powering Genie with Open-Source Voice Models on Databricks</h1>
+<p>In a <a href="https://medium.com/@suneel.sunkara/why-is-it-hard-to-build-voice-models-for-asian-languages-f2b5693492fe">previous post</a> we explored why building voice models for Asian languages is hard — the tonal systems, the script diversity, the lack of training data. This post is about what we did next: we took open-source models that handle those languages and wired them into <a href="https://docs.databricks.com/en/generative-ai/genie.html">Databricks Genie</a>, so a customer can call in their own language and get a grounded answer from <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a> data, spoken back to them.</p>
+<p>Two developments changed that. First, open-source speech models now cover broad language sets in a single checkpoint — <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR</a> recognizes ~30 languages and <a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> synthesizes ~30 — removing the need for a separate commercial service per language. Second, <strong>the entire voice stack runs on Databricks</strong>: the reasoning model (<a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next</a>) is available as a managed <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint, and we deployed the two speech models ourselves on <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a>. Everything sits next to Genie and the governed data, not in a third-party cloud.</p>
+<p>What that looks like in practice: a caller phones in and speaks Thai. The agent transcribes the request, looks up the account, offers to waive a late fee, applies the waiver once the customer agrees, and answers a follow-up analytical question by querying Genie — all spoken back in Thai. No language selection menu. No handoff to a different service.</p>
+<p>This post walks through how we assembled these models into a live conversation, how we deployed them on Databricks, and what we measured. The models are used as released — no fine-tuning.</p>
+<h2>Key Highlights</h2>
+<ol>
+<li><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR</a> recognizes speech in ~30 languages with automatic language detection; <a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> synthesizes the reply in the same language.</li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next</a> reasons over the transcript, calls tools to act on the account, and queries <a href="https://docs.databricks.com/en/generative-ai/genie.html">Databricks Genie</a> for grounded answers over governed data.</li>
+<li>End-of-turn is detected semantically — <a href="https://github.com/snakers4/silero-vad">Silero VAD</a> as a speech gate plus <a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a> as a completeness model — so the agent replies ~0.3s after the caller finishes, not on a fixed silence timer.</li>
+<li>The conversation runs over a <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API">WebSocket</a> API exposing three capabilities: speech-to-text, a full speech-to-speech agent loop, and text-to-speech.</li>
+<li>The two speech models are packaged as <a href="https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html">MLflow <code>ResponsesAgent</code></a> endpoints, registered in <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a>, and served on <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a>. The reasoning model is consumed as a managed <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint.</li>
+<li>Quality is measured end-to-end on public multilingual datasets (<a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a>, <a href="https://aclanthology.org/2025.findings-acl.569/">2M-Belebele</a>, <a href="https://arxiv.org/abs/2508.07295">CCFQA</a>) against baselines like <a href="https://huggingface.co/openai/whisper-large-v3">Whisper large-v3</a>.</li>
+</ol>
+<h2>Why Genie Needs a Voice</h2>
+<p><a href="https://docs.databricks.com/en/generative-ai/genie.html">Genie</a> already reasons over governed data — it can answer &quot;which accounts have overdue invoices above $5,000?&quot; by querying <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a> tables directly. But today, a customer can only reach that reasoning through a typed question in a browser. On a live phone call, the conversation needs more:</p>
+<ul>
+<li><strong>Multilingual recognition</strong> that preserves business entities — the invoice number, the dollar amount, the account name — in whatever language the caller speaks.</li>
+<li><strong>Grounded actions over real data.</strong> Genie answers the analytical questions (e.g., &quot;what&#x27;s my outstanding balance?&quot;). But the agent also needs to *act* — look up the account, waive a fee, confirm an action only once it actually succeeds — against governed operational data in <a href="https://www.databricks.com/product/lakebase">Lakebase</a>.</li>
+<li><strong>Sub-second turn-taking.</strong> A browser query can take seconds. A voice call cannot — the customer is waiting in silence. Every component must be fast enough to sustain a natural conversation.</li>
+<li><strong>Self-governed infrastructure.</strong> The enterprise must control the models and the data path — no audio leaving the platform, no third-party transcription service sitting between the customer and the governed tables.</li>
+</ul>
+<h2>How a Live Conversation Works</h2>
+<p><img src="../assets/powering-genie-with-open-source-voice-models/diagram-01.svg" alt="A live customer-to-agent voice conversation over the realtime API: audio streams both ways over a WebSocket; inside a turn, Qwen3-ASR listens and detects the language, Qwen3-Next reasons and calls tools, VoxCPM2 speaks the reply in the same language, and Qwen3-Next reaches Databricks Genie for grounded answers over governed data." data-public-src="https://raw.githubusercontent.com/suneelsunkara-db/genie-voice-agent/main/docs/blog/assets/powering-genie-with-open-source-voice-models/diagram-01.svg" /></p>
+<p>Audio streams both ways over a <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API">WebSocket</a>, one turn at a time. Here&#x27;s what happens in a single turn of the Thai billing call:</p>
+<ol>
+<li><strong>The customer speaks — and the agent knows when they&#x27;re done.</strong> Their audio streams into the API, where a lightweight speech gate (<a href="https://github.com/snakers4/silero-vad">Silero VAD</a>) confirms real speech and a semantic end-of-turn model (<a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a>) judges, at each pause, whether the sentence is actually complete. The turn finalizes about 0.3 seconds after the caller genuinely stops — not on a fixed timer — so the agent neither cuts them off mid-thought nor leaves them waiting.</li>
+<li><strong>Qwen3-ASR recognizes the speech.</strong> It detects that the language is Thai, transcribes the request, and returns the detected language tag so that every subsequent stage follows the caller&#x27;s language. The invoice number is preserved.</li>
+<li><strong>Qwen3-Next reasons and acts.</strong> It interprets the transcript and calls the appropriate tool: an account lookup for balances and overdue invoices, a billing action to waive a fee once the customer agrees, or a Genie query when the question is analytical and requires reasoning over governed data. The model is instructed to act rather than narrate — it performs the action and states the result in a single turn.</li>
+<li><strong>VoxCPM2 synthesizes the reply</strong> in Thai, streaming the audio in short segments so playback begins before the sentence has finished generating. If the customer speaks over the reply, barge-in stops playback.</li>
+</ol>
+<p>When the caller asks something the account lookup can&#x27;t answer — &quot;what&#x27;s my average monthly spend this year?&quot; — Qwen3-Next routes it to Genie, which queries the governed tables and returns a grounded answer. That answer gets spoken back in Thai.</p>
+<h2>The Realtime API</h2>
+<p>The conversation isn&#x27;t a single model call — it&#x27;s a session over a WebSocket, with three API capabilities you can use independently or together:</p>
+<ul>
+<li><strong><code>/v1/speech-to-text</code></strong> — stream audio in and receive the final transcript with the detected language.</li>
+<li><strong><code>/v1/speech-llm-toolassist-speech</code></strong> — the complete agent loop: audio in, transcript, reasoning with tools, and synthesized speech out. This capability carries the conversation.</li>
+<li><strong><code>/v1/text-to-speech</code></strong> — stream text in and receive synthesized speech out.</li>
+</ul>
+<p>The loop is turn-based, not a continuous duplex stream. A <a href="https://docs.databricks.com/en/machine-learning/model-serving/index.html">Databricks Model Serving</a> endpoint answers one request at a time and can stream its *output* back over <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events">server-sent events</a> (SSE), but it does not hold an open bidirectional audio socket the way a dedicated real-time service like <a href="https://deepgram.com">Deepgram</a> does.</p>
+<p>What that means in practice: recognition is not word-by-word. Once end-of-turn is detected, the caller&#x27;s full utterance is transcribed in a single request. The reply is generated in full, and only the synthesized audio streams back — in ~80ms segments over SSE — so playback begins before synthesis finishes. The API also supports barge-in (the caller can interrupt) and pre-generates a brief spoken acknowledgment so that slower, tool-heavy turns are covered by a response rather than silence.</p>
+<p>&quot;Real-time,&quot; here, means responsive turn-taking with low-latency streamed audio out — not incremental recognition or token streaming.</p>
+<h2>Choosing the Models</h2>
+<p>We needed three models — recognition, reasoning, and synthesis — and picked each for a different reason.</p>
+<p><strong>Recognition — <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B</a>.</strong> The hardest stage: it has to get invoice numbers, amounts, and names right in a language nobody told it to expect. Qwen3-ASR covers ~30 languages in one checkpoint and auto-detects the spoken language, handing back the tag so the rest of the turn follows the caller. The obvious alternative — a commercial recognizer per language — means a new service and uneven coverage for every market. One model, one endpoint, same behavior everywhere.</p>
+<p><strong>Synthesis — <a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a>.</strong> Speaks ~30 languages from a single model, clones a reference voice so the agent keeps one voice for the whole call, and streams audio in short segments so it starts talking almost immediately. One catch worth stating plainly: the languages the product *actually* supports are the intersection of what both models handle — a model card&#x27;s language count is not a conversation.</p>
+<p><strong>Reasoning — <a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next-80B</a>.</strong> Here latency and control outweighed raw quality. Across English, Thai, Indonesian, and Chinese it answered in ~1.17s at the median, with reliable tool-calling and the generation controls the pipeline needs; a stronger frontier model (<a href="https://www.anthropic.com/claude/sonnet">Claude Sonnet</a>) was roughly twice as slow and rejected those controls. Tool-calling isn&#x27;t optional — it&#x27;s how the agent looks up accounts, applies billing actions, and reaches Genie.</p>
+<h2>Serving on Databricks</h2>
+<p>All three models run on Databricks — but they got there two different ways. Use the managed path where it exists; deploy from open source where it doesn&#x27;t.</p>
+<p><strong>The managed path — Qwen3-Next.</strong> It is available as a <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint on Databricks, so we just point at it. Nothing to size, warm, or scale, and it&#x27;s billed per request.</p>
+<p><strong>The self-served path — Qwen3-ASR and VoxCPM2.</strong> Neither has a managed option, so we deployed them ourselves with a repeatable pipeline that runs on serverless compute:</p>
+<ol>
+<li><strong>Package.</strong> Download the open-source checkpoint from <a href="https://huggingface.co">Hugging Face</a> and wrap it in an <a href="https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html">MLflow <code>ResponsesAgent</code></a>. MLflow infers the fixed <code>agent/v1/responses</code> signature, so Model Serving treats it as an agent endpoint: audio rides inside the request over the Responses <code>custom_inputs</code>/<code>custom_outputs</code> channel, and synthesis streams its segments back over SSE.</li>
+<li><strong>Register.</strong> Log the model into <a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a> with pinned dependencies, then move a <code>candidate</code> alias onto the new version — so promoting a model is an alias flip, not a rebuild.</li>
+<li><strong>Deploy.</strong> Create, or update, a <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a> endpoint pointed at the aliased version, on <code>GPU_MEDIUM</code> with scale-to-zero disabled.</li>
+</ol>
+<p>One gotcha cost us real time: the GPU serving image ships a CUDA build the model wheels won&#x27;t load against, so we pin the whole <a href="https://pytorch.org">PyTorch</a> stack (<code>torch==2.7.1</code> on cu118, with a matching <code>torchvision</code>). Left unpinned, dependency resolution drifts to an incompatible wheel and inference fails at predict time with missing-operator errors — worth pinning from the start.</p>
+<p><strong>Keeping the GPUs warm.</strong> A fresh replica needs several inferences to reach steady-state latency, so scale-to-zero stays off and every endpoint is primed at startup. The first real customer turn lands fast, not slow.</p>
+<p><strong>One governance model.</strong> Whichever path a model takes, its endpoint is a Unity Catalog asset, so the voice layer inherits the same access control and lineage as <a href="https://docs.databricks.com/en/generative-ai/genie.html">Genie</a> and the tables it reads. Nothing new to secure.</p>
+<h2>Architecture at a Glance</h2>
+<p><img src="../assets/powering-genie-with-open-source-voice-models/lucid-architecture.svg" alt="Realtime voice architecture on Databricks: a browser client streams audio over a WebSocket to a FastAPI realtime API exposing three capabilities; on Databricks, Qwen3-ASR and VoxCPM2 are self-served on GPU Model Serving endpoints as MLflow ResponsesAgents while Qwen3-Next is a managed Foundation Model API endpoint; Qwen3-Next calls tools over governed data — Genie for grounded reasoning and Lakebase for account facts and billing writes." data-public-src="https://raw.githubusercontent.com/suneelsunkara-db/genie-voice-agent/main/docs/blog/assets/powering-genie-with-open-source-voice-models/lucid-architecture.svg" /></p>
+<p>The diagram shows the full data path. A browser streams audio over a <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API">WebSocket</a> to a <a href="https://fastapi.tiangolo.com">FastAPI</a> API. Inside each turn, the API drives the three models in sequence — transcribe, reason, synthesize — and streams audio back. The two speech models run on <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a> (packaged as <a href="https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html">MLflow <code>ResponsesAgent</code></a>); the reasoning model is a managed <a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model API</a> endpoint. When Qwen3-Next needs to act, it calls tools against <a href="https://www.databricks.com/product/lakebase">Lakebase</a> (account lookups, billing actions) or <a href="https://docs.databricks.com/en/generative-ai/genie.html">Genie</a> (analytical questions). Account changes go through the governed billing tool — the model proposes, the tool executes.</p>
+<h2>Benchmarks Across Languages</h2>
+<p>How well does the agent understand speech in each language? We tested on <a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a>, a standard multilingual speech dataset, across all 24 supported languages. Each bar shows the percentage the agent got right — taller bars mean better understanding.</p>
+<p><img src="../assets/powering-genie-with-open-source-voice-models/stt-benchmark.svg" alt="Speech recognition accuracy across 24 languages, tested on FLEURS. Each bar shows the percentage of words or characters correctly recognized. Japanese, English, Spanish, Malay, and Arabic perform best at 81 to 83 percent." data-public-src="https://raw.githubusercontent.com/suneelsunkara-db/genie-voice-agent/main/docs/blog/assets/powering-genie-with-open-source-voice-models/stt-benchmark.svg" /></p>
+<p>Japanese, English, Spanish, Malay, and Arabic lead at 81–83%. Thai, Indonesian, and Chinese — the languages that carry the live demo — all land above 67%, strong enough to hold a real billing conversation. The tail (Vietnamese, Filipino) is where the model needs improvement and represents future fine-tuning targets.</p>
+<p>Every model update triggers a fresh benchmark run, and results land in a Delta table — so we always know where each language stands before promoting a version to production.</p>
+<h2>Lessons Learned</h2>
+<p><strong>Detecting when the caller is actually done speaking was the hardest problem we solved.</strong> On a phone call, people pause mid-sentence to think, take a breath, or look up a number. A simple silence timer can&#x27;t tell the difference between a thinking pause and a finished sentence — it either cuts the caller off or leaves dead air while it waits for the timeout. We solved this with a two-stage pipeline that runs entirely on CPU (<a href="https://onnxruntime.ai"><code>onnxruntime</code></a>, no GPU cost): first, <a href="https://github.com/snakers4/silero-vad">Silero VAD</a> filters out background noise and confirms the caller is actually speaking; then <a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a> listens to the audio at every pause and decides whether the sentence is linguistically complete — does it end on a question, a statement, or is the caller still mid-thought? The result: turns finalize ~0.3 seconds after the caller genuinely stops. No premature cutoffs in our validation set. Languages that smart-turn doesn&#x27;t cover fall back to a calibrated pause rule, and if the models fail to load the system degrades gracefully to energy-based detection.</p>
+<p><strong>Perceived speed comes from the gaps between models, not from the models themselves.</strong> We spent weeks optimizing model inference — and it barely moved the needle on how fast the conversation *felt*. What actually mattered was everything that happens in the transitions: how quickly we detect end-of-turn (above), how soon the first audio byte reaches the caller&#x27;s speaker (streaming synthesis starts playing in ~80ms via <a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events">SSE</a> before the full sentence is generated), whether the caller hears silence or a brief spoken acknowledgment while the agent calls tools, and whether a cold <a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU endpoint</a> is already warmed before the first real turn arrives. These systems-level choices — barge-in, endpoint priming, streamed first-byte — shaped the user experience more than any single model latency number.</p>
+<h2>Future Direction</h2>
+<ul>
+<li><strong><a href="https://www.databricks.com/blog/introducing-genie-agent-mode">Genie Agent Mode</a></strong> — today the reasoning stage queries Genie once per turn, like asking a single question. With Agent Mode, Genie can investigate like an analyst — planning, testing hypotheses, and iterating across multiple queries to answer complex follow-ups without leaving the call. That&#x27;s the natural next step: the caller asks &quot;why did our churn spike in Q3?&quot; and Genie reasons through it live.</li>
+<li><strong>Telephony (8 kHz)</strong> — the current path is built for wideband browser audio (16 kHz+). Narrowband telephone audio degrades recognition quality and needs dedicated handling via a <a href="https://www.rfc-editor.org/rfc/rfc3261">SIP</a> gateway with acoustic echo cancellation.</li>
+<li><strong>Fine-tuning on domain audio</strong> — the benchmark chart shows where the base model is weak. Targeted <a href="https://arxiv.org/abs/2106.09685">LoRA</a> fine-tuning on enterprise call recordings for the tail languages is the next accuracy lever.</li>
+</ul>
+<h2>Sources and Further Reading</h2>
+<p><strong>Open-source models</strong></p>
+<ul>
+<li><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B</a> — multilingual speech recognition with automatic language detection</li>
+<li><a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> — multilingual, voice-cloning speech synthesis</li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next-80B-A3B-Instruct</a> — reasoning and tool-calling</li>
+<li><a href="https://github.com/snakers4/silero-vad">Silero VAD</a> — streaming voice-activity detection (speech gate)</li>
+<li><a href="https://huggingface.co/pipecat-ai/smart-turn-v3">smart-turn v3</a> — audio-native semantic end-of-turn detection</li>
+</ul>
+<p><strong>Benchmark datasets and baselines</strong></p>
+<ul>
+<li><a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a> — multilingual read-speech recognition</li>
+<li><a href="https://aclanthology.org/2025.findings-acl.569/">2M-Belebele</a> — spoken reading-comprehension (<a href="https://huggingface.co/datasets/facebook/2M-Belebele">dataset</a>)</li>
+<li><a href="https://arxiv.org/abs/2508.07295">CCFQA</a> — spoken factual question answering (<a href="https://huggingface.co/datasets/yxdu/ccfqa">dataset</a>)</li>
+<li><a href="https://huggingface.co/openai/whisper-large-v3">Whisper large-v3</a> — recognition baseline</li>
+<li><a href="https://huggingface.co/facebook/seamless-m4t-v2-large">SeamlessM4T</a> — recognition baseline (cascaded with Llama-3-70B)</li>
+</ul>
+<p><strong>Databricks</strong></p>
+<ul>
+<li><a href="https://docs.databricks.com/en/generative-ai/genie.html">AI/BI Genie</a></li>
+<li><a href="https://www.databricks.com/blog/introducing-genie-agent-mode">Introducing Genie Agent Mode</a></li>
+<li><a href="https://docs.databricks.com/en/generative-ai/agent-framework/index.html">Agent Framework</a></li>
+<li><a href="https://docs.databricks.com/en/machine-learning/model-serving/index.html">Model Serving</a></li>
+<li><a href="https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html">GPU Model Serving</a></li>
+<li><a href="https://docs.databricks.com/en/machine-learning/foundation-models/index.html">Foundation Model APIs</a></li>
+<li><a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Unity Catalog</a></li>
+<li><a href="https://www.databricks.com/product/lakebase">Lakebase</a> — low-latency operational store for account facts and billing writes</li>
+</ul>
+<p><strong>Platform and tooling</strong></p>
+<ul>
+<li><a href="https://mlflow.org">MLflow</a> — model packaging and the <code>ResponsesAgent</code> contract</li>
+<li><a href="https://fastapi.tiangolo.com">FastAPI</a> — the realtime WebSocket API</li>
+<li><a href="https://pytorch.org">PyTorch</a> — speech-model runtime on the GPU endpoints</li>
+<li><a href="https://onnxruntime.ai">ONNX Runtime</a> — CPU inference for the endpointing models</li>
+<li><a href="https://deepgram.com">Deepgram</a> — dedicated real-time streaming speech API (referenced for contrast)</li>
+</ul>
+    </article>
+  </main>
+
+  <template id="markdown-source"># Powering Genie with Open-Source Voice Models on Databricks
+
+In a [previous post](https://medium.com/@suneel.sunkara/why-is-it-hard-to-build-voice-models-for-asian-languages-f2b5693492fe) we explored why building voice models for Asian languages is hard — the tonal systems, the script diversity, the lack of training data. This post is about what we did next: we took open-source models that handle those languages and wired them into [Databricks Genie](https://docs.databricks.com/en/generative-ai/genie.html), so a customer can call in their own language and get a grounded answer from [Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html) data, spoken back to them.
+
+Two developments changed that. First, open-source speech models now cover broad language sets in a single checkpoint — [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) recognizes ~30 languages and [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) synthesizes ~30 — removing the need for a separate commercial service per language. Second, **the entire voice stack runs on Databricks**: the reasoning model ([Qwen3-Next](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct)) is available as a managed [Foundation Model API](https://docs.databricks.com/en/machine-learning/foundation-models/index.html) endpoint, and we deployed the two speech models ourselves on [GPU Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html). Everything sits next to Genie and the governed data, not in a third-party cloud.
+
+What that looks like in practice: a caller phones in and speaks Thai. The agent transcribes the request, looks up the account, offers to waive a late fee, applies the waiver once the customer agrees, and answers a follow-up analytical question by querying Genie — all spoken back in Thai. No language selection menu. No handoff to a different service.
+
+This post walks through how we assembled these models into a live conversation, how we deployed them on Databricks, and what we measured. The models are used as released — no fine-tuning.
+
+## Key Highlights
+
+1. [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) recognizes speech in ~30 languages with automatic language detection; [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) synthesizes the reply in the same language.
+2. [Qwen3-Next](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) reasons over the transcript, calls tools to act on the account, and queries [Databricks Genie](https://docs.databricks.com/en/generative-ai/genie.html) for grounded answers over governed data.
+3. End-of-turn is detected semantically — [Silero VAD](https://github.com/snakers4/silero-vad) as a speech gate plus [smart-turn v3](https://huggingface.co/pipecat-ai/smart-turn-v3) as a completeness model — so the agent replies ~0.3s after the caller finishes, not on a fixed silence timer.
+4. The conversation runs over a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) API exposing three capabilities: speech-to-text, a full speech-to-speech agent loop, and text-to-speech.
+5. The two speech models are packaged as [MLflow `ResponsesAgent`](https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html) endpoints, registered in [Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html), and served on [GPU Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html). The reasoning model is consumed as a managed [Foundation Model API](https://docs.databricks.com/en/machine-learning/foundation-models/index.html) endpoint.
+6. Quality is measured end-to-end on public multilingual datasets ([FLEURS](https://huggingface.co/datasets/google/fleurs), [2M-Belebele](https://aclanthology.org/2025.findings-acl.569/), [CCFQA](https://arxiv.org/abs/2508.07295)) against baselines like [Whisper large-v3](https://huggingface.co/openai/whisper-large-v3).
+
+## Why Genie Needs a Voice
+
+[Genie](https://docs.databricks.com/en/generative-ai/genie.html) already reasons over governed data — it can answer &quot;which accounts have overdue invoices above $5,000?&quot; by querying [Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html) tables directly. But today, a customer can only reach that reasoning through a typed question in a browser. On a live phone call, the conversation needs more:
+
+- **Multilingual recognition** that preserves business entities — the invoice number, the dollar amount, the account name — in whatever language the caller speaks.
+- **Grounded actions over real data.** Genie answers the analytical questions (e.g., &quot;what&#x27;s my outstanding balance?&quot;). But the agent also needs to *act* — look up the account, waive a fee, confirm an action only once it actually succeeds — against governed operational data in [Lakebase](https://www.databricks.com/product/lakebase).
+- **Sub-second turn-taking.** A browser query can take seconds. A voice call cannot — the customer is waiting in silence. Every component must be fast enough to sustain a natural conversation.
+- **Self-governed infrastructure.** The enterprise must control the models and the data path — no audio leaving the platform, no third-party transcription service sitting between the customer and the governed tables.
+
+## How a Live Conversation Works
+
+![A live customer-to-agent voice conversation over the realtime API: audio streams both ways over a WebSocket; inside a turn, Qwen3-ASR listens and detects the language, Qwen3-Next reasons and calls tools, VoxCPM2 speaks the reply in the same language, and Qwen3-Next reaches Databricks Genie for grounded answers over governed data.](assets/powering-genie-with-open-source-voice-models/diagram-01.svg)
+
+Audio streams both ways over a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API), one turn at a time. Here&#x27;s what happens in a single turn of the Thai billing call:
+
+1. **The customer speaks — and the agent knows when they&#x27;re done.** Their audio streams into the API, where a lightweight speech gate ([Silero VAD](https://github.com/snakers4/silero-vad)) confirms real speech and a semantic end-of-turn model ([smart-turn v3](https://huggingface.co/pipecat-ai/smart-turn-v3)) judges, at each pause, whether the sentence is actually complete. The turn finalizes about 0.3 seconds after the caller genuinely stops — not on a fixed timer — so the agent neither cuts them off mid-thought nor leaves them waiting.
+2. **Qwen3-ASR recognizes the speech.** It detects that the language is Thai, transcribes the request, and returns the detected language tag so that every subsequent stage follows the caller&#x27;s language. The invoice number is preserved.
+3. **Qwen3-Next reasons and acts.** It interprets the transcript and calls the appropriate tool: an account lookup for balances and overdue invoices, a billing action to waive a fee once the customer agrees, or a Genie query when the question is analytical and requires reasoning over governed data. The model is instructed to act rather than narrate — it performs the action and states the result in a single turn.
+4. **VoxCPM2 synthesizes the reply** in Thai, streaming the audio in short segments so playback begins before the sentence has finished generating. If the customer speaks over the reply, barge-in stops playback.
+
+When the caller asks something the account lookup can&#x27;t answer — &quot;what&#x27;s my average monthly spend this year?&quot; — Qwen3-Next routes it to Genie, which queries the governed tables and returns a grounded answer. That answer gets spoken back in Thai.
+
+## The Realtime API
+
+The conversation isn&#x27;t a single model call — it&#x27;s a session over a WebSocket, with three API capabilities you can use independently or together:
+
+- **`/v1/speech-to-text`** — stream audio in and receive the final transcript with the detected language.
+- **`/v1/speech-llm-toolassist-speech`** — the complete agent loop: audio in, transcript, reasoning with tools, and synthesized speech out. This capability carries the conversation.
+- **`/v1/text-to-speech`** — stream text in and receive synthesized speech out.
+
+The loop is turn-based, not a continuous duplex stream. A [Databricks Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/index.html) endpoint answers one request at a time and can stream its *output* back over [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) (SSE), but it does not hold an open bidirectional audio socket the way a dedicated real-time service like [Deepgram](https://deepgram.com) does.
+
+What that means in practice: recognition is not word-by-word. Once end-of-turn is detected, the caller&#x27;s full utterance is transcribed in a single request. The reply is generated in full, and only the synthesized audio streams back — in ~80ms segments over SSE — so playback begins before synthesis finishes. The API also supports barge-in (the caller can interrupt) and pre-generates a brief spoken acknowledgment so that slower, tool-heavy turns are covered by a response rather than silence.
+
+&quot;Real-time,&quot; here, means responsive turn-taking with low-latency streamed audio out — not incremental recognition or token streaming.
+
+## Choosing the Models
+
+We needed three models — recognition, reasoning, and synthesis — and picked each for a different reason.
+
+**Recognition — [Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B).** The hardest stage: it has to get invoice numbers, amounts, and names right in a language nobody told it to expect. Qwen3-ASR covers ~30 languages in one checkpoint and auto-detects the spoken language, handing back the tag so the rest of the turn follows the caller. The obvious alternative — a commercial recognizer per language — means a new service and uneven coverage for every market. One model, one endpoint, same behavior everywhere.
+
+**Synthesis — [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2).** Speaks ~30 languages from a single model, clones a reference voice so the agent keeps one voice for the whole call, and streams audio in short segments so it starts talking almost immediately. One catch worth stating plainly: the languages the product *actually* supports are the intersection of what both models handle — a model card&#x27;s language count is not a conversation.
+
+**Reasoning — [Qwen3-Next-80B](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct).** Here latency and control outweighed raw quality. Across English, Thai, Indonesian, and Chinese it answered in ~1.17s at the median, with reliable tool-calling and the generation controls the pipeline needs; a stronger frontier model ([Claude Sonnet](https://www.anthropic.com/claude/sonnet)) was roughly twice as slow and rejected those controls. Tool-calling isn&#x27;t optional — it&#x27;s how the agent looks up accounts, applies billing actions, and reaches Genie.
+
+## Serving on Databricks
+
+All three models run on Databricks — but they got there two different ways. Use the managed path where it exists; deploy from open source where it doesn&#x27;t.
+
+**The managed path — Qwen3-Next.** It is available as a [Foundation Model API](https://docs.databricks.com/en/machine-learning/foundation-models/index.html) endpoint on Databricks, so we just point at it. Nothing to size, warm, or scale, and it&#x27;s billed per request.
+
+**The self-served path — Qwen3-ASR and VoxCPM2.** Neither has a managed option, so we deployed them ourselves with a repeatable pipeline that runs on serverless compute:
+
+1. **Package.** Download the open-source checkpoint from [Hugging Face](https://huggingface.co) and wrap it in an [MLflow `ResponsesAgent`](https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html). MLflow infers the fixed `agent/v1/responses` signature, so Model Serving treats it as an agent endpoint: audio rides inside the request over the Responses `custom_inputs`/`custom_outputs` channel, and synthesis streams its segments back over SSE.
+2. **Register.** Log the model into [Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html) with pinned dependencies, then move a `candidate` alias onto the new version — so promoting a model is an alias flip, not a rebuild.
+3. **Deploy.** Create, or update, a [GPU Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html) endpoint pointed at the aliased version, on `GPU_MEDIUM` with scale-to-zero disabled.
+
+One gotcha cost us real time: the GPU serving image ships a CUDA build the model wheels won&#x27;t load against, so we pin the whole [PyTorch](https://pytorch.org) stack (`torch==2.7.1` on cu118, with a matching `torchvision`). Left unpinned, dependency resolution drifts to an incompatible wheel and inference fails at predict time with missing-operator errors — worth pinning from the start.
+
+**Keeping the GPUs warm.** A fresh replica needs several inferences to reach steady-state latency, so scale-to-zero stays off and every endpoint is primed at startup. The first real customer turn lands fast, not slow.
+
+**One governance model.** Whichever path a model takes, its endpoint is a Unity Catalog asset, so the voice layer inherits the same access control and lineage as [Genie](https://docs.databricks.com/en/generative-ai/genie.html) and the tables it reads. Nothing new to secure.
+
+## Architecture at a Glance
+
+![Realtime voice architecture on Databricks: a browser client streams audio over a WebSocket to a FastAPI realtime API exposing three capabilities; on Databricks, Qwen3-ASR and VoxCPM2 are self-served on GPU Model Serving endpoints as MLflow ResponsesAgents while Qwen3-Next is a managed Foundation Model API endpoint; Qwen3-Next calls tools over governed data — Genie for grounded reasoning and Lakebase for account facts and billing writes.](assets/powering-genie-with-open-source-voice-models/lucid-architecture.svg)
+
+The diagram shows the full data path. A browser streams audio over a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) to a [FastAPI](https://fastapi.tiangolo.com) API. Inside each turn, the API drives the three models in sequence — transcribe, reason, synthesize — and streams audio back. The two speech models run on [GPU Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html) (packaged as [MLflow `ResponsesAgent`](https://docs.databricks.com/en/generative-ai/agent-framework/author-agent.html)); the reasoning model is a managed [Foundation Model API](https://docs.databricks.com/en/machine-learning/foundation-models/index.html) endpoint. When Qwen3-Next needs to act, it calls tools against [Lakebase](https://www.databricks.com/product/lakebase) (account lookups, billing actions) or [Genie](https://docs.databricks.com/en/generative-ai/genie.html) (analytical questions). Account changes go through the governed billing tool — the model proposes, the tool executes.
+
+## Benchmarks Across Languages
+
+How well does the agent understand speech in each language? We tested on [FLEURS](https://huggingface.co/datasets/google/fleurs), a standard multilingual speech dataset, across all 24 supported languages. Each bar shows the percentage the agent got right — taller bars mean better understanding.
+
+![Speech recognition accuracy across 24 languages, tested on FLEURS. Each bar shows the percentage of words or characters correctly recognized. Japanese, English, Spanish, Malay, and Arabic perform best at 81 to 83 percent.](assets/powering-genie-with-open-source-voice-models/stt-benchmark.svg)
+
+Japanese, English, Spanish, Malay, and Arabic lead at 81–83%. Thai, Indonesian, and Chinese — the languages that carry the live demo — all land above 67%, strong enough to hold a real billing conversation. The tail (Vietnamese, Filipino) is where the model needs improvement and represents future fine-tuning targets.
+
+Every model update triggers a fresh benchmark run, and results land in a Delta table — so we always know where each language stands before promoting a version to production.
+
+## Lessons Learned
+
+**Detecting when the caller is actually done speaking was the hardest problem we solved.** On a phone call, people pause mid-sentence to think, take a breath, or look up a number. A simple silence timer can&#x27;t tell the difference between a thinking pause and a finished sentence — it either cuts the caller off or leaves dead air while it waits for the timeout. We solved this with a two-stage pipeline that runs entirely on CPU ([`onnxruntime`](https://onnxruntime.ai), no GPU cost): first, [Silero VAD](https://github.com/snakers4/silero-vad) filters out background noise and confirms the caller is actually speaking; then [smart-turn v3](https://huggingface.co/pipecat-ai/smart-turn-v3) listens to the audio at every pause and decides whether the sentence is linguistically complete — does it end on a question, a statement, or is the caller still mid-thought? The result: turns finalize ~0.3 seconds after the caller genuinely stops. No premature cutoffs in our validation set. Languages that smart-turn doesn&#x27;t cover fall back to a calibrated pause rule, and if the models fail to load the system degrades gracefully to energy-based detection.
+
+**Perceived speed comes from the gaps between models, not from the models themselves.** We spent weeks optimizing model inference — and it barely moved the needle on how fast the conversation *felt*. What actually mattered was everything that happens in the transitions: how quickly we detect end-of-turn (above), how soon the first audio byte reaches the caller&#x27;s speaker (streaming synthesis starts playing in ~80ms via [SSE](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) before the full sentence is generated), whether the caller hears silence or a brief spoken acknowledgment while the agent calls tools, and whether a cold [GPU endpoint](https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html) is already warmed before the first real turn arrives. These systems-level choices — barge-in, endpoint priming, streamed first-byte — shaped the user experience more than any single model latency number.
+
+## Future Direction
+
+- **[Genie Agent Mode](https://www.databricks.com/blog/introducing-genie-agent-mode)** — today the reasoning stage queries Genie once per turn, like asking a single question. With Agent Mode, Genie can investigate like an analyst — planning, testing hypotheses, and iterating across multiple queries to answer complex follow-ups without leaving the call. That&#x27;s the natural next step: the caller asks &quot;why did our churn spike in Q3?&quot; and Genie reasons through it live.
+- **Telephony (8 kHz)** — the current path is built for wideband browser audio (16 kHz+). Narrowband telephone audio degrades recognition quality and needs dedicated handling via a [SIP](https://www.rfc-editor.org/rfc/rfc3261) gateway with acoustic echo cancellation.
+- **Fine-tuning on domain audio** — the benchmark chart shows where the base model is weak. Targeted [LoRA](https://arxiv.org/abs/2106.09685) fine-tuning on enterprise call recordings for the tail languages is the next accuracy lever.
+
+
+## Sources and Further Reading
+
+**Open-source models**
+
+- [Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) — multilingual speech recognition with automatic language detection
+- [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) — multilingual, voice-cloning speech synthesis
+- [Qwen3-Next-80B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) — reasoning and tool-calling
+- [Silero VAD](https://github.com/snakers4/silero-vad) — streaming voice-activity detection (speech gate)
+- [smart-turn v3](https://huggingface.co/pipecat-ai/smart-turn-v3) — audio-native semantic end-of-turn detection
+
+**Benchmark datasets and baselines**
+
+- [FLEURS](https://huggingface.co/datasets/google/fleurs) — multilingual read-speech recognition
+- [2M-Belebele](https://aclanthology.org/2025.findings-acl.569/) — spoken reading-comprehension ([dataset](https://huggingface.co/datasets/facebook/2M-Belebele))
+- [CCFQA](https://arxiv.org/abs/2508.07295) — spoken factual question answering ([dataset](https://huggingface.co/datasets/yxdu/ccfqa))
+- [Whisper large-v3](https://huggingface.co/openai/whisper-large-v3) — recognition baseline
+- [SeamlessM4T](https://huggingface.co/facebook/seamless-m4t-v2-large) — recognition baseline (cascaded with Llama-3-70B)
+
+**Databricks**
+
+- [AI/BI Genie](https://docs.databricks.com/en/generative-ai/genie.html)
+- [Introducing Genie Agent Mode](https://www.databricks.com/blog/introducing-genie-agent-mode)
+- [Agent Framework](https://docs.databricks.com/en/generative-ai/agent-framework/index.html)
+- [Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/index.html)
+- [GPU Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/deploy-custom-model.html)
+- [Foundation Model APIs](https://docs.databricks.com/en/machine-learning/foundation-models/index.html)
+- [Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html)
+- [Lakebase](https://www.databricks.com/product/lakebase) — low-latency operational store for account facts and billing writes
+
+**Platform and tooling**
+
+- [MLflow](https://mlflow.org) — model packaging and the `ResponsesAgent` contract
+- [FastAPI](https://fastapi.tiangolo.com) — the realtime WebSocket API
+- [PyTorch](https://pytorch.org) — speech-model runtime on the GPU endpoints
+- [ONNX Runtime](https://onnxruntime.ai) — CPU inference for the endpointing models
+- [Deepgram](https://deepgram.com) — dedicated real-time streaming speech API (referenced for contrast)
+</template>
+  <script>
+    const article = document.getElementById("blog-preview");
+    const status = document.getElementById("copy-status");
+    const PUBLISH_API = "http://127.0.0.1:8765/api/publish/medium";
+    const ARTICLE_TITLE = "Powering Genie with Open-Source Voice Models on Databricks";
+
+    function preparePublishImages(root) {
+      root.querySelectorAll("img").forEach((image) => {
+        if (image.dataset.publicSrc) {
+          image.setAttribute("src", image.dataset.publicSrc);
+          image.removeAttribute("data-public-src");
+        } else if (image.dataset.copySrc) {
+          image.setAttribute("src", image.dataset.copySrc);
+        }
+      });
+    }
+
+    function flattenTablesForPublish(root) {
+      root.querySelectorAll("table").forEach((table) => {
+        const rows = [];
+        table.querySelectorAll("thead tr").forEach((row) => rows.push(row.cloneNode(true)));
+        table.querySelectorAll("tbody tr").forEach((row) => rows.push(row.cloneNode(true)));
+        if (!rows.length) {
+          table.querySelectorAll("tr").forEach((row) => rows.push(row.cloneNode(true)));
+        }
+        const body = document.createElement("tbody");
+        rows.forEach((row) => body.appendChild(row));
+        table.innerHTML = "";
+        table.appendChild(body);
+      });
+    }
+
+    function cloneNodeWithCopySrc(node) {
+      const clone = node.cloneNode(true);
+      if (node.dataset && node.dataset.copySrc) {
+        clone.setAttribute("src", node.dataset.copySrc);
+      }
+      return clone;
+    }
+
+    function buildPublishContentSync() {
+      const root = document.createElement("div");
+      const hero = document.querySelector(".preview-hero");
+      if (hero) {
+        root.appendChild(cloneNodeWithCopySrc(hero));
+      }
+      const articleClone = article.cloneNode(true);
+      articleClone.querySelectorAll("img").forEach((cloneImg, index) => {
+        const liveImg = article.querySelectorAll("img")[index];
+        if (liveImg && liveImg.dataset.copySrc) {
+          cloneImg.setAttribute("src", liveImg.dataset.copySrc);
+        }
+      });
+      root.appendChild(articleClone);
+      preparePublishImages(root);
+      flattenTablesForPublish(root);
+      root.querySelectorAll(".mermaid, [data-mermaid-source]").forEach((node) => {
+        node.remove();
+      });
+      return { html: root.innerHTML, text: root.innerText };
+    }
+
+    function cacheCopyImageSource(img) {
+      if (img.dataset.copySrc || !img.complete || !img.naturalWidth) {
+        return;
+      }
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          img.dataset.copySrc = img.currentSrc || img.src;
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        img.dataset.copySrc = canvas.toDataURL("image/png");
+      } catch (err) {
+        img.dataset.copySrc = img.currentSrc || img.src;
+      }
+    }
+
+    function cacheAllCopyImageSources() {
+      const hero = document.querySelector(".preview-hero");
+      if (hero) {
+        cacheCopyImageSource(hero);
+      }
+      article.querySelectorAll("img").forEach((img) => {
+        if (!img.complete) {
+          img.addEventListener("load", () => cacheCopyImageSource(img), { once: true });
+          return;
+        }
+        cacheCopyImageSource(img);
+      });
+    }
+
+    function wrapClipboardHtml(html) {
+      return `<!DOCTYPE html><html><body><!--StartFragment-->${html}<!--EndFragment--></body></html>`;
+    }
+
+    function copyRichHtmlSync(html, plain) {
+      const wrapped = wrapClipboardHtml(html);
+
+      function onCopy(event) {
+        event.clipboardData.setData("text/html", wrapped);
+        event.clipboardData.setData("text/plain", plain);
+        event.preventDefault();
+      }
+
+      document.addEventListener("copy", onCopy, { once: true });
+      const container = document.createElement("div");
+      container.contentEditable = "true";
+      container.innerHTML = html;
+      container.style.position = "fixed";
+      container.style.left = "0";
+      container.style.top = "0";
+      container.style.width = "1px";
+      container.style.height = "1px";
+      container.style.opacity = "0.01";
+      document.body.appendChild(container);
+      container.focus();
+      const range = document.createRange();
+      range.selectNodeContents(container);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const copied = document.execCommand("copy");
+      selection.removeAllRanges();
+      container.remove();
+      return copied;
+    }
+
+    function selectArticleForManualCopy() {
+      const hero = document.querySelector(".preview-hero");
+      const range = document.createRange();
+      if (hero) {
+        range.setStartBefore(hero);
+      } else {
+        range.setStartBefore(article);
+      }
+      range.setEndAfter(article);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      status.textContent = "Article selected. Press Cmd+C, open Medium, then Cmd+V.";
+    }
+
+    function copyAndOpen(url) {
+      if (location.protocol === "file:") {
+        status.textContent = "Open with --serve --open, not file://.";
+        return;
+      }
+
+      const publishContent = buildPublishContentSync();
+      status.textContent = "Copying...";
+
+      const finish = (copied) => {
+        if (!copied) {
+          selectArticleForManualCopy();
+          status.textContent = "Auto-copy failed. Article selected — press Cmd+C, then paste in Medium.";
+        } else {
+          status.textContent = "Copied. Paste in Medium with Cmd+V or Ctrl+V.";
+        }
+        setTimeout(() => window.open(url, "_blank", "noopener"), 120);
+      };
+
+      if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
+        const wrapped = wrapClipboardHtml(publishContent.html);
+        navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([wrapped], { type: "text/html" }),
+            "text/plain": new Blob([publishContent.text], { type: "text/plain" }),
+          }),
+        ]).then(() => finish(true)).catch(() => finish(copyRichHtmlSync(publishContent.html, publishContent.text)));
+        return;
+      }
+
+      finish(copyRichHtmlSync(publishContent.html, publishContent.text));
+    }
+
+    window.addEventListener("load", () => {
+      cacheAllCopyImageSources();
+      setTimeout(cacheAllCopyImageSources, 300);
+      setTimeout(cacheAllCopyImageSources, 1200);
+    });
+
+    document.querySelectorAll(".publish-copy").forEach((button) => {
+      button.addEventListener("click", () => {
+        copyAndOpen(button.dataset.publishUrl);
+      });
+    });
+
+    document.querySelectorAll(".publish-select").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectArticleForManualCopy();
+      });
+    });
+
+    async function publishToMedium(publishStatus) {
+      if (location.protocol === "file:") {
+        status.textContent = "Start the preview server: python3 scripts/preview_blog.py <blog.md> --serve";
+        return;
+      }
+
+      let token = localStorage.getItem("medium_integration_token");
+      if (!token) {
+        token = window.prompt(
+          "Legacy Medium integration token (only if you already have one):"
+        );
+        if (!token) {
+          status.textContent = "API publish cancelled. Use Copy and open Medium instead.";
+          return;
+        }
+        localStorage.setItem("medium_integration_token", token.trim());
+      }
+
+      status.textContent = publishStatus === "public" ? "Publishing publicly..." : "Publishing draft...";
+      const publishContent = buildPublishContentSync();
+
+      try {
+        const response = await fetch(PUBLISH_API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: token.trim(),
+            title: ARTICLE_TITLE,
+            content: publishContent.html,
+            publishStatus: publishStatus,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || "Medium publish failed.");
+        }
+        status.textContent = publishStatus === "public"
+          ? "Published on Medium."
+          : "Draft published on Medium.";
+        if (payload.url) {
+          window.open(payload.url, "_blank", "noopener");
+        }
+      } catch (err) {
+        status.textContent = err.message || "Medium publish failed.";
+      }
+    }
+
+    document.querySelectorAll(".publish-direct").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await publishToMedium(button.dataset.publishStatus || "draft");
+      });
+    });
+  </script>
+  <script type="module">
+    try {
+      const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+      mermaid.initialize({ startOnLoad: false, theme: "default" });
+      await mermaid.run({ nodes: article.querySelectorAll(".mermaid") });
+    } catch (err) {
+      console.warn("Mermaid rendering skipped.", err);
+    }
+  </script>
+</body>
+</html>

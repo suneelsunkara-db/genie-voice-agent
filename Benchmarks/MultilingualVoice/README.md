@@ -1,30 +1,51 @@
 # Multilingual Voice Benchmarks
 
-End-to-end benchmarks for the Genie realtime voice API. Every score is measured
-**on the API as a whole** (STT → LLM → TTS over the WebSocket), never on the
-individual models inside it. Native audio is streamed in; the API's transcript,
-reply text, and synthesized speech are scored.
+End-to-end benchmarks for the Genie realtime voice API. Scores are measured
+**on the deployed API** (over the WebSocket), never on the individual models in
+isolation. Native FLEURS audio is streamed in and the API's transcript is scored
+against the reference — this sweep focuses on **speech-to-text accuracy**.
 
 ## What it measures
 
 | Dataset | Source | What it tests | Languages | Metric |
 |---|---|---|---|---|
-| **FLEURS** | `google/fleurs` | STT accuracy on read speech **+** TTS round-trip intelligibility | 24 (all supported) | WER / CER (↓) |
-| **2M-Belebele** | `facebook/2M-Belebele` | Spoken reading-comprehension MCQ | 74+ (our 24 subset) | Accuracy (↑) |
-| **CCFQA** | `yxdu/ccfqa` | Spoken factual QA | 7 (zh/en/fr/ja/ko/ru/es) | Match / GPT-judge acc (↑) |
+| **FLEURS** | `google/fleurs` | STT accuracy on read speech | 24 (all supported) | WER / CER (↓) |
 
-**TTS quality** is captured two ways: latency (client time-to-first-audio and
-the API's own `tts_first_ms`) and **round-trip intelligibility** — the API's
-synthesized speech is fed back through its own STT and the re-heard text is
-compared to what it meant to say (`tts_roundtrip_wer`/`_cer`).
+FLEURS is a **read-speech ASR corpus**, so it is used to score **speech-to-text
+only**. TTS is intentionally **not** scored here: round-tripping ASR audio
+through TTS and re-transcribing it conflates STT and TTS error (the round-trip
+number is bounded by the STT judge, not the TTS quality). TTS quality needs its
+own benchmark and is out of scope for this sweep.
 
-> **Note on Belebele:** the dataset ships the passage as audio but the question
-> and 4 options as text only. So the full passage AUDIO is streamed through STT
-> and the exact question + options are handed to the LLM as `session.start`
-> `context` (no self-TTS of text we already have). The turn carries per-session
-> `max_turn_seconds` / `vad_silence_ms` overrides so the long passage isn't
-> finalized mid-stream; it ends on `audio.end`. `--max-audio-seconds` (default
-> 120s) is only a safety ceiling. FLEURS and CCFQA fit a normal turn.
+> **Deprecated:** the earlier LLM-QA datasets (**2M-Belebele**, **CCFQA**) are no
+> longer part of the comparison. They exercised the contact-center billing-agent
+> LLM persona rather than STT/TTS, and covered far fewer of our languages. The
+> dataset adapters still exist in `run_benchmark.py` for reference, but the
+> references, UI, and default `eval.sh` flow are FLEURS-STT only.
+
+## STT model comparison
+
+`eval.sh` runs two Databricks jobs **in sequence** so we get a like-for-like
+comparison on the same audio:
+
+1. **Main job** — measures the Genie realtime STT API on FLEURS (WER/CER per
+   language) and stages the FLEURS audio on the UC Volume.
+2. **Vendor comparison job** — replays the **same staged FLEURS audio** through a
+   vendor STT (Deepgram Nova) and writes it under a distinct dataset id
+   (`fleurs_deepgram_stt`) so it never collides with the Genie run. It runs
+   **after** the main job (which stages the audio) and only for the `fleurs`/`all`
+   sweep; `eval.sh` waits on the main job when vendors are enabled.
+
+**Published references** (Whisper large-v2/v3, MMS-1B / 1B-LSAH, SeamlessM4T
+Medium/Large/Large-v2) live in `realtime_api/benchmark_references.py` and render
+in the UI as `published` rows next to Genie's `measured` bar. Vendor datasets
+(`fleurs_deepgram_stt`) are measured and stored in Delta but **hidden from the
+UI** (`HIDDEN_DATASETS` in `frontend/src/components/VoiceBenchmarksPage.tsx`).
+
+| Vendor flag | Default | Meaning |
+|---|---|---|
+| `--vendors` | `deepgram` | comma-separated vendor STT tracks to run |
+| `--no-vendors` | — | skip the vendor comparison job entirely |
 
 ## Quick start
 
@@ -34,12 +55,15 @@ cd Benchmarks/MultilingualVoice
 # Offline smoke test (writes to ./results/ only):
 ./eval.sh --fixture
 
-# Submit serverless Databricks job (default):
+# Submit serverless Databricks job(s) (default): Genie STT + Deepgram vendor STT
 ./eval.sh
 
 # Subsets:
 ./eval.sh --dataset fleurs --languages en,ja,zh,ar --limit 40
-./eval.sh --wait
+./eval.sh --wait            # also block on the vendor job
+
+# Genie STT only (skip the Deepgram vendor comparison):
+./eval.sh --no-vendors
 
 # Local dev only (requires workspace IP allowlist for serving):
 ./eval.sh --local --languages en --limit 5
@@ -91,7 +115,7 @@ source .venv/bin/activate
 python run_benchmark.py \
   --transport ws \
   --api-host https://…databricksapps.com --api-prefix realtime \
-  --dataset fleurs --languages en,ja --limit 20 --tts-roundtrip
+  --dataset fleurs --languages en,ja --limit 20
 ```
 
 Use `--transport inprocess` to drive the API in-process via FastAPI TestClient
@@ -100,11 +124,14 @@ Use `--transport inprocess` to drive the API in-process via FastAPI TestClient
 ## Files
 
 - `run_benchmark.py` — dataset adapters, turn loop, scoring, summary writer.
-- `realtime_client.py` — WebSocket + in-process clients, `TurnResult`, TTS round-trip.
+- `realtime_client.py` — WebSocket + in-process clients, `TurnResult`.
 - `evaluators.py` — pure-Python WER/CER, MCQ extraction, QA matching (no torch/jiwer).
 - `languages.py` — 24-language maps to FLEURS / FLORES-200 / CCFQA codes.
+- `vendor_fleurs_benchmark.py` — vendor STT runner (Deepgram) over the staged FLEURS audio.
 - `fixtures/` — offline sample rows for `--fixture`.
-- `eval.sh` — submits the serverless Databricks job (or `--local` / `--fixture`).
-- `scripts/ml_asr/submit_multilingual_voice_benchmark_job.py` — job launcher used by `eval.sh`.
+- `eval.sh` — submits the Genie STT job then the Deepgram vendor STT job in sequence (or `--local` / `--fixture`).
+- `scripts/ml_asr/submit_multilingual_voice_benchmark_job.py` — main Genie STT job launcher used by `eval.sh`.
+- `scripts/ml_asr/submit_vendor_fleurs_benchmark_job.py` — Deepgram vendor STT job launcher used by `eval.sh`.
 - `paths.py` — resolves UC Volume output path + app API host from config.
 - `results/` — fixture-only scratch dir (not used for live runs).
+- Published baselines: `realtime_api/benchmark_references.py` (FLEURS WER references shown in the UI).
