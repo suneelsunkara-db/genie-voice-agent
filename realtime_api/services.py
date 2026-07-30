@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterator, Protocol
 
 from .contracts import AudioChunk, AudioResponse
@@ -47,13 +47,23 @@ class LanguageModel(Protocol):
 
 class TextToSpeech(Protocol):
     def synthesize(
-        self, text: str, *, language: str, reference_audio_b64: str | None = None
+        self,
+        text: str,
+        *,
+        language: str,
+        reference_audio_b64: str | None = None,
+        voice_id: str | None = None,
     ) -> AudioResponse: ...
 
 
 class StreamingTextToSpeech(TextToSpeech, Protocol):
     def synthesize_stream(
-        self, text: str, *, language: str, reference_audio_b64: str | None = None
+        self,
+        text: str,
+        *,
+        language: str,
+        reference_audio_b64: str | None = None,
+        voice_id: str | None = None,
     ) -> Iterator[AudioChunk]: ...
 
 
@@ -127,6 +137,12 @@ class DatabricksServing:
     tts_inference_timesteps: int = 8
     tts_cfg_value: float = 2.0
     stt_warmup_passes: int = 3
+    # Voice ids whose reference clip this process has already uploaded. A session
+    # reference is ~500KB base64, and re-sending it every turn cost ~1.7s of
+    # time-to-first-audio (pure upload; the endpoint materialises it in ~25ms), so
+    # the clip goes up once and later turns identify it by id alone. Runtime cache,
+    # hence excluded from equality/repr.
+    _voice_ids_sent: set[str] = field(default_factory=set, compare=False, repr=False)
 
     @classmethod
     def from_sdk(
@@ -423,34 +439,84 @@ class DatabricksServing:
             return choices[0].get("message") or {}
         return {}
 
-    def synthesize(
-        self, text: str, *, language: str, reference_audio_b64: str | None = None
-    ) -> AudioResponse:
+    def _tts_inputs(
+        self,
+        text: str,
+        language: str,
+        reference_audio_b64: str | None,
+        voice_id: str | None,
+        *,
+        send_reference: bool,
+    ) -> dict[str, Any]:
         custom_inputs: dict[str, Any] = {
             "text": text,
             "language": language,
             "inference_timesteps": self.tts_inference_timesteps,
             "cfg_value": self.tts_cfg_value,
         }
-        if reference_audio_b64:
+        if voice_id:
+            custom_inputs["voice_id"] = voice_id
+        if reference_audio_b64 and send_reference:
             custom_inputs["reference_audio_b64"] = reference_audio_b64
-        response = self._predict(
-            self.tts_endpoint,
-            text=text,
-            custom_inputs=custom_inputs,
-        )
-        custom = _custom_outputs(response)
-        encoded = str(custom.get("audio_b64") or "")
-        if not encoded:
-            raise RuntimeError("TTS endpoint returned no audio")
-        return AudioResponse(
-            audio=base64.b64decode(encoded),
-            mime_type=str(custom.get("mime_type") or "audio/wav"),
-            sample_rate_hz=int(custom.get("sample_rate_hz") or 24_000),
-        )
+        return custom_inputs
+
+    def _send_reference(self, reference_audio_b64: str | None, voice_id: str | None) -> bool:
+        """Whether this request must carry the reference clip itself.
+
+        Only the first cloned turn of a voice uploads the clip; later turns name
+        the endpoint's cached copy via ``voice_id``. Without a ``voice_id`` there
+        is nothing to cache against, so the clip goes every time (old behaviour).
+        """
+        if not reference_audio_b64:
+            return False
+        if not voice_id:
+            return True
+        return voice_id not in self._voice_ids_sent
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        language: str,
+        reference_audio_b64: str | None = None,
+        voice_id: str | None = None,
+    ) -> AudioResponse:
+        send_reference = self._send_reference(reference_audio_b64, voice_id)
+        while True:
+            response = self._predict(
+                self.tts_endpoint,
+                text=text,
+                custom_inputs=self._tts_inputs(
+                    text, language, reference_audio_b64, voice_id, send_reference=send_reference
+                ),
+            )
+            custom = _custom_outputs(response)
+            if send_reference and voice_id:
+                self._voice_ids_sent.add(voice_id)
+            if custom.get("voice_cache_miss") and not send_reference and reference_audio_b64:
+                # This replica no longer holds the session voice (fresh container or
+                # a different replica). Resend the clip and retry the same turn so
+                # the caller never hears a turn rendered in another voice.
+                if voice_id:
+                    self._voice_ids_sent.discard(voice_id)
+                send_reference = True
+                continue
+            encoded = str(custom.get("audio_b64") or "")
+            if not encoded:
+                raise RuntimeError("TTS endpoint returned no audio")
+            return AudioResponse(
+                audio=base64.b64decode(encoded),
+                mime_type=str(custom.get("mime_type") or "audio/wav"),
+                sample_rate_hz=int(custom.get("sample_rate_hz") or 24_000),
+            )
 
     def synthesize_stream(
-        self, text: str, *, language: str, reference_audio_b64: str | None = None
+        self,
+        text: str,
+        *,
+        language: str,
+        reference_audio_b64: str | None = None,
+        voice_id: str | None = None,
     ) -> Iterator[AudioChunk]:
         """Yield PCM audio chunks as the TTS agent generates them.
 
@@ -460,21 +526,56 @@ class DatabricksServing:
         client start playback long before the sentence finishes generating.
 
         ``reference_audio_b64`` (a base64 WAV) pins the voice: the endpoint clones
-        its timbre so every turn in a session keeps the same voice.
+        its timbre so every turn in a session keeps the same voice. Passing a
+        ``voice_id`` uploads that clip only once -- later turns send the id alone,
+        which is what keeps the clip off the critical path.
+
+        A ``voice_cache_miss`` means the replica cannot resolve the id and produced
+        no audio, so the clip is resent and the turn retried once. The retry happens
+        before any chunk is emitted, so it can never duplicate or split audio.
         """
-        custom_inputs: dict[str, Any] = {
-            "text": text,
-            "language": language,
-            "inference_timesteps": self.tts_inference_timesteps,
-            "cfg_value": self.tts_cfg_value,
-        }
-        if reference_audio_b64:
-            custom_inputs["reference_audio_b64"] = reference_audio_b64
+        send_reference = self._send_reference(reference_audio_b64, voice_id)
+        while True:
+            status: dict[str, Any] = {}
+            emitted = 0
+            for chunk in self._synthesize_stream_once(
+                text,
+                language=language,
+                reference_audio_b64=reference_audio_b64,
+                voice_id=voice_id,
+                send_reference=send_reference,
+                status=status,
+            ):
+                emitted += 1
+                yield chunk
+            if send_reference and voice_id:
+                self._voice_ids_sent.add(voice_id)
+            if not (status.get("voice_cache_miss") and emitted == 0 and not send_reference):
+                return
+            if voice_id:
+                self._voice_ids_sent.discard(voice_id)
+            if not reference_audio_b64:
+                return
+            send_reference = True
+
+    def _synthesize_stream_once(
+        self,
+        text: str,
+        *,
+        language: str,
+        reference_audio_b64: str | None,
+        voice_id: str | None,
+        send_reference: bool,
+        status: dict[str, Any],
+    ) -> Iterator[AudioChunk]:
+        """One streaming synthesis attempt; reports stream-level flags via ``status``."""
         stream = self.client.predict_stream(
             endpoint=self.tts_endpoint,
             inputs={
                 "input": [{"role": "user", "content": text}],
-                "custom_inputs": custom_inputs,
+                "custom_inputs": self._tts_inputs(
+                    text, language, reference_audio_b64, voice_id, send_reference=send_reference
+                ),
             },
         )
         # One-chunk lookahead so the server's final timing (gen_ms/ttfb_ms), which
@@ -497,6 +598,8 @@ class DatabricksServing:
             elif custom.get("final"):
                 server_ttfb_ms = _as_float(custom.get("ttfb_ms"))
                 server_gen_ms = _as_float(custom.get("gen_ms"))
+                if custom.get("voice_cache_miss"):
+                    status["voice_cache_miss"] = True
         if pending is not None:
             yield AudioChunk(
                 pcm=pending.pcm,

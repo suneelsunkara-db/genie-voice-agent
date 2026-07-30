@@ -8,13 +8,25 @@ audio is returned as base64 WAV in ``custom_outputs``:
       {
         "input": [{"role": "user", "content": "Hello there"}],
         "custom_inputs": {"language": "en-US",
-                          "reference_audio_b64": "<optional base64 wav>"}
+                          "reference_audio_b64": "<optional base64 wav>",
+                          "voice_id": "<optional stable id for that clip>"}
       }
     response.custom_outputs:
       {"audio_b64": "<base64 wav>", "mime_type": "audio/wav", "sample_rate_hz": 48000}
 
 ``reference_audio_b64`` (optional) is a base64 WAV whose voice VoxCPM2 clones, so
 a caller can keep one consistent voice across many requests (e.g. a whole call).
+
+Pair it with ``voice_id`` to avoid re-uploading that clip on every turn. A session
+reference is ~500KB once base64-encoded, and re-sending it per turn cost ~1.7s of
+time-to-first-audio -- essentially all upload time, since materialising the clip
+server-side takes ~25ms. With a ``voice_id`` the caller sends the clip once; later
+turns send the id alone and the clip is served from an in-process LRU cache.
+
+If a ``voice_id`` arrives that this replica has not cached (fresh container, or a
+different replica) and no clip accompanies it, synthesis is NOT attempted in some
+other voice: the response carries ``voice_cache_miss: True`` and no audio, and the
+client retries the same turn with the clip attached.
 
 Inference API reference (voxcpm package, VoxCPM2):
     model = VoxCPM.from_pretrained(dir, load_denoiser=False)
@@ -31,8 +43,10 @@ import base64
 import io
 import os
 import tempfile
+import threading
 import time
 import wave
+from collections import OrderedDict
 from typing import Any
 
 
@@ -52,6 +66,11 @@ _WARMUP_TEXTS = (
     "This is a normal length sentence used to warm the speech model.",
 )
 
+# Concurrent live calls whose voice references stay resident. Each entry is one
+# small WAV on local disk, so this is cheap; it only needs to cover the calls in
+# flight, since a miss is recoverable (the client resends the clip).
+_VOICE_CACHE_MAX = 32
+
 
 class RealtimeTTSAgent(ResponsesAgent):
     """OSS VoxCPM2 served through the Responses Agent contract."""
@@ -66,6 +85,28 @@ class RealtimeTTSAgent(ResponsesAgent):
         # 6 diffusion steps: profiled sweet spot (full multilingual quality incl.
         # Thai at the lowest safe latency). Overridable per-request via custom_inputs.
         self.inference_timesteps = int(self.metadata.get("inference_timesteps", 6))
+        self._init_voice_cache()
+
+    def _init_voice_cache(self) -> None:
+        """(Re)create the per-process voice-reference cache and its guard."""
+        # voice_id -> materialised reference WAV path, most-recently-used last.
+        # Guarded by a lock because serving handles requests concurrently.
+        self._voice_cache: "OrderedDict[str, str]" = OrderedDict()
+        self._voice_cache_lock = threading.Lock()
+
+    # MLflow cloudpickles this instance at log time, and a threading.Lock cannot
+    # be pickled. The cache and its lock are serving-time state (like the model,
+    # which load_context builds), so they are dropped on the way out and rebuilt
+    # on the way in rather than being part of the logged artifact.
+    def __getstate__(self) -> dict[str, Any]:
+        state = dict(self.__dict__)
+        state.pop("_voice_cache", None)
+        state.pop("_voice_cache_lock", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._init_voice_cache()
 
     def load_context(self, context) -> None:  # type: ignore[override]
         self._model_dir = context.artifacts["model_dir"]
@@ -134,6 +175,54 @@ class RealtimeTTSAgent(ResponsesAgent):
         finally:
             _unlink(ref_path)
 
+    def _resolve_reference(self, ci: dict[str, Any]) -> tuple[str | None, bool, bool]:
+        """Resolve the voice-clone reference for one request.
+
+        Returns ``(ref_path, owned, cache_miss)``. ``owned`` means the caller must
+        unlink the file afterwards; cached clips are owned by the cache and must
+        survive across requests. ``cache_miss`` means a ``voice_id`` was supplied
+        that this replica cannot resolve and no clip came with it, so the caller
+        should ask the client to resend rather than synthesize a different voice.
+        """
+        voice_id = str(ci.get("voice_id") or "").strip()
+        audio_b64 = ci.get("reference_audio_b64")
+
+        if not voice_id:
+            # Unkeyed reference (or none at all): per-request temp file as before.
+            return _write_reference_wav(audio_b64), True, False
+
+        if audio_b64:
+            path = _write_reference_wav(audio_b64)
+            if path is None:
+                # Undecodable clip: never fail synthesis over a bad reference.
+                return None, False, False
+            # Floor of 1 so the entry just inserted can never be the one evicted.
+            limit = max(_VOICE_CACHE_MAX, 1)
+            with self._voice_cache_lock:
+                stale = self._voice_cache.pop(voice_id, None)
+                self._voice_cache[voice_id] = path
+                evicted = [
+                    self._voice_cache.popitem(last=False)[1]
+                    for _ in range(max(len(self._voice_cache) - limit, 0))
+                ]
+            _unlink(stale)
+            for dropped in evicted:
+                _unlink(dropped)
+            return path, False, False
+
+        with self._voice_cache_lock:
+            path = self._voice_cache.get(voice_id)
+            if path is not None and os.path.exists(path):
+                self._voice_cache.move_to_end(voice_id)
+            else:
+                # Entry lost with its file (e.g. temp dir reaped): drop it so the
+                # resend repopulates instead of pointing at a missing path.
+                self._voice_cache.pop(voice_id, None)
+                path = None
+        if path is None:
+            return None, False, True
+        return path, False, False
+
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
         # MLflow runs predict on a default example at log time. Short-circuit with
         # a valid empty response when no custom_inputs are present so registration
@@ -160,13 +249,26 @@ class RealtimeTTSAgent(ResponsesAgent):
             inference_timesteps=timesteps,
             retry_badcase=False,
         )
-        ref_path = _write_reference_wav(ci.get("reference_audio_b64"))
+        ref_path, ref_owned, cache_miss = self._resolve_reference(ci)
+        if cache_miss:
+            return ResponsesAgentResponse(
+                output=[self.create_text_output_item(text="", id="tts-spoken-text")],
+                custom_outputs={
+                    "audio_b64": "",
+                    "mime_type": "audio/wav",
+                    "sample_rate_hz": 0,
+                    "language": language,
+                    "inference_device": self.inference_device,
+                    "voice_cache_miss": True,
+                },
+            )
         if ref_path:
             gen_kwargs["reference_wav_path"] = ref_path
         try:
             audio = self.model.generate(**gen_kwargs)
         finally:
-            _unlink(ref_path)
+            if ref_owned:
+                _unlink(ref_path)
         gen_ms = (time.perf_counter() - started) * 1000.0
         sample_rate_hz = int(getattr(getattr(self.model, "tts_model", None), "sample_rate", 48_000))
         wav_bytes = _float_to_wav(audio, sample_rate_hz)
@@ -230,7 +332,22 @@ class RealtimeTTSAgent(ResponsesAgent):
         # A reference clip pins the voice: VoxCPM2 clones its timbre so every turn
         # in a session keeps the same voice. build_prompt_cache reads the file at
         # the start of generation, so it must survive until the generator drains.
-        ref_path = _write_reference_wav(ci.get("reference_audio_b64"))
+        ref_path, ref_owned, cache_miss = self._resolve_reference(ci)
+        if cache_miss:
+            # No audio: the client resends the clip and retries this same turn, so
+            # the caller never hears a turn rendered in the wrong voice.
+            yield ResponsesAgentStreamEvent(
+                type="response.output_item.done",
+                item=self.create_text_output_item(text="", id=item_id),
+                custom_outputs={
+                    "final": True,
+                    "chunks": 0,
+                    "sample_rate_hz": sample_rate_hz,
+                    "voice_cache_miss": True,
+                    "inference_device": self.inference_device,
+                },
+            )
+            return
         if ref_path:
             gen_kwargs["reference_wav_path"] = ref_path
         try:
@@ -251,7 +368,8 @@ class RealtimeTTSAgent(ResponsesAgent):
                 )
                 index += 1
         finally:
-            _unlink(ref_path)
+            if ref_owned:
+                _unlink(ref_path)
 
         total_ms = (time.perf_counter() - started) * 1000.0
         yield ResponsesAgentStreamEvent(

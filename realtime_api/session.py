@@ -60,6 +60,10 @@ class VoiceSession:
     # whole call. Cloning from real audio is deterministic w.r.t. timbre, unlike
     # RNG seeding (which the deployed model does not even support).
     voice_reference_b64: str | None = None
+    # Stable id for the clip above, derived from its bytes. The TTS endpoint caches
+    # the clip under this id so later turns identify the voice without re-uploading
+    # ~500KB of base64 audio on every turn (which dominated time-to-first-audio).
+    voice_id: str | None = None
     # Semantic end-of-turn detector (Silero VAD + smart-turn). When set, it
     # replaces the energy VAD for speech gating and end-of-turn decisions; None
     # keeps the legacy energy VAD (also the graceful fallback when models can't

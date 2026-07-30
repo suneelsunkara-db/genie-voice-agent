@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import re
 import time
@@ -16,8 +17,8 @@ from . import ServingBundle
 _SENTENCE_RE = re.compile(r"[^.!?。！？…\n]+(?:[.!?。！？…]+|\n|$)", re.UNICODE)
 
 # Seconds of the first turn's audio captured as the session's voice reference.
-# 4 s is ample for VoxCPM2 timbre cloning while keeping the per-turn payload
-# (the reference is re-sent to the endpoint on every later turn) small.
+# 4 s is ample for VoxCPM2 timbre cloning. The clip is uploaded once and then
+# addressed by ``voice_id``, so its size no longer costs latency per turn.
 _VOICE_REFERENCE_SECONDS = 4.0
 
 
@@ -112,13 +113,16 @@ async def stream_tts(
     which shouldn't appear as an agent turn).
     """
     reference_b64 = session.voice_reference_b64
+    voice_id = session.voice_id
     # Capture this turn's audio only until the session has a locked-in voice.
     capture: bytearray | None = bytearray() if reference_b64 is None else None
     capture_sr = 48_000
 
     if hasattr(bundle.tts, "synthesize_stream"):
         start = time.perf_counter()
-        stream = bundle.tts.synthesize_stream(text, language=language, reference_audio_b64=reference_b64)
+        stream = bundle.tts.synthesize_stream(
+            text, language=language, reference_audio_b64=reference_b64, voice_id=voice_id
+        )
 
         def _next():
             try:
@@ -163,14 +167,20 @@ async def stream_tts(
     total = len(sentences)
     for index, sentence in enumerate(sentences):
         audio_response = await asyncio.to_thread(
-            bundle.tts.synthesize, sentence, language=language, reference_audio_b64=reference_b64
+            bundle.tts.synthesize,
+            sentence,
+            language=language,
+            reference_audio_b64=reference_b64,
+            voice_id=voice_id,
         )
         if turn_id != session.turn_id:
             return
         # The non-streaming path already returns a full WAV; lock it as-is.
         if session.voice_reference_b64 is None and audio_response.audio:
             session.voice_reference_b64 = base64.b64encode(audio_response.audio).decode("ascii")
+            session.voice_id = _voice_id_for(audio_response.audio)
             reference_b64 = session.voice_reference_b64
+            voice_id = session.voice_id
         is_last = index == total - 1
         yield audio_response.event(
             turn_id,
@@ -178,6 +188,15 @@ async def stream_tts(
             final=is_last and mark_final,
             text=sentence if emit_text else None,
         )
+
+
+def _voice_id_for(wav_bytes: bytes) -> str:
+    """Stable cache key for a reference clip, derived from its own bytes.
+
+    Content-addressed rather than session-scoped so the same voice reuses one
+    cache entry, and a changed clip can never collide with the previous one.
+    """
+    return hashlib.sha256(wav_bytes).hexdigest()[:32]
 
 
 def _lock_voice_reference(session: VoiceSession, pcm: bytes, sample_rate_hz: int) -> None:
@@ -194,4 +213,6 @@ def _lock_voice_reference(session: VoiceSession, pcm: bytes, sample_rate_hz: int
         handle.setsampwidth(2)
         handle.setframerate(sample_rate_hz)
         handle.writeframes(pcm)
-    session.voice_reference_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+    wav_bytes = buffer.getvalue()
+    session.voice_reference_b64 = base64.b64encode(wav_bytes).decode("ascii")
+    session.voice_id = _voice_id_for(wav_bytes)
