@@ -13,8 +13,26 @@ API free of any card- (or telco-) specific ``if`` checks.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class ResolvedIntent:
+    """A tool call a profile resolved deterministically from a transcript.
+
+    Emitted by :attr:`VoiceProfile.resolve_intents` so a *deterministic* action
+    (navigation, selection) never depends solely on the conversational LLM
+    choosing to emit the tool call. The engine runs ``name``/``arguments`` through
+    the profile's ``tool_runner``, surfaces the usual ``tool.called`` event, and —
+    if ``confirm_intent`` is set — speaks a short in-language confirmation
+    (generated + cached) BEFORE the UI acts on the result. ``confirm_intent`` is a
+    natural-language instruction for the phrase model, not a literal line, so it
+    renders correctly in every supported language.
+    """
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+    confirm_intent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -29,6 +47,12 @@ class VoiceProfile:
     # Optional hook run after each turn to persist small state across turns
     # (ctx, session) -> None. State should live on ``session.profile_state``.
     after_turn: Callable[[Any, Any], None] | None = None
+    # Optional deterministic intent pre-router: (transcript, language) ->
+    # list[ResolvedIntent]. Runs BEFORE the LLM each turn. Return a confident
+    # intent to short-circuit the LLM (run tool + speak confirmation); return
+    # an empty list to defer to the LLM (ambiguous / not a selection). Keeps the
+    # engine domain-agnostic — only the profile knows what its intents are.
+    resolve_intents: Callable[[str, str], list["ResolvedIntent"]] | None = None
 
 
 _PROFILES: dict[str, VoiceProfile] = {}

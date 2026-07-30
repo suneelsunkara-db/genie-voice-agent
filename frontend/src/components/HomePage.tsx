@@ -95,6 +95,9 @@ const REASONING_HOPS = [
 ];
 const REASONING_CONCLUSION =
   "$41 of the $47 increase is a one-time device fee — next cycle returns to normal.";
+// Last-resort route fallback if the confirmation TTS stream never reaches a
+// final audio chunk. Normal routing is driven by `onFinal` after audio drains.
+const ROUTE_FALLBACK_MS = 30_000;
 
 type AgentState = "idle" | "greeting" | "listening" | "thinking" | "speaking";
 
@@ -115,6 +118,12 @@ export function HomePage() {
   // Greeting cache keyed by language (one model call per language, like card).
   const greetingRef = useRef<Map<string, string>>(new Map());
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Hash to route to once the agent's spoken confirmation finishes. Armed by the
+  // select_industry tool result; consumed on the confirmation's final audio.
+  const pendingNavRef = useRef<string | null>(null);
+  // Latest "response finished speaking" handler; kept in a ref so the hook's
+  // onFinal stays stable while always seeing fresh state (goTo/playbackRef).
+  const onFinalRef = useRef<() => void>(() => {});
 
   const {
     playbackRef,
@@ -129,6 +138,7 @@ export function HomePage() {
     sessionRef,
     onMicResume: () => setAgentState("listening"),
     onSpeaking: () => setAgentState("speaking"),
+    onFinal: () => onFinalRef.current(),
   });
 
   // Speaking-orb amplitude from the actual TTS playback.
@@ -197,6 +207,7 @@ export function HomePage() {
       clearTimeout(navTimerRef.current);
       navTimerRef.current = null;
     }
+    pendingNavRef.current = null;
     teardownPlayback();
     sessionRef.current?.close();
     sessionRef.current = null;
@@ -217,11 +228,28 @@ export function HomePage() {
       const target = INDUSTRIES.find((i) => i.id === industry);
       if (!target) return;
       setChosen(industry);
-      // Let the agent's spoken confirmation start before the page swaps.
-      navTimerRef.current = setTimeout(() => goTo(target.hash), 1400);
+      // Confirm-then-route: arm the target and let the agent's spoken
+      // confirmation finish before the page swaps (handled in onFinal, below).
+      // The timer here is deliberately long: it is ONLY a last-resort escape if
+      // confirmation TTS stalls, never something that can race a normal TTS turn.
+      pendingNavRef.current = target.hash;
+      if (navTimerRef.current) clearTimeout(navTimerRef.current);
+      navTimerRef.current = setTimeout(() => goTo(target.hash), ROUTE_FALLBACK_MS);
     },
     [goTo]
   );
+
+  // When a response finishes streaming: if a route is pending (the caller just
+  // picked an industry), navigate once the confirmation has actually drained
+  // from the speakers — so we never cut it off mid-sentence.
+  onFinalRef.current = () => {
+    const hash = pendingNavRef.current;
+    if (!hash) return;
+    pendingNavRef.current = null;
+    if (navTimerRef.current) clearTimeout(navTimerRef.current);
+    const wait = (playbackRef.current?.msUntilIdle() ?? 0) + 250;
+    navTimerRef.current = setTimeout(() => goTo(hash), wait);
+  };
 
   const openSession = useCallback(
     async (language: string) => {
@@ -275,7 +303,10 @@ export function HomePage() {
           },
         },
         language,
-        { profile: "concierge", startMicPaused: true }
+        // Home concierge is English-only (picker disabled). Pin STT to English
+        // so short replies ("Telco") can't be mis-detected as another language
+        // and dropped by the mismatch gate before the router runs.
+        { profile: "concierge", startMicPaused: true, sttLanguage: DEFAULT_LANGUAGE }
       );
       sessionRef.current = session;
     },

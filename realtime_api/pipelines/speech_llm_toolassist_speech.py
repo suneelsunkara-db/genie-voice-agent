@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from functools import lru_cache
@@ -91,6 +92,28 @@ async def _warm_filler(bundle: ServingBundle, language: str) -> None:
         logger.warning("filler generation failed for %s", language, exc_info=True)
     finally:
         _FILLER_WARMING.discard(base)
+
+
+# Spoken confirmations for deterministically-resolved intents (e.g. the home
+# concierge's "taking you to <industry> now") are generated in the caller's
+# language and cached per (intent, base-language) — one model call per phrase.
+_CONFIRM_CACHE: dict[tuple[str, str], str] = {}
+
+
+async def _confirm_phrase(bundle: ServingBundle, intent: str, language: str) -> str:
+    """Short spoken confirmation for a pre-routed intent, in the caller's language."""
+    key = (intent, base_code(language))
+    cached = _CONFIRM_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        text = (await asyncio.to_thread(bundle.llm.phrase, intent, language=language)).strip()
+    except Exception:  # noqa: BLE001
+        logger.warning("confirmation phrase generation failed for %s", language, exc_info=True)
+        text = ""
+    if text:
+        _CONFIRM_CACHE[key] = text
+    return text
 
 
 async def _switch_prompt(bundle: ServingBundle, expected: str, detected: str) -> str:
@@ -203,6 +226,59 @@ async def process_turn(
         # frontend doesn't specify one.
         profile = get_profile(session.config.profile or "billing")
         tool_ctx = profile.make_context(session, language)
+
+        # ── Deterministic intent pre-router (framework seam) ──────────────
+        # Navigation/selection is a DETERMINISTIC action; don't gate it solely
+        # on the conversational LLM choosing to emit the tool call. If the
+        # profile resolves a confident intent from this transcript, run it via
+        # the same tool_runner (so the usual tool.called event fires), speak a
+        # short in-language confirmation, and SKIP the LLM turn. Ambiguous / no
+        # match returns [] and falls through to the LLM below, which can clarify
+        # and still call the tool itself. Fully generic: the engine never names
+        # a domain — only the profile knows what its intents are.
+        resolver = getattr(profile, "resolve_intents", None)
+        resolved = resolver(transcript, language) if resolver is not None else []
+        if resolved:
+            with trace.span("intent.router", "GUARD", input={"transcript": transcript}) as span:
+                span.set_output({"intents": [r.name for r in resolved]})
+            confirm_text = ""
+            for r in resolved:
+                try:
+                    result_json = profile.tool_runner(r.name, r.arguments, tool_ctx)
+                except Exception:  # noqa: BLE001
+                    logger.warning("intent-router tool %s failed for turn %d", r.name, turn_id, exc_info=True)
+                    continue
+                try:
+                    result_obj = json.loads(result_json)
+                except (TypeError, ValueError):
+                    result_obj = result_json
+                yield {
+                    "type": "tool.called",
+                    "turn_id": turn_id,
+                    "name": r.name,
+                    "arguments": r.arguments,
+                    "result": result_obj,
+                }
+                if r.confirm_intent and not confirm_text:
+                    confirm_text = await _confirm_phrase(bundle, r.confirm_intent, language)
+            if turn_id != session.turn_id:
+                trace.status = "superseded"
+                return
+            if confirm_text:
+                session.history.append({"role": "assistant", "content": confirm_text})
+                trace.output_text = confirm_text
+                yield {"type": "response.text", "turn_id": turn_id, "text": confirm_text}
+                tts_span = trace.span("tts", "TTS", input={"text": confirm_text, "language": language})
+                async for event in stream_tts(bundle, session, turn_id, confirm_text, language):
+                    if turn_id != session.turn_id:
+                        break
+                    yield event
+                tts_span.end()
+            if profile.after_turn is not None:
+                profile.after_turn(tool_ctx, session)
+            session.set_cooldown(1.5)
+            return
+
         respond_extra: dict = {
             "system_prompt": profile.system_prompt,
             "tools_override": profile.tools_spec(),

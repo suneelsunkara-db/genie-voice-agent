@@ -67,6 +67,13 @@ export interface StartRealtimeVoiceOptions {
    *  speaks, surfaced via ``onInterimTranscript``. Default true; set false to opt
    *  out. Automatically a no-op where the browser lacks Web Speech support. */
   liveCaption?: boolean;
+  /**
+   * Pin STT to this BCP-47 language instead of auto-detecting. Use ONLY for
+   * single-language surfaces (e.g. the English-only home concierge whose picker
+   * is disabled): auto-detect mis-tags short words ("Telco" -> Hindi) and the
+   * mismatch gate then drops the turn. Omit to auto-detect (multilingual pages).
+   */
+  sttLanguage?: string;
 }
 
 export interface RealtimeVoiceSession {
@@ -221,7 +228,10 @@ export async function startRealtimeVoice(
       ws.send(
         JSON.stringify({
           type: "session.start",
-          language: "auto",
+          // Auto-detect for multilingual surfaces; pin (sttLanguage) for
+          // single-language ones so STT can't mis-tag short words and get the
+          // turn dropped by the mismatch gate.
+          language: options?.sttLanguage || "auto",
           sample_rate_hz: actualSampleRate,
           encoding: "pcm_s16le",
           call_id: callId,

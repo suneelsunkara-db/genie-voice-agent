@@ -16,6 +16,7 @@ navigation:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .tool_registry import ToolContext, register, run_tool, tools_spec
@@ -71,6 +72,69 @@ def _run_select_industry(arguments: dict[str, Any], ctx: ToolContext) -> str:
 
 
 register(_SELECT_INDUSTRY_SPEC, _run_select_industry, profile=_PROFILE)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic intent pre-router (framework seam)
+# ---------------------------------------------------------------------------
+# The concierge's whole job is to route by voice, and the home page is
+# English-only (the language picker is disabled and defaults to English), so a
+# small English cue table resolves the selection reliably WITHOUT waiting on the
+# conversational LLM to emit the tool call. This is Tier 1; the LLM (Tier 2)
+# still handles anything ambiguous or phrased as a question.
+_INDUSTRY_CUES: dict[str, tuple[str, ...]] = {
+    "telco": ("telco", "telecom", "telecoms", "billing", "phone bill", "phone", "mobile", "wireless", "cellular"),
+    "fsi": ("fsi", "financial", "finance", "credit card", "credit-card", "card", "bank", "banking", "statement"),
+    "healthcare": ("healthcare", "health", "clinical", "clinic", "patient", "medical", "claim", "claims", "coverage"),
+}
+# One warm confirmation instruction per industry, voiced in the caller's
+# language (generated + cached by the pipeline). Instruction, not a literal line.
+_CONFIRM_LABELS = {
+    "telco": "Telco billing support",
+    "fsi": "the credit-card assistant",
+    "healthcare": "the healthcare assistant",
+}
+# Only route short, selection-style replies deterministically; longer utterances
+# (questions, elaboration) defer to the LLM so we don't route on "what is
+# healthcare?" — the confidence guardrail behind always-confirm-then-route.
+_MAX_SELECTION_WORDS = 8
+
+
+def _matches(cue: str, text: str) -> bool:
+    if " " in cue or "-" in cue:
+        return cue in text
+    return re.search(rf"\b{re.escape(cue)}\b", text) is not None
+
+
+def resolve_industry(transcript: str) -> str | None:
+    """Confidently map a short spoken reply to an industry, else None.
+
+    Returns an industry only when EXACTLY ONE matches (no match or a cross-domain
+    tie is treated as ambiguous and left to the LLM).
+    """
+    text = (transcript or "").strip().lower()
+    if not text or len(text.split()) > _MAX_SELECTION_WORDS:
+        return None
+    matched = {ind for ind, cues in _INDUSTRY_CUES.items() if any(_matches(c, text) for c in cues)}
+    return next(iter(matched)) if len(matched) == 1 else None
+
+
+def _resolve_concierge_intents(transcript: str, language: str) -> list[Any]:
+    from .profiles import ResolvedIntent
+
+    industry = resolve_industry(transcript)
+    if industry is None:
+        return []
+    return [
+        ResolvedIntent(
+            name="select_industry",
+            arguments={"industry": industry},
+            confirm_intent=(
+                f"In ONE short, warm sentence, tell the user you're taking them to "
+                f"{_CONFIRM_LABELS[industry]} now. No lists, no emoji."
+            ),
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +221,7 @@ def register_profile() -> None:
             tool_runner=_concierge_run_tool,
             make_context=_make_concierge_context,
             after_turn=None,
+            resolve_intents=_resolve_concierge_intents,
         )
     )
 
