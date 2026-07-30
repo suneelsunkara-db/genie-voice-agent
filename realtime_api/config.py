@@ -65,6 +65,24 @@ class RealtimeSettings:
     # (incl. Thai) at the lowest safe latency on GPU_MEDIUM.
     tts_inference_timesteps: int = 6
     tts_cfg_value: float = 2.0
+    # --- Operator-tunable serving/turn timeouts (deploy-varying: cold-start +
+    # provisioning differ per workspace/endpoint). Micro-timeouts (filler grace,
+    # cooldowns) stay in code. All from realtime_voice.timeouts. -----------------
+    # Synchronous predict (STT/LLM/non-stream) request timeout.
+    predict_timeout_s: float = 45.0
+    # Streaming TTS read timeout (the synth SSE can run long for a full reply).
+    tts_stream_timeout_s: float = 180.0
+    # Budget for ONE LLM turn (covers cold-start + up to max_tool_iterations rounds)
+    # before the turn is aborted. The graceful-shutdown drain waits this + a buffer.
+    llm_turn_timeout_s: float = 50.0
+    # Async deep-dive (Genie Agent Mode) read timeout. Single source of truth for
+    # BOTH the server-side SSE read timeout and the client-side stall watchdog, so
+    # the two can never disagree (the client waits this + a small buffer).
+    deep_dive_read_timeout_s: float = 420.0
+    # Deep-dive spoken "why" summarizer sampling (short, factual → low temp, capped
+    # tokens). Operator-tunable per the config policy (genie summarizer temp/tokens).
+    deep_dive_summary_temperature: float = 0.3
+    deep_dive_summary_max_tokens: int = 220
     # End-to-end supported languages (STT ∩ TTS) as BCP 47 primary subtags,
     # resolved from config. The UI reports these to the user.
     supported_languages: tuple[str, ...] = ()
@@ -91,34 +109,58 @@ class RealtimeSettings:
             raise RuntimeError(f"realtime_voice config is missing endpoints: {', '.join(missing)}")
         tts_defaults = rv.get("tts_defaults") or {}
         llm_defaults = rv.get("llm_defaults") or {}
+        tt = _turn_taking(rv)
+        deep = rv.get("deep_dive") or {}
+        timeouts = rv.get("timeouts") or {}
+        # Defaults come from the dataclass so config keys are optional overrides.
+        d = cls(stt_endpoint=stt, llm_endpoint=llm, tts_endpoint=tts)
         return cls(
             stt_endpoint=stt,
             llm_endpoint=llm,
             tts_endpoint=tts,
-            allow_barge_in=bool(rv.get("allow_barge_in", False)),
-            llm_temperature=float(llm_defaults.get("temperature", 0.4)),
-            llm_max_tokens=int(llm_defaults.get("max_tokens", 512)),
-            llm_tools_enabled=bool(llm_defaults.get("tools_enabled", True)),
-            llm_max_tool_iterations=int(llm_defaults.get("max_tool_iterations", 3)),
-            tts_inference_timesteps=int(tts_defaults.get("inference_timesteps", 6)),
-            tts_cfg_value=float(tts_defaults.get("cfg_value", 2.0)),
+            sample_rate_hz=int(tt.get("sample_rate_hz", d.sample_rate_hz)),
+            vad_silence_ms=int(tt.get("vad_silence_ms", d.vad_silence_ms)),
+            max_turn_seconds=int(tt.get("max_turn_seconds", d.max_turn_seconds)),
+            min_speech_ms=int(tt.get("min_speech_ms", d.min_speech_ms)),
+            barge_in_ms=int(tt.get("barge_in_ms", d.barge_in_ms)),
+            allow_barge_in=bool(rv.get("allow_barge_in", d.allow_barge_in)),
+            llm_temperature=float(llm_defaults.get("temperature", d.llm_temperature)),
+            llm_max_tokens=int(llm_defaults.get("max_tokens", d.llm_max_tokens)),
+            llm_tools_enabled=bool(llm_defaults.get("tools_enabled", d.llm_tools_enabled)),
+            llm_max_tool_iterations=int(llm_defaults.get("max_tool_iterations", d.llm_max_tool_iterations)),
+            tts_inference_timesteps=int(tts_defaults.get("inference_timesteps", d.tts_inference_timesteps)),
+            tts_cfg_value=float(tts_defaults.get("cfg_value", d.tts_cfg_value)),
+            predict_timeout_s=float(timeouts.get("predict_s", d.predict_timeout_s)),
+            tts_stream_timeout_s=float(timeouts.get("tts_stream_s", d.tts_stream_timeout_s)),
+            llm_turn_timeout_s=float(timeouts.get("llm_turn_s", d.llm_turn_timeout_s)),
+            deep_dive_read_timeout_s=float(deep.get("read_timeout_s", d.deep_dive_read_timeout_s)),
+            deep_dive_summary_temperature=float(
+                deep.get("summary_temperature", d.deep_dive_summary_temperature)
+            ),
+            deep_dive_summary_max_tokens=int(
+                deep.get("summary_max_tokens", d.deep_dive_summary_max_tokens)
+            ),
             stt_languages=tuple(_first_supported(rv.get("stt_candidates"))),
             tts_languages=tuple(_first_supported(rv.get("tts_candidates"))),
             supported_languages=_supported_languages(rv),
-            warmup_enabled=bool(rv.get("warmup", True)),
-            stt_warmup_passes=max(1, int(rv.get("stt_warmup_passes", 3))),
-            endpointing_enabled=bool(_endpointing(rv).get("enabled", True)),
-            endpoint_stop_ms=int(_endpointing(rv).get("stop_ms", 300)),
-            smart_turn_threshold=float(_endpointing(rv).get("smart_turn_threshold", 0.5)),
-            noise_discard_seconds=int(_endpointing(rv).get("noise_discard_seconds", 4)),
-            debug_audio=bool(rv.get("debug_audio", False)),
-            debug_audio_dir=str(rv.get("debug_audio_dir", "/tmp/realtime_audio")),
+            warmup_enabled=bool(rv.get("warmup", d.warmup_enabled)),
+            stt_warmup_passes=max(1, int(rv.get("stt_warmup_passes", d.stt_warmup_passes))),
+            endpointing_enabled=bool(_endpointing(rv).get("enabled", d.endpointing_enabled)),
+            endpoint_stop_ms=int(_endpointing(rv).get("stop_ms", d.endpoint_stop_ms)),
+            smart_turn_threshold=float(_endpointing(rv).get("smart_turn_threshold", d.smart_turn_threshold)),
+            noise_discard_seconds=int(_endpointing(rv).get("noise_discard_seconds", d.noise_discard_seconds)),
+            debug_audio=bool(rv.get("debug_audio", d.debug_audio)),
+            debug_audio_dir=str(rv.get("debug_audio_dir", d.debug_audio_dir)),
         )
 
     @classmethod
     def resolve(cls, config_dir: str | Path | None = None) -> "RealtimeSettings":
-        """Resolve from the shared config block (the single source of truth)."""
-        return cls.from_config(config_dir)
+        """Resolve from the shared config block (the single source of truth).
+
+        Honors ``GENIE_CONFIG`` (Databricks jobs/apps) the same way the backend
+        ``Settings`` loader does, so both halves of the app read the same file.
+        """
+        return cls.from_config(config_dir or config_dir_from_env())
 
 
 def _repo_config_dir() -> Path:
@@ -240,6 +282,15 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 def _endpointing(rv: dict[str, Any]) -> dict[str, Any]:
     """Optional ``realtime_voice.endpointing`` overrides block."""
     return rv.get("endpointing") or {}
+
+
+def _turn_taking(rv: dict[str, Any]) -> dict[str, Any]:
+    """Optional ``realtime_voice.turn_taking`` overrides block.
+
+    Holds the VAD / end-of-turn / barge-in timing knobs (silence gap, max turn,
+    min speech, barge-in hold, sample rate) — previously code-only defaults.
+    """
+    return rv.get("turn_taking") or {}
 
 
 def _first_endpoint(candidates: dict[str, Any] | None) -> str:

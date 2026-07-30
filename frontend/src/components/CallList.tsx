@@ -12,18 +12,17 @@ import {
   LiveNudge,
   ResolutionEvent,
 } from "../api/client";
-import { WS_BASE_URL } from "../config";
-import { recommend } from "../guidance";
+import { API_BASE_URL, WS_BASE_URL } from "../config";
 import { CustomerIssueTag } from "../lib/customerIssues";
 import {
   VoiceUiState,
 } from "../lib/micStream";
 import {
-  AudioPlaybackQueue,
-  decodePcmChunk,
   RealtimeVoiceSession,
   startRealtimeVoice,
 } from "../lib/realtimeVoice";
+import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
+import { getMe } from "../lib/me";
 import {
   languageLabel,
   localizedValue,
@@ -31,6 +30,7 @@ import {
   uiCopy,
 } from "../i18n";
 import { SentientHCol, SentientStep } from "./sentient/Sentient";
+import { VoiceOrb, type VoiceOrbState } from "./VoiceOrb";
 
 type LocalTurn = { text: string; speaker?: number; language?: InteractionLanguage };
 
@@ -51,63 +51,6 @@ function signalsOf(call: CallState) {
 function localizedIntentLabel(language: InteractionLanguage, code?: string | null): string {
   if (!code) return "—";
   return localizedValue(language, code, "intent");
-}
-
-function localizedRecommendation(
-  language: InteractionLanguage,
-  nba: string | undefined,
-  sentiment: string | undefined,
-  facts?: AccountFacts | null
-) {
-  const base = recommend(nba, sentiment, facts);
-  if (language !== "th-TH") return base;
-  const overdue = facts?.invoices?.find((i) => i.status === "overdue");
-  const amount = (value: unknown) => {
-    const n = typeof value === "string" ? parseFloat(value) : (value as number);
-    return Number.isFinite(n) ? `$${n.toFixed(2)}` : "$0.00";
-  };
-  switch (nba) {
-    case "offer_fee_waiver":
-      return {
-        ...base,
-        title: overdue
-          ? `เสนอการยกเว้นค่าปรับ ${amount(overdue.late_fee)} สำหรับ ${overdue.invoice_id}`
-          : "เสนอการยกเว้นค่าปรับ",
-        detail: overdue
-          ? `${overdue.invoice_id} (${overdue.period}) ค้างชำระ ${amount(overdue.amount)} + ค่าปรับ ${amount(
-              overdue.late_fee
-            )} ครบกำหนด ${overdue.due_date} การยกเว้นค่าปรับช่วยลดข้อโต้แย้งและรักษาประสบการณ์ลูกค้า`
-          : "รับทราบค่าปรับและเสนอการยกเว้นแบบ goodwill หนึ่งครั้งเพื่อลดความตึงเครียด",
-      };
-    case "set_up_payment_plan":
-      return {
-        ...base,
-        title: "ตั้งแผนชำระเงิน",
-        detail: facts?.summary?.overdue_amount
-          ? `เสนอแบ่งยอดค้างชำระ ${amount(facts.summary.overdue_amount)} เป็นงวด และเปิดชำระอัตโนมัติเพื่อลดค่าปรับในอนาคต`
-          : "เสนอแบ่งยอดค้างชำระเป็นงวดเพื่อให้บัญชีกลับมาปกติ",
-      };
-    case "process_refund":
-      return {
-        ...base,
-        title: "ดำเนินการคืนเงิน",
-        detail: overdue
-          ? `ตรวจสอบรายการที่โต้แย้งใน ${overdue.invoice_id} (${amount(overdue.amount)}) แล้วออกเงินคืนหรือเครดิตเข้าบัญชี`
-          : "ตรวจสอบรายการที่โต้แย้งแล้วออกเงินคืนหรือเครดิตเข้าบัญชี",
-      };
-    case "escalate_retention_offer":
-      return {
-        ...base,
-        title: "ส่งต่อพร้อมข้อเสนอรักษาลูกค้า",
-        detail: "ลูกค้าถูกจัดว่ามีความเสี่ยง ให้ประสานทีม retention และเริ่มด้วยเครดิตหรือส่วนลดแพ็กเกจก่อนลูกค้าขอยกเลิก",
-      };
-    default:
-      return {
-        ...base,
-        title: "ช่วยเหลือต่อได้ - ยังไม่ต้องยกระดับ",
-        detail: "อารมณ์ลูกค้ายังคงที่และไม่พบความเสี่ยงด้านบิล ให้ตอบคำถาม ยืนยันขั้นตอนถัดไป และปิดบทสนทนาอย่างสุภาพ",
-      };
-  }
 }
 
 export function CockpitSession({
@@ -206,31 +149,12 @@ export function CockpitSession({
   }, [availableLanguages, defaultLanguage, language, onLanguageChange]);
 
   // Live simulated utterance overrides the call-level signals when present.
-  const sentiment = live?.sentiment_label ?? base.sentiment;
-  const nba = live?.next_best_action ?? base.nba;
   const intent = live?.primary_intent ?? base.intent;
 
   const sum = facts?.summary ?? {};
+  const issueStatus = String(assistMeta?.resolution?.status ?? sum.issue_status ?? "open");
   // Keep stream empty by default so the UI feels like a true live call surface.
   const utterances = localTurns;
-  const hasAgentTurn = utterances.some((u) => (u.speaker ?? 0) === 0);
-  const issueStatus = String(assistMeta?.resolution?.status ?? sum.issue_status ?? "open");
-  const rec =
-    issueStatus === "closed"
-      ? {
-          title: copy.issueResolvedTitle,
-          detail:
-            sum.resolution_note ??
-            copy.issueResolvedDetail,
-          priority: "low" as const,
-        }
-      : hasAgentTurn
-      ? localizedRecommendation(language, nba, sentiment, facts)
-      : {
-          title: copy.listeningTitle,
-          detail: copy.listeningDetail,
-          priority: "low" as const,
-        };
 
   const overdueCount = Number(sum.overdue_invoice_count ?? 0);
   const overdueAmount = Number(sum.overdue_amount ?? 0);
@@ -308,8 +232,77 @@ export function CockpitSession({
       )
     : null;
 
+  // Agent-initiated voice presence. Rendered at the TOP of the conversation
+  // panel so the Genie orb + call controls sit up-front and aligned, matching
+  // the card / healthcare / home surfaces (which all lead with the orb).
+  const liveAssistEl = (
+    <LiveAssist
+      callId={call.call_id}
+      customerId={String(facts?.customer_id ?? call.customer_id ?? "")}
+      sttProvider={sttProvider}
+      language={language}
+      expectedLanguage={language}
+      compact={hCompact}
+      voiceUi={voiceUi}
+      onReset={resetScenario}
+      resetBusy={resetBusy}
+      onLanguageMismatch={(expected, detected) =>
+        setLanguageMismatch({ expected, detected })
+      }
+      onNudge={(n) => {
+        setLive(n.live);
+        setAssistMeta(n);
+        if (n.billing?.applied && n.billing.adjustment) {
+          const adj = n.billing.adjustment;
+          setFacts((prev) => {
+            if (!prev?.invoices) return prev;
+            const invoices = prev.invoices.map((inv) =>
+              inv.invoice_id === adj.invoice_id
+                ? {
+                    ...inv,
+                    amount: String(adj.amount_after ?? inv.amount),
+                    late_fee: String(adj.late_fee_after ?? inv.late_fee),
+                    status: String(adj.status_after ?? inv.status),
+                    resolution_status: "closed",
+                  }
+                : inv
+            );
+            const overdueInvoices = invoices.filter((inv) => inv.status === "overdue");
+            return {
+              ...prev,
+              invoices,
+              summary: {
+                ...prev.summary,
+                issue_status: n.resolution?.status ?? prev.summary?.issue_status,
+                overdue_invoice_count: overdueInvoices.length,
+                overdue_amount: overdueInvoices.reduce(
+                  (total, inv) => total + Number(inv.amount ?? 0),
+                  0
+                ),
+                resolution_note: n.resolution?.note ?? prev.summary?.resolution_note,
+              },
+            };
+          });
+        }
+        refreshAssistData();
+      }}
+      onLocalTurn={onAppendLocalTurn}
+      onUpdateLastCustomerTurn={onUpdateLastCustomerTurn}
+      onRemoveLastCustomerTurn={onRemoveLastCustomerTurn}
+      onVoiceUiChange={setVoiceUi}
+      onLanguageDetected={(lang) => {
+        // Show what STT heard, but never silently switch the agent's selection —
+        // a mismatch surfaces via the warning banner instead so the agent stays
+        // in control of the workspace language.
+        setDetectedLanguage(lang);
+      }}
+      onAccountFacts={(newFacts) => setFacts(newFacts)}
+    />
+  );
+
   const conversationPanel = (
     <div className={`${panelClass} sentient-conversation`}>
+          {liveAssistEl}
           {hCompact && customerName && (
             <div className="sentient-identity">
               <div className="sentient-identity-main">
@@ -350,21 +343,6 @@ export function CockpitSession({
             </div>
           )}
           {!hCompact && (
-          <RecommendationCard
-            rec={rec}
-            intent={intent}
-            sentiment={sentiment}
-            label={copy.recommendedNextAction}
-            language={language}
-          />
-          )}
-          {hCompact && (
-            <div className="sentient-rec sentient-rec-slim is-active">
-              <div className="sentient-rec-title">{rec.title}</div>
-              <div className="sentient-muted-text">{rec.detail}</div>
-            </div>
-          )}
-          {!hCompact && (
           <div className="sentient-kicker sentient-row-between">
             <span>
               {copy.conversationStream}
@@ -372,9 +350,6 @@ export function CockpitSession({
                 <span className="sentient-lang-badge" title="Detected from caller's speech"> · {detectedLanguage}</span>
               )}
             </span>
-            <button className="sentient-btn-ghost sentient-btn-sm" onClick={resetScenario} disabled={resetBusy}>
-              {resetBusy ? copy.resetting : copy.resetScenario}
-            </button>
           </div>
           )}
           {hCompact && (
@@ -388,9 +363,6 @@ export function CockpitSession({
                   </span>
                 )}
               </span>
-              <button className="sentient-btn-ghost sentient-btn-sm" onClick={resetScenario} disabled={resetBusy}>
-                {resetBusy ? copy.resetting : copy.resetScenario}
-              </button>
             </div>
           )}
           <div className="sentient-transcript">
@@ -439,65 +411,6 @@ export function CockpitSession({
               </div>
             )}
           </div>
-          <LiveAssist
-            callId={call.call_id}
-            customerId={String(facts?.customer_id ?? call.customer_id ?? "")}
-            sttProvider={sttProvider}
-            language={language}
-            expectedLanguage={language}
-            compact={hCompact}
-            onLanguageMismatch={(expected, detected) =>
-              setLanguageMismatch({ expected, detected })
-            }
-            onNudge={(n) => {
-              setLive(n.live);
-              setAssistMeta(n);
-              if (n.billing?.applied && n.billing.adjustment) {
-                const adj = n.billing.adjustment;
-                setFacts((prev) => {
-                  if (!prev?.invoices) return prev;
-                  const invoices = prev.invoices.map((inv) =>
-                    inv.invoice_id === adj.invoice_id
-                      ? {
-                          ...inv,
-                          amount: String(adj.amount_after ?? inv.amount),
-                          late_fee: String(adj.late_fee_after ?? inv.late_fee),
-                          status: String(adj.status_after ?? inv.status),
-                          resolution_status: "closed",
-                        }
-                      : inv
-                  );
-                  const overdueInvoices = invoices.filter((inv) => inv.status === "overdue");
-                  return {
-                    ...prev,
-                    invoices,
-                    summary: {
-                      ...prev.summary,
-                      issue_status: n.resolution?.status ?? prev.summary?.issue_status,
-                      overdue_invoice_count: overdueInvoices.length,
-                      overdue_amount: overdueInvoices.reduce(
-                        (total, inv) => total + Number(inv.amount ?? 0),
-                        0
-                      ),
-                      resolution_note: n.resolution?.note ?? prev.summary?.resolution_note,
-                    },
-                  };
-                });
-              }
-              refreshAssistData();
-            }}
-            onLocalTurn={onAppendLocalTurn}
-            onUpdateLastCustomerTurn={onUpdateLastCustomerTurn}
-            onRemoveLastCustomerTurn={onRemoveLastCustomerTurn}
-            onVoiceUiChange={setVoiceUi}
-            onLanguageDetected={(lang) => {
-              // Show what STT heard, but never silently switch the agent's
-              // selection — a mismatch surfaces via the warning banner instead
-              // so the agent stays in control of the workspace language.
-              setDetectedLanguage(lang);
-            }}
-            onAccountFacts={(newFacts) => setFacts(newFacts)}
-          />
           <AssistStatusPanel meta={assistMeta} language={language} />
     </div>
   );
@@ -960,34 +873,6 @@ function ResolutionJourneyStrip({
   );
 }
 
-function RecommendationCard({
-  rec,
-  intent,
-  sentiment,
-  label,
-  language,
-}: {
-  rec: ReturnType<typeof recommend>;
-  intent?: string;
-  sentiment?: string;
-  label: string;
-  language: InteractionLanguage;
-}) {
-  return (
-    <div className={`sentient-glass sentient-rec is-${rec.priority}`}>
-      <div className="sentient-rec-top">
-        <span className="sentient-kicker">{label}</span>
-        <span className="sentient-chips">
-          <span className="sentient-chip">{localizedIntentLabel(language, intent)}</span>
-          <span className="sentient-chip">{localizedValue(language, sentiment ?? "neutral")}</span>
-        </span>
-      </div>
-      <div className="sentient-rec-title">{rec.title}</div>
-      <div className="sentient-muted-text">{rec.detail}</div>
-    </div>
-  );
-}
-
 function Fact({ label, value, warn }: { label: string; value: ReactNode; warn?: boolean }) {
   return (
     <div className={`sentient-stat${warn ? " sentient-stat-warn" : ""}`}>
@@ -1071,7 +956,9 @@ function LiveAssist({
   customerId,
   language,
   expectedLanguage,
-  compact = false,
+  voiceUi,
+  onReset,
+  resetBusy,
   onNudge,
   onLocalTurn,
   onUpdateLastCustomerTurn: _onUpdateLastCustomerTurn,
@@ -1087,6 +974,9 @@ function LiveAssist({
   language: InteractionLanguage;
   expectedLanguage?: InteractionLanguage;
   compact?: boolean;
+  voiceUi: VoiceUiState;
+  onReset?: () => void;
+  resetBusy?: boolean;
   onNudge: (n: LiveNudge) => void;
   onLocalTurn: (turn: LocalTurn) => void;
   onUpdateLastCustomerTurn: (turn: LocalTurn) => void;
@@ -1097,47 +987,102 @@ function LiveAssist({
   onAccountFacts?: (facts: any) => void;
 }) {
   const copy = uiCopy(language);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [inCall, setInCall] = useState(false);
   const rtSessionRef = useRef<RealtimeVoiceSession | null>(null);
-  const playbackRef = useRef<AudioPlaybackQueue | null>(null);
+  // True while a session is opening (getUserMedia + WS) but before rtSessionRef is
+  // assigned, so a tap on the orb during that window can't start a second session.
+  const startingRef = useRef(false);
   const voicePhaseRef = useRef<VoiceUiState["phase"]>("idle");
   // Last mic level, kept in a ref so frequent onLevel updates don't churn state.
   const micLevelRef = useRef(0.15);
-  // Half-duplex echo control: while the agent's TTS is playing through the
-  // speakers we mute the mic so the playback doesn't loop back in and get
-  // re-transcribed as a bogus customer turn. Resumed once playback drains.
-  const micGatedRef = useRef(false);
-  const resumeMicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest live-caption text, kept in a ref so the frequent onLevel updates can
+  // carry it forward. onVoiceUiChange REPLACES the state object, so if onLevel
+  // omitted interimText it would blank the caption between interim events and the
+  // text would flicker in/out while the caller speaks.
+  const interimTextRef = useRef("");
+
+  // Shared half-duplex plumbing (playback queue + mic gating), identical to the
+  // card assistant: while the agent's TTS plays we mute the mic so it doesn't loop
+  // back in and get re-transcribed, then resume once playback drains. On the final
+  // chunk we flip the UI to "speaking".
+  const {
+    playbackRef,
+    resetPlayback,
+    gateMic,
+    ungateMicAfter,
+    handleResponseAudio,
+    teardownPlayback,
+  } = useHalfDuplexVoice({
+    sessionRef: rtSessionRef,
+    onFinal: () => {
+      voicePhaseRef.current = "speaking";
+      onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
+    },
+  });
+
+  // Opening greeting, generated in the call language by the backend (cached per
+  // base language). Same design as the card assistant: the agent speaks first, so
+  // it (a) opens the call warmly and (b) LOCKS a clean voice reference for the
+  // whole call from a curated line instead of freezing whatever the first live
+  // answer happened to sound like. Returns "" if serving is down — we then just
+  // open the mic instead of speaking a fake English line.
+  const greetingCacheRef = useRef<Map<string, string>>(new Map());
+  const fetchGreeting = async (lang: string): Promise<string> => {
+    const key = (lang || "en").split("-")[0];
+    const cached = greetingCacheRef.current.get(key);
+    if (cached !== undefined) return cached;
+    try {
+      // Greet the signed-in Databricks user by name (nameless when anonymous).
+      const me = await getMe();
+      const nameQ = me.name ? `&name=${encodeURIComponent(me.name)}` : "";
+      const r = await fetch(`${API_BASE_URL}/calls/greeting?language=${encodeURIComponent(lang)}${nameQ}`);
+      const data = (await r.json()) as { text?: string };
+      const t = typeof data.text === "string" ? data.text : "";
+      greetingCacheRef.current.set(key, t);
+      return t;
+    } catch {
+      return "";
+    }
+  };
+  // Speak agent text through the SAME voice session (synthesize turn) so it shares
+  // the session's cloned voice — identical to the card's speakViaTTS. Audio returns
+  // as response.audio events, which handleResponseAudio plays and half-duplex
+  // mic-gates; onFinal flips the UI back to listening.
+  const speakGreeting = (textToSpeak: string) => {
+    const session = rtSessionRef.current;
+    if (!session || !textToSpeak.trim()) return;
+    playbackRef.current?.flush();
+    gateMic();
+    onLocalTurn({ text: textToSpeak, speaker: 0 });
+    voicePhaseRef.current = "agent_reply";
+    onVoiceUiChange({ phase: "agent_reply", source: "mic", processingLabel: textToSpeak });
+    session.synthesize(textToSpeak, expectedLanguage || language);
+  };
 
   useEffect(() => {
     return () => {
-      if (resumeMicTimerRef.current) {
-        clearTimeout(resumeMicTimerRef.current);
-        resumeMicTimerRef.current = null;
-      }
+      teardownPlayback();
       rtSessionRef.current?.close();
       rtSessionRef.current = null;
-      playbackRef.current?.close();
-      playbackRef.current = null;
       voicePhaseRef.current = "idle";
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startVoice = async () => {
-    if (inCall || busy) return;
+    if (inCall || rtSessionRef.current || startingRef.current) return;
+    startingRef.current = true;
     setErr(null);
 
     try {
       voicePhaseRef.current = "speaking";
       onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
 
-      if (!playbackRef.current) {
-        playbackRef.current = new AudioPlaybackQueue(24_000);
-      }
+      resetPlayback();
+      // Warm the greeting cache while the socket connects so it's ready to speak
+      // the instant the session opens.
+      void fetchGreeting(expectedLanguage || language);
 
       const session = await startRealtimeVoice(WS_BASE_URL, callId, customerId, {
         onLanguageMismatch: (expected, detected) => {
@@ -1146,22 +1091,57 @@ function LiveAssist({
         onLevel: (level) => {
           micLevelRef.current = level;
           if (voicePhaseRef.current === "speaking") {
-            onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: level });
+            onVoiceUiChange({
+              phase: "speaking",
+              source: "mic",
+              micLevel: level,
+              interimText: interimTextRef.current || undefined,
+            });
           }
         },
         onSessionReady: (_sessionId, lang) => {
           if (lang && lang !== "auto") {
             onLanguageDetected?.(lang);
           }
+          // Agent speaks first: fetch + speak the greeting (mic stays paused via
+          // startMicPaused until it finishes). The async fetch also ensures
+          // rtSessionRef is assigned by the time we synthesize. If no greeting is
+          // available, just open the mic so the caller can still speak.
+          void (async () => {
+            const text = await fetchGreeting(expectedLanguage || language);
+            if (text) {
+              speakGreeting(text);
+            } else {
+              voicePhaseRef.current = "speaking";
+              onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
+              ungateMicAfter(0);
+            }
+          })();
         },
         onSpeechStarted: () => {
           voicePhaseRef.current = "speaking";
+          interimTextRef.current = "";
           onVoiceUiChange({ phase: "speaking", source: "mic", processingLabel: copy.listening });
+        },
+        onInterimTranscript: (text) => {
+          // Live on-device caption (framework): show words as the caller speaks in
+          // the EXISTING interim slot. Ignore the empty clear on final so it can't
+          // stomp the agent_reply phase that onTranscript sets right before it.
+          if (!text) return;
+          voicePhaseRef.current = "speaking";
+          interimTextRef.current = text;
+          onVoiceUiChange({
+            phase: "speaking",
+            source: "mic",
+            interimText: text,
+            micLevel: micLevelRef.current,
+          });
         },
         onTranscript: (transcriptText, lang) => {
           if (lang) {
             onLanguageDetected?.(lang);
           }
+          interimTextRef.current = "";
           onLocalTurn({ text: transcriptText, speaker: 1, language: lang as InteractionLanguage || language });
           voicePhaseRef.current = "agent_reply";
           onVoiceUiChange({ phase: "agent_reply", source: "mic", processingLabel: copy.geniePreparing });
@@ -1170,31 +1150,10 @@ function LiveAssist({
           onLocalTurn({ text: responseText, speaker: 0 });
         },
         onResponseAudio: (pcmB64, sampleRate, final) => {
-          const { samples } = decodePcmChunk(pcmB64, sampleRate);
-          // Mute the mic for the duration of playback (half-duplex) so the
-          // agent's own voice from the speakers isn't captured and transcribed.
-          if (!micGatedRef.current) {
-            micGatedRef.current = true;
-            rtSessionRef.current?.pauseMic();
-            if (resumeMicTimerRef.current) {
-              clearTimeout(resumeMicTimerRef.current);
-              resumeMicTimerRef.current = null;
-            }
-          }
-          playbackRef.current?.enqueue(samples, sampleRate);
-          if (final) {
-            voicePhaseRef.current = "speaking";
-            onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
-            // Resume the mic once the queued audio finishes draining, plus a
-            // short tail so the speaker's decay doesn't leak into the first frame.
-            const waitMs = (playbackRef.current?.msUntilIdle() ?? 0) + 350;
-            if (resumeMicTimerRef.current) clearTimeout(resumeMicTimerRef.current);
-            resumeMicTimerRef.current = setTimeout(() => {
-              micGatedRef.current = false;
-              resumeMicTimerRef.current = null;
-              rtSessionRef.current?.resumeMic();
-            }, waitMs);
-          }
+          // Half-duplex playback + mic gating (shared with the card assistant):
+          // mute the mic while the agent's audio plays so it isn't captured and
+          // re-transcribed, enqueue, and resume the mic after the final chunk drains.
+          handleResponseAudio(pcmB64, sampleRate, final);
         },
         onToolCalled: (name, result) => {
           if (name === "lookup_account" && result && typeof result === "object") {
@@ -1228,80 +1187,83 @@ function LiveAssist({
           if (code === "ws_closed") {
             // Connection dropped — fully end the call
             rtSessionRef.current = null;
-            playbackRef.current?.flush();
+            teardownPlayback();
             setInCall(false);
             voicePhaseRef.current = "idle";
+            interimTextRef.current = "";
             onVoiceUiChange({ phase: "idle" });
           } else if (voicePhaseRef.current !== "idle") {
             voicePhaseRef.current = "speaking";
             onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
           }
         },
-      }, expectedLanguage);
+      }, expectedLanguage, { startMicPaused: true });
       rtSessionRef.current = session;
       setInCall(true);
     } catch (e) {
       voicePhaseRef.current = "idle";
       onVoiceUiChange({ phase: "idle" });
       setErr(e instanceof Error ? e.message : "Microphone access denied");
+    } finally {
+      startingRef.current = false;
     }
   };
 
   const endCall = () => {
-    if (resumeMicTimerRef.current) {
-      clearTimeout(resumeMicTimerRef.current);
-      resumeMicTimerRef.current = null;
-    }
-    micGatedRef.current = false;
     rtSessionRef.current?.close();
     rtSessionRef.current = null;
-    playbackRef.current?.flush();
+    teardownPlayback();
     setInCall(false);
     voicePhaseRef.current = "idle";
+    interimTextRef.current = "";
     onVoiceUiChange({ phase: "idle" });
   };
 
-  const send = async () => {
-    if (!text.trim()) return;
-    const msg = text.trim();
-    setBusy(true);
-    setErr(null);
-    try {
-      onLocalTurn({ text: msg, speaker: 1, language });
-      onVoiceUiChange({
-        phase: "agent_reply",
-        source: "text",
-        processingLabel: copy.geniePreparing,
-      });
+  // Agent-initiated: open the call automatically on mount so Genie greets the
+  // caller without a "Start Call" tap — the same behavior the button used to
+  // trigger. Browsers require a prior user gesture to play audio; arriving from
+  // the Home concierge (same document via hash routing) carries that activation
+  // so the greeting plays immediately. Scheduling via a cleared timeout keeps
+  // React StrictMode's dev double-mount from opening two mics/sessions.
+  useEffect(() => {
+    const t = window.setTimeout(() => void startVoice(), 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      const n = await api.sendUtterance(callId, msg, 1, language);
-      onNudge(n);
-
-      const reply = n.agent_reply?.trim();
-      if (reply) onLocalTurn({ text: reply, speaker: 0 });
-      onVoiceUiChange({ phase: "idle" });
-
-      setText("");
-    } catch (e) {
-      onVoiceUiChange({ phase: "idle" });
-      setErr(e instanceof Error ? e.message : "failed");
-    } finally {
-      setBusy(false);
+  // Tapping the Genie orb: pre-call it starts the call; in-call it resumes audio
+  // playback in case the browser suspended the context (auto-start with no prior
+  // gesture, e.g. a cold refresh directly on this page).
+  const onOrbTap = () => {
+    if (inCall) {
+      playbackRef.current?.resume();
+      return;
     }
+    void startVoice();
   };
 
+  const orbState: VoiceOrbState = !inCall
+    ? "idle"
+    : voiceUi.phase === "agent_reply"
+      ? "speaking"
+      : voiceUi.phase === "transcribing"
+        ? "thinking"
+        : "listening";
+
   return (
-    <div className={`sentient-compose${compact ? " sentient-compose-compact" : ""}`}>
-      <div className="sentient-compose-row">
-        {!inCall ? (
-          <button
-            className="sentient-btn sentient-btn-mic"
-            onClick={() => void startVoice()}
-            disabled={busy}
-          >
-            {copy.startCall}
-          </button>
-        ) : (
+    <div className="sentient-voicebar">
+      <VoiceOrb
+        state={orbState}
+        level={voiceUi.micLevel ?? 0.15}
+        size="96px"
+        onClick={onOrbTap}
+        ariaLabel={inCall ? copy.liveListeningHint : copy.startCall}
+      />
+      <div className="sentient-voicebar-status">
+        {inCall ? copy.liveListeningHint : copy.startCall}
+      </div>
+      <div className="sentient-voicebar-actions">
+        {inCall && (
           <button
             className="sentient-btn sentient-btn-mic is-recording"
             onClick={endCall}
@@ -1309,24 +1271,14 @@ function LiveAssist({
             {copy.endCall}
           </button>
         )}
-        {!inCall && (
-          <>
-            <input
-              className="sentient-input sentient-input-inline"
-              value={text}
-              placeholder={copy.utterancePlaceholder}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-            />
-            <button className="sentient-btn" onClick={send} disabled={busy || !text.trim()}>
-              {busy ? "…" : copy.send}
-            </button>
-          </>
-        )}
-        {inCall && (
-          <span className="sentient-muted-text sentient-mic-hint">
-            {copy.liveListeningHint}
-          </span>
+        {onReset && (
+          <button
+            className="sentient-btn-ghost sentient-btn-sm"
+            onClick={onReset}
+            disabled={resetBusy}
+          >
+            {resetBusy ? copy.resetting : copy.resetScenario}
+          </button>
         )}
       </div>
       {err && <div className="sentient-alert">{err}</div>}

@@ -13,26 +13,21 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from genie_voice.config import get_settings
 from genie_voice.i18n import language_spec, normalize_language
+from genie_voice.providers.stt.deepgram import deepgram_query_params
 
 from ..asr_postprocess import postprocess_transcript_for_call
 
 router = APIRouter(tags=["mic-stream"])
 
 
-def _deepgram_listen_url(sample_rate: int, language: str | None = None) -> str:
-    params = urlencode(
-        {
-            "model": "nova-3",
-            "smart_format": "true",
-            "punctuate": "true",
-            "interim_results": "true",
-            "encoding": "linear16",
-            "sample_rate": str(sample_rate),
-            "channels": "1",
-            "language": language_spec(language).deepgram_language,
-        }
+def _deepgram_listen_url(settings, sample_rate: int, language: str | None = None) -> str:
+    params = deepgram_query_params(
+        settings.providers.stt.active_options(),
+        language=language_spec(language).deepgram_language,
+        streaming=True,
+        sample_rate=sample_rate,
     )
-    return f"wss://api.deepgram.com/v1/listen?{params}"
+    return f"wss://api.deepgram.com/v1/listen?{urlencode(params)}"
 
 
 def _connect_with_headers(url: str, headers: dict[str, str]):
@@ -85,7 +80,7 @@ async def mic_stream(websocket: WebSocket, call_id: str) -> None:
         except ValueError:
             sample_rate = 16000
 
-    dg_url = _deepgram_listen_url(sample_rate, language)
+    dg_url = _deepgram_listen_url(settings, sample_rate, language)
     headers = {"Authorization": f"Token {key}"}
 
     try:

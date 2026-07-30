@@ -25,7 +25,6 @@ from genie_voice.i18n import (
     canonical_business_context_instruction,
     content_language,
     language_spec,
-    localized_reply_opener,
     normalize_language,
     sanitize_generated_display_text,
 )

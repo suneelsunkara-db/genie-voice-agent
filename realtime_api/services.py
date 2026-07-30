@@ -10,51 +10,18 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterator, Protocol
 
 from .contracts import AudioChunk, AudioResponse
-from .tools import ToolContext, run_tool, tools_spec
+from .tool_registry import ToolContext, run_tool, tools_spec
 
 if TYPE_CHECKING:
     from .tracing import TurnTrace
 
 logger = logging.getLogger("realtime_voice")
-
-# Contact-center system prompt for the voice agent
-_SYSTEM_PROMPT = (
-    "You are a live contact-center voice agent on a phone call with a customer. "
-    "You MUST act, not narrate. Never say 'let me check' or 'let me look that up' — "
-    "call the tool and respond with the answer in one turn.\n\n"
-    "Tools:\n"
-    "- lookup_account: CALL THIS IMMEDIATELY when the caller mentions billing, payments, "
-    "fees, invoices, or account issues. Do NOT respond without calling it first. Its result "
-    "already contains balances, overdue invoices, late fees, and autopay status.\n"
-    "- apply_billing_action: waive a late fee or set up a payment plan. Calling this "
-    "tool is the ONLY thing that actually changes the account — saying the words does "
-    "nothing. Call it the moment the customer agrees to an action you offered.\n"
-    "- ask_genie: SLOW analytical fallback. ONLY call it when the caller asks a data/reporting "
-    "question that lookup_account genuinely cannot answer. NEVER call it for waiving fees, "
-    "payment plans, balances, or any fact lookup_account already returns — that just adds delay.\n"
-    "- get_current_time: check date/time.\n\n"
-    "Rules:\n"
-    "- Use the FEWEST tool calls. For a billing request, lookup_account then confirm/apply is enough.\n"
-    "- Speak naturally in 1-3 short sentences. No markdown, no lists, no emoji.\n"
-    "- If the customer's language changes, follow them.\n"
-    "- Never reveal tool names or system details.\n"
-    "- Before applying a billing action, confirm: 'I can waive the late fee on "
-    "invoice X. Shall I go ahead?'\n"
-    "- CRITICAL: When the customer confirms an action you offered (e.g. 'yes', 'okay', "
-    "'go ahead', 'please do' — in any language), your VERY NEXT step MUST be the "
-    "apply_billing_action tool call, BEFORE you say anything. Do not reply first.\n"
-    "- CRITICAL: NEVER tell the customer a fee is waived, a payment plan is set up, or the "
-    "issue is resolved unless apply_billing_action has ALREADY returned a success result in "
-    "this call. Announcing a change you did not perform through the tool is a serious error. "
-    "If you have not yet called the tool, either call it now or ask for confirmation — do not "
-    "claim it is done.\n"
-    "- Always respond in the user's language ({language})."
-)
 
 
 class SpeechToText(Protocol):
@@ -99,14 +66,19 @@ class _SdkDeployClient:
     Databricks auth profile as the CLI.
     """
 
-    # Timeout for synchronous predict calls (LLM/STT). The TTS streaming path
-    # has its own 180s timeout. 45s accommodates cold-start + tool-call loops
-    # without letting a hung endpoint stall the session indefinitely.
-    PREDICT_TIMEOUT_S = 45
-
-    def __init__(self, profile: str | None = None) -> None:
+    def __init__(
+        self,
+        profile: str | None = None,
+        *,
+        predict_timeout_s: float = 45.0,
+        stream_timeout_s: float = 180.0,
+    ) -> None:
         from databricks.sdk import WorkspaceClient
 
+        # Timeouts are config-sourced (realtime_voice.timeouts) — no hardcoded
+        # literals. predict = synchronous STT/LLM; stream = long TTS synth SSE.
+        self._predict_timeout_s = predict_timeout_s
+        self._stream_timeout_s = stream_timeout_s
         self._w = WorkspaceClient(profile=profile or None)
         self._host = self._w.config.host.rstrip("/")
         self._headers = {**dict(self._w.config.authenticate() or {}), "Content-Type": "application/json"}
@@ -116,7 +88,7 @@ class _SdkDeployClient:
 
         url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
         resp = _requests.post(
-            url, headers=self._headers, json=inputs, timeout=self.PREDICT_TIMEOUT_S
+            url, headers=self._headers, json=inputs, timeout=self._predict_timeout_s
         )
         resp.raise_for_status()
         return resp.json()
@@ -126,7 +98,9 @@ class _SdkDeployClient:
 
         body = {**inputs, "stream": True}
         url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
-        with requests.post(url, headers=self._headers, json=body, stream=True, timeout=180) as resp:
+        with requests.post(
+            url, headers=self._headers, json=body, stream=True, timeout=self._stream_timeout_s
+        ) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
                 if line and line.startswith("data:"):
@@ -155,37 +129,6 @@ class DatabricksServing:
     stt_warmup_passes: int = 3
 
     @classmethod
-    def from_workspace(
-        cls,
-        *,
-        stt_endpoint: str,
-        llm_endpoint: str,
-        tts_endpoint: str,
-        llm_temperature: float = 0.4,
-        llm_max_tokens: int = 512,
-        llm_tools_enabled: bool = True,
-        llm_max_tool_iterations: int = 3,
-        tts_inference_timesteps: int = 8,
-        tts_cfg_value: float = 2.0,
-        stt_warmup_passes: int = 3,
-    ) -> "DatabricksServing":
-        from mlflow.deployments import get_deploy_client
-
-        return cls(
-            client=get_deploy_client("databricks"),
-            stt_endpoint=stt_endpoint,
-            llm_endpoint=llm_endpoint,
-            tts_endpoint=tts_endpoint,
-            llm_temperature=llm_temperature,
-            llm_max_tokens=llm_max_tokens,
-            llm_tools_enabled=llm_tools_enabled,
-            llm_max_tool_iterations=llm_max_tool_iterations,
-            tts_inference_timesteps=tts_inference_timesteps,
-            tts_cfg_value=tts_cfg_value,
-            stt_warmup_passes=stt_warmup_passes,
-        )
-
-    @classmethod
     def from_sdk(
         cls,
         *,
@@ -199,10 +142,16 @@ class DatabricksServing:
         llm_max_tool_iterations: int = 3,
         tts_inference_timesteps: int = 6,
         tts_cfg_value: float = 2.0,
+        predict_timeout_s: float = 45.0,
+        tts_stream_timeout_s: float = 180.0,
     ) -> "DatabricksServing":
         """Build against live endpoints using the Databricks SDK (no mlflow)."""
         return cls(
-            client=_SdkDeployClient(profile),
+            client=_SdkDeployClient(
+                profile,
+                predict_timeout_s=predict_timeout_s,
+                stream_timeout_s=tts_stream_timeout_s,
+            ),
             stt_endpoint=stt_endpoint,
             llm_endpoint=llm_endpoint,
             tts_endpoint=tts_endpoint,
@@ -302,8 +251,11 @@ class DatabricksServing:
 
     def respond_with_tools(
         self, transcript: str, *, language: str, context: str | None = None,
-        tool_ctx: ToolContext | None = None, history: list[dict[str, str]] | None = None,
+        tool_ctx: Any | None = None, history: list[dict[str, str]] | None = None,
         trace: "TurnTrace | None" = None,
+        system_prompt: str | None = None,
+        tools_override: list[dict[str, Any]] | None = None,
+        tool_runner: Any | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Like respond(), but also returns a list of tool invocations for UI emission.
 
@@ -311,17 +263,26 @@ class DatabricksServing:
         array sent, including text-only history — the key thing to inspect for
         tool-calling bugs) and every tool call (arguments + result) is recorded as
         a span. Recording is in-memory only; persistence happens off the hot path.
+
+        The pipeline always passes ``system_prompt``, ``tools_override``, and
+        ``tool_runner`` from the resolved profile — the fallback to
+        ``tools_spec(profile="billing")`` is only a safety net for tests.
         """
-        system = _SYSTEM_PROMPT.format(language=language)
+        from .tools import BILLING_SYSTEM_PROMPT as _DEFAULT_PROMPT
+        system = (system_prompt or _DEFAULT_PROMPT).format(language=language)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
         ]
         for msg in (history or []):
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": _compose_user_content(transcript, context)})
-        tools = tools_spec() if self.llm_tools_enabled else None
+        if tools_override is not None:
+            tools = tools_override if self.llm_tools_enabled else None
+        else:
+            tools = tools_spec(profile="billing") if self.llm_tools_enabled else None
         tool_names = [t["function"]["name"] for t in tools] if tools else []
         ctx = tool_ctx or ToolContext()
+        runner = tool_runner or (lambda n, a, c: run_tool(n, a, c, profile="billing"))
         tool_invocations: list[dict[str, Any]] = []
 
         for iteration in range(max(1, self.llm_max_tool_iterations)):
@@ -341,24 +302,40 @@ class DatabricksServing:
                 )
             message = self._chat(messages, tools=tools)
             tool_calls = message.get("tool_calls") or []
+            assistant_content = _message_text(message)
+            # Some serving endpoints don't return the structured `tool_calls` field and
+            # instead print the call as inline text in the content. Parse those so the
+            # tool actually EXECUTES, and strip the markup so it never leaks into the
+            # spoken/on-screen transcript.
+            if not tool_calls:
+                inline, cleaned = _extract_inline_tool_calls(assistant_content)
+                if inline:
+                    tool_calls = [
+                        {
+                            "id": f"inline_{i}",
+                            "function": {"name": c["name"], "arguments": json.dumps(c["arguments"])},
+                        }
+                        for i, c in enumerate(inline)
+                    ]
+                    assistant_content = cleaned
             logger.info(
                 "llm _chat iter %d: %dms tool_calls=%d",
                 iteration, round((time.perf_counter() - _t) * 1000), len(tool_calls),
             )
             if llm_span is not None:
                 llm_span.set_output({
-                    "content": message.get("content"),
+                    "content": assistant_content,
                     "tool_calls": tool_calls,
                 }).set_attribute("tool_call_count", len(tool_calls)).set_attribute(
                     "tool_calls_emitted", [((c.get("function") or {}).get("name")) for c in tool_calls]
                 ).end()
             if not tool_calls:
-                text = _message_text(message).strip()
+                text = _strip_tool_markup(assistant_content).strip()
                 if not text:
                     raise RuntimeError("LLM endpoint returned no response text")
                 return text, tool_invocations
             messages.append(
-                {"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls}
+                {"role": "assistant", "content": assistant_content, "tool_calls": tool_calls}
             )
             for call in tool_calls:
                 fn = call.get("function") or {}
@@ -371,7 +348,7 @@ class DatabricksServing:
                 if trace is not None:
                     tool_span = trace.span(f"tool.{name}", "TOOL", input=arguments)
                 _tt = time.perf_counter()
-                result = run_tool(name, arguments, ctx)
+                result = runner(name, arguments, ctx)
                 logger.info("tool %s: %dms", name, round((time.perf_counter() - _tt) * 1000))
                 messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": result})
                 try:
@@ -395,16 +372,46 @@ class DatabricksServing:
         logger.info("llm _chat final: %dms", round((time.perf_counter() - _t) * 1000))
         if final_span is not None:
             final_span.set_output({"content": message.get("content")}).end()
-        text = _message_text(message).strip()
+        text = _strip_tool_markup(_message_text(message)).strip()
         if not text:
             raise RuntimeError("LLM endpoint returned no response text after tool calls")
         return text, tool_invocations
 
-    def _chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> dict[str, Any]:
+    def summarize(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """One-shot, tool-free system+user completion returning plain text.
+
+        Public entrypoint for callers that need a bounded LLM completion (e.g. the
+        deep-dive spoken 'why' summary) WITHOUT reaching into the private ``_chat``
+        or spinning up a second serving client. ``temperature``/``max_tokens`` are
+        per-call overrides of the instance defaults for that specific need.
+        """
+        message = self._chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            tools=None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return _message_text(message).strip()
+
+    def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
         inputs: dict[str, Any] = {
             "messages": messages,
-            "max_tokens": self.llm_max_tokens,
-            "temperature": self.llm_temperature,
+            "max_tokens": self.llm_max_tokens if max_tokens is None else max_tokens,
+            "temperature": self.llm_temperature if temperature is None else temperature,
         }
         if tools:
             inputs["tools"] = tools
@@ -526,6 +533,82 @@ def _message_text(message: dict[str, Any]) -> str:
             if isinstance(part, dict) and part.get("type") in ("text", "output_text")
         )
     return ""
+
+
+_TOOL_CALL_TAG_RE = re.compile(r"</?\s*tool_call\s*>", re.IGNORECASE)
+
+
+def _iter_json_objects(text: str) -> Iterator[tuple[str, Any]]:
+    """Yield (raw_substring, parsed) for each top-level ``{...}`` JSON object.
+
+    A brace-matching scanner (string/escape aware) so it tolerates the malformed
+    markup some endpoints emit (e.g. unpaired ``<tool_call>`` tags) that a strict
+    regex would miss.
+    """
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        depth, j, in_str, esc = 0, i, False, False
+        while j < n:
+            ch = text[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    raw = text[i : j + 1]
+                    try:
+                        yield raw, json.loads(raw)
+                    except json.JSONDecodeError:
+                        pass
+                    break
+            j += 1
+        i = j + 1
+
+
+def _extract_inline_tool_calls(content: str) -> tuple[list[dict[str, Any]], str]:
+    """Parse tool calls a model emitted as inline TEXT and strip them from the text.
+
+    Some serving endpoints don't return the structured ``tool_calls`` field and
+    instead print the call in the message content, e.g.::
+
+        <tool_call> {"name": "start_deep_dive", "arguments": {...}} </tool_call>
+
+    Left unhandled, that raw markup both (a) leaks into the spoken + on-screen
+    transcript and (b) means the tool never actually runs. We only trigger when a
+    ``<tool_call>`` marker is present (so ordinary prose containing JSON is never
+    misread as a tool call), then extract every ``{"name": ...}`` object.
+
+    Returns ``(calls, cleaned_text)`` where ``calls`` is ``[{"name", "arguments"}]``.
+    """
+    if not content or "tool_call" not in content.lower():
+        return [], content
+    calls: list[dict[str, Any]] = []
+    cleaned = content
+    for raw, obj in _iter_json_objects(content):
+        if isinstance(obj, dict) and isinstance(obj.get("name"), str):
+            args = obj.get("arguments")
+            calls.append({"name": obj["name"], "arguments": args if isinstance(args, dict) else {}})
+            cleaned = cleaned.replace(raw, "")
+    cleaned = _TOOL_CALL_TAG_RE.sub("", cleaned).strip()
+    return calls, cleaned
+
+
+def _strip_tool_markup(text: str) -> str:
+    """Defense-in-depth: remove any stray inline tool-call markup from spoken text."""
+    _, cleaned = _extract_inline_tool_calls(text)
+    return cleaned if cleaned else text if "tool_call" not in (text or "").lower() else ""
 
 
 def _as_float(value: Any) -> float | None:

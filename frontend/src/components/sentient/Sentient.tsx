@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { InteractionLanguage, InteractionLanguageOption } from "../../api/client";
 import databricksLogo from "../../assets/databricks-logo.png";
 import genieLogo from "../../assets/genie-logo.png";
+import { VoiceBackdrop } from "../VoiceBackdrop";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -12,8 +13,9 @@ export function letterAt(index: number) {
 export function SentientShell({ children }: { children: ReactNode }) {
   return (
     <div className="sentient-app">
-      <div className="sentient-bg" aria-hidden="true" />
-      <div className="sentient-scrim" aria-hidden="true" />
+      {/* Shared background + flowing languages — same as every other voice surface.
+          No scrim here: it would sit above the backdrop and wash out the flow. */}
+      <VoiceBackdrop />
       <div className="sentient-frame">{children}</div>
     </div>
   );

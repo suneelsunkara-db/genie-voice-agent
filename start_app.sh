@@ -203,6 +203,11 @@ wait_http_ok "http://localhost:$UI_PORT" "UI" 30 || {
 }
 log "logs: $RUN_DIR/{api,frontend}.log"
 
+log "------------------------------------------------------------------"
+log "cockpit (telco):   http://localhost:$UI_PORT/#/"
+log "card assistant:    http://localhost:$UI_PORT/#/card"
+log "------------------------------------------------------------------"
+
 log "services running (api pid=$API_PID, frontend pid=$FRONTEND_PID). press Ctrl+C to stop."
 wait "$API_PID" "$FRONTEND_PID"
 

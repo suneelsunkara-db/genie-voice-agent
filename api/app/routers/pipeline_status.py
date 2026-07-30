@@ -53,10 +53,10 @@ def _supported_language_options(settings) -> list[dict[str, str]]:
     """
     try:
         from realtime_api.config import RealtimeSettings
-        from realtime_api.languages import language_options
+        from realtime_api.languages import language_payload
 
         rt = RealtimeSettings.resolve()
-        options = language_options(rt.supported_languages)
+        options = language_payload(rt.supported_languages).get("options") or []
         if options:
             return options
     except Exception:  # noqa: BLE001 — never let a config hiccup break /status

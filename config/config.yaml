@@ -204,6 +204,22 @@ datagen:
   num_calls: 60
   months_history: 4         # months of invoices per customer
 
+# Credit-card issuer domain (voice-first "why" assistant). A SEPARATE dataset +
+# Genie Agent that lives ALONGSIDE the contact-center demo above; the telco
+# schema/space/volumes are left untouched. Reuses databricks.catalog +
+# databricks.sql_warehouse_id; everything else is namespaced under its own schema.
+card_issuer:
+  enabled: true
+  schema: genie_voice_card_issuer          # own UC schema inside databricks.catalog
+  batch_volume: raw_batch_data             # reference files land here (in the card schema)
+  reference_subdir: reference
+  genie_space_name: "Genie Voice - Card Issuer"
+  # Deterministic generation. population = random cardholders IN ADDITION to the
+  # two hand-seeded, tie-out archetypes (CH-0001 Suneel = Statement Insights,
+  # CH-0002 Maya = Rewards Optimizer).
+  seed: 42
+  population: 30
+
 # Standalone realtime voice API (new API + new UI; independent of the sections
 # above). STT/TTS are packaged as MLflow ResponsesAgent (Databricks Agent
 # Framework, task = agent/v1/responses) and deployed as agent Model Serving
@@ -229,7 +245,35 @@ realtime_voice:
   # across en/th/id/zh at the lowest safe latency.
   tts_defaults:
     inference_timesteps: 6
+    # cfg_value is VoxCPM's classifier-free guidance. 2.0 is the validated,
+    # known-good value (shared with billing support). Lowering it to soften the
+    # delivery also destabilizes VoxCPM and garbles the audio, so keep it at 2.0
+    # and address voice "tone" via a pinned reference clip instead of this knob.
     cfg_value: 2.0
+  # Turn-taking / VAD timing knobs (previously code-only defaults). These tune how
+  # the server decides a caller's turn is over and when a talk-over counts as a
+  # barge-in. All optional — omitting a key keeps the built-in default shown here.
+  turn_taking:
+    vad_silence_ms: 2500     # trailing silence to end a turn (energy-VAD fallback)
+    max_turn_seconds: 20     # hard cap on a single turn's audio
+    min_speech_ms: 400       # min voiced audio before a turn can finalize (echo filter)
+    barge_in_ms: 700         # sustained talk-over needed to interrupt the reply
+    sample_rate_hz: 16000    # default capture rate when the client doesn't specify
+  # Operator-tunable serving/turn timeouts (deploy-varying: cold-start + endpoint
+  # provisioning differ per workspace). Micro-timeouts (filler grace, cooldowns)
+  # stay in code. All optional — omitting a key keeps the built-in default shown.
+  timeouts:
+    predict_s: 45            # synchronous STT/LLM predict request timeout
+    tts_stream_s: 180        # streaming TTS read timeout (a full reply can run long)
+    llm_turn_s: 50           # budget for one LLM turn (cold-start + tool rounds)
+  # Async deep-dive (Genie Agent Mode) settings. `read_timeout_s` is the single
+  # source of truth for BOTH the server SSE read timeout and the client stall
+  # watchdog (the client waits this + a small buffer), so they can't disagree.
+  # `summary_*` tune the short spoken "why" summarizer (factual → low temp, capped).
+  deep_dive:
+    read_timeout_s: 420
+    summary_temperature: 0.3
+    summary_max_tokens: 220
   # Semantic end-of-turn detection: a Silero VAD speech gate + the smart-turn v3
   # completeness model (bundled ONNX under realtime_api/models/, CPU-only). This
   # replaces the energy-RMS VAD, which held turns open on ambient noise and

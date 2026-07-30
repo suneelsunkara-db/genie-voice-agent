@@ -19,10 +19,19 @@ from .benchmarks import load_benchmarks
 from .capabilities import LEGACY_VOICE_PATH, SPEECH_LLM_TOOLASSIST_SPEECH
 from .config import RealtimeSettings
 from .endpointing import EndpointModels
-from .languages import DEFAULT_TAG, language_options
+from .languages import language_payload
 from .pipelines import ServingBundle
-from .services import DatabricksServing
+from .serving_factory import shared_serving
 from .ws.handler import ROUTES, capabilities_payload, make_ws_handler
+
+# Load built-in assistant profiles so they self-register (see profiles.py). This
+# side-effecting import lives at the composition root ON PURPOSE — it's the single
+# place that knows concrete profiles exist; the core voice loop stays generic and
+# never imports a specific domain.
+from . import tools as _billing_tools  # noqa: F401  — registers "billing" profile
+from . import card_tools as _card_tools  # noqa: F401  — registers "card" profile
+from . import concierge_tools as _concierge_tools  # noqa: F401  — registers "concierge"
+from . import hls_tools as _hls_tools  # noqa: F401  — registers "hls" profile
 
 logger = logging.getLogger("realtime_voice")
 
@@ -100,7 +109,7 @@ def create_app(
     bundle_factory: Callable[[RealtimeSettings], ServingBundle] | None = None,
 ) -> FastAPI:
     settings = settings or RealtimeSettings.resolve()
-    bundle_factory = bundle_factory or _databricks_bundle
+    bundle_factory = bundle_factory or _default_bundle
     app = FastAPI(title="Realtime Voice API", version="1.0.0")
     # The UI is a separate app (realtime_test_ui/) served from its own origin, so allow
     # cross-origin callers. WebSocket upgrades aren't CORS-gated, but this keeps
@@ -127,16 +136,10 @@ def create_app(
     @app.get("/v1/languages")
     async def languages() -> dict:
         # End-to-end supported languages (STT ∩ TTS); lets the UI show them on
-        # page load without opening a WebSocket session. Each option carries its
-        # BCP-47 tag + English name; the client resolves native labels via
+        # page load without opening a WebSocket session. One canonical payload
+        # (shared with the card page) — the client resolves native labels via
         # Intl.DisplayNames so there is no server-side per-language name map.
-        options = language_options(settings.supported_languages)
-        return {
-            "languages": [item["code"] for item in options],
-            "options": options,
-            "default": DEFAULT_TAG,
-            "count": len(options),
-        }
+        return language_payload(settings.supported_languages)
 
     @app.get("/v1/capabilities")
     async def capabilities() -> dict:
@@ -203,17 +206,13 @@ def create_app(
     return app
 
 
-def _databricks_bundle(settings: RealtimeSettings) -> ServingBundle:
-    serving = DatabricksServing.from_workspace(
-        stt_endpoint=settings.stt_endpoint,
-        llm_endpoint=settings.llm_endpoint,
-        tts_endpoint=settings.tts_endpoint,
-        llm_temperature=settings.llm_temperature,
-        llm_max_tokens=settings.llm_max_tokens,
-        llm_tools_enabled=settings.llm_tools_enabled,
-        llm_max_tool_iterations=settings.llm_max_tool_iterations,
-        tts_inference_timesteps=settings.tts_inference_timesteps,
-        tts_cfg_value=settings.tts_cfg_value,
-        stt_warmup_passes=settings.stt_warmup_passes,
-    )
+def _default_bundle(settings: RealtimeSettings) -> ServingBundle:
+    """Default serving bundle: the ONE config-driven construction path.
+
+    Returns a bundle backed by the process-wide ``shared_serving()`` singleton, so
+    every WebSocket connection AND the startup warm-up share the SAME serving
+    instance (one auth client; warm-up primes the very replicas that serve turns).
+    There is no second (mlflow) construction path.
+    """
+    serving = shared_serving()
     return ServingBundle(stt=serving, llm=serving, tts=serving)

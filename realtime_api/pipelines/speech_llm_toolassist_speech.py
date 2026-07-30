@@ -4,23 +4,33 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from functools import lru_cache
 from typing import AsyncIterator
 
 from ..capabilities import SPEECH_LLM_TOOLASSIST_SPEECH
 from ..languages import base_code, english_name
+from ..profiles import get_profile
 from ..session import VoiceSession
-from ..tools import ToolContext
 from ..tracing import TurnTrace, submit_trace
 from . import ServingBundle
 from ._shared import language_mismatch, resolve_language, stream_tts, transcribe
 
 logger = logging.getLogger("realtime_voice")
 
-# Maximum time (seconds) the LLM stage may take before we abort the turn and
-# surface an error. Covers cold-start + multi-tool-iteration loops. Must be
-# generous enough for 3 tool rounds but tight enough that a hung endpoint
-# doesn't leave the user staring at a spinner forever.
-_LLM_TIMEOUT_S = 50
+@lru_cache(maxsize=1)
+def _llm_turn_timeout_s() -> float:
+    """Config-sourced LLM per-turn budget (realtime_voice.timeouts.llm_turn_s).
+
+    Covers cold-start + multi-tool-iteration loops; generous enough for the tool
+    rounds but tight enough that a hung endpoint doesn't strand the caller. Cached
+    (config is static per process); falls back to the dataclass default on error.
+    """
+    try:
+        from ..config import RealtimeSettings
+
+        return float(RealtimeSettings.resolve().llm_turn_timeout_s)
+    except Exception:  # noqa: BLE001
+        return 50.0
 
 # How long to wait for the LLM before playing a spoken acknowledgment. Fast
 # turns (cached / no tool calls) return well under this, so they stay snappy and
@@ -64,6 +74,11 @@ async def warm_filler(bundle: ServingBundle, language: str) -> None:
 
 async def _warm_filler(bundle: ServingBundle, language: str) -> None:
     """Generate + cache the in-language filler once per language (background)."""
+    # No concrete language yet ("auto") → nothing to warm; the per-turn warm fires
+    # once STT resolves the actual language. Guarding here keeps a stray "auto"
+    # from caching an English clip under a bogus key.
+    if not language or language == "auto":
+        return
     base = base_code(language)
     if base in _FILLER_CACHE or base in _FILLER_WARMING:
         return
@@ -183,13 +198,16 @@ async def process_turn(
 
         session.history.append({"role": "user", "content": transcript})
 
-        tool_ctx = ToolContext(
-            customer_id=session.config.customer_id,
-            call_id=session.config.call_id,
-            _detected_language=language,
-            # Share the session-scoped account cache across turns (see VoiceSession).
-            account_store=session.account_store,
-        )
+        # Every session runs through a named profile (see profiles.py). Defaults
+        # to "billing" (the original telco contact-center behavior) when the
+        # frontend doesn't specify one.
+        profile = get_profile(session.config.profile or "billing")
+        tool_ctx = profile.make_context(session, language)
+        respond_extra: dict = {
+            "system_prompt": profile.system_prompt,
+            "tools_override": profile.tools_spec(),
+            "tool_runner": profile.tool_runner,
+        }
         t = time.perf_counter()
         respond_fn = getattr(bundle.llm, "respond_with_tools", None)
         tool_invocations: list[dict] = []
@@ -210,6 +228,7 @@ async def process_turn(
                 asyncio.to_thread(
                     respond_fn, transcript, language=language, context=context,
                     tool_ctx=tool_ctx, history=session.history[:-1], trace=trace,
+                    **respond_extra,
                 )
             )
         else:
@@ -240,12 +259,13 @@ async def process_turn(
                 trace.status = "superseded"
                 return
 
-            remaining = max(1.0, _LLM_TIMEOUT_S - (time.perf_counter() - t))
+            llm_timeout = _llm_turn_timeout_s()
+            remaining = max(1.0, llm_timeout - (time.perf_counter() - t))
             try:
                 result = await asyncio.wait_for(asyncio.shield(llm_task), timeout=remaining)
             except asyncio.TimeoutError:
-                logger.error("LLM timed out after %ds for turn %d", _LLM_TIMEOUT_S, turn_id)
-                raise RuntimeError(f"LLM response timed out after {_LLM_TIMEOUT_S}s") from None
+                logger.error("LLM timed out after %ss for turn %d", llm_timeout, turn_id)
+                raise RuntimeError(f"LLM response timed out after {llm_timeout}s") from None
         finally:
             if llm_task.done() and not llm_task.cancelled():
                 llm_task.exception()  # retrieve to avoid "exception never retrieved"
@@ -283,6 +303,12 @@ async def process_turn(
             "text": response_text,
             "llm_ms": llm_ms,
         }
+
+        # Let the profile persist any small cross-turn state (e.g. a selected use
+        # case) onto session.profile_state. Generic: the engine doesn't know or
+        # care what a given profile stores.
+        if profile.after_turn is not None:
+            profile.after_turn(tool_ctx, session)
 
         # The span's duration_ms is the FULL synthesis+stream (blocking) time.
         # tts_first_ms is the server-side time-to-first-audio (what the caller

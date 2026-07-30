@@ -521,13 +521,31 @@ class LakebaseServing:
 
     # ---- voice traces (observability) ------------------------------------- #
     def _ensure_traces_table(self, cur) -> None:
-        """Idempotently create the voice_traces table + indexes.
+        """Idempotently ensure the voice_traces table + indexes exist.
 
         Called from ensure_schema AND lazily from every trace read/write so a
         cold table (startup race, fresh Lakebase branch) can never surface as a
         500 or a dropped trace.
+
+        IMPORTANT: the serving role may have INSERT/SELECT on ``voice_traces`` but
+        NOT own it (a common Lakebase/Postgres setup where the table is created by
+        a migration role). In that case ``CREATE INDEX IF NOT EXISTS`` raises
+        ``InsufficientPrivilege`` — and, worse, poisons the surrounding
+        transaction so the caller's INSERT/SELECT then fails too. So we first
+        probe for the table with ``to_regclass`` (transaction-safe, never raises)
+        and skip ALL DDL when it already exists. The result is cached per process
+        so we probe at most once.
         """
+        if getattr(self, "_traces_table_ready", False):
+            return
         traces_tbl = self._table("voice_traces")
+        # Fast path: table already exists → no DDL, no ownership needed.
+        cur.execute("SELECT to_regclass(%s)", (traces_tbl,))
+        row = cur.fetchone()
+        if row and row[0] is not None:
+            self._traces_table_ready = True
+            return
+        # Cold table: create it (we necessarily own what we just created).
         self._ensure_serving_schema(cur)
         # Voice observability: one row per turn holding the full span tree
         # (STT → LLM iterations + tool calls → TTS). `trace` is the complete
@@ -564,6 +582,7 @@ class LakebaseServing:
             f"CREATE INDEX IF NOT EXISTS voice_traces_created_idx "
             f"ON {traces_tbl} (created_at DESC)"
         )
+        self._traces_table_ready = True
     def _trace_file(self) -> str:
         """Durable local store for traces when Lakebase is disabled (dev/offline).
 

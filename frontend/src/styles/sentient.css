@@ -2,7 +2,8 @@
 
 html:has(.sentient-app) body {
   margin: 0;
-  background: #3d8ec8;
+  /* Matches the shared <VoiceBackdrop /> deep-navy field used on every page. */
+  background: #080b14;
   color: #fff;
   height: 100dvh;
   overflow: hidden;
@@ -304,8 +305,11 @@ html:has(.sentient-app) body {
   flex-direction: column;
   border-radius: 16px;
   border: 1px solid var(--sentient-glass-border);
-  background: var(--sentient-glass-bg);
-  backdrop-filter: blur(14px);
+  /* Lighter frosted glass + gentler blur so the shared language flow stays
+     perceptible behind the panel (the heavy blur used to wipe it out). The
+     dense content sits on its own darker surfaces, so it stays readable. */
+  background: rgba(18, 20, 32, 0.34);
+  backdrop-filter: blur(7px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   overflow: hidden;
 }
@@ -369,6 +373,35 @@ html:has(.sentient-app) body {
   align-items: center;
   justify-content: center;
   padding: 12px 0 4px;
+}
+
+/* Minimal connecting state — no full-page architecture "flash" on refresh. */
+.sentient-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.sentient-loading-spinner {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.75);
+  animation: sentient-spin 0.85s linear infinite;
+}
+
+@keyframes sentient-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sentient-loading-spinner {
+    animation: none;
+  }
 }
 
 .sentient-arch-hero {
@@ -542,11 +575,12 @@ html:has(.sentient-app) body {
 
 .sentient-topbar-desc {
   margin: 0;
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.4;
   font-weight: var(--font-medium, 500);
   color: rgba(255, 255, 255, 0.92);
-  max-width: 78ch;
+  max-width: none;
+  white-space: nowrap;
 }
 
 /* Colorful value-prop highlights */
@@ -1977,6 +2011,39 @@ html:has(.sentient-app) body {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+/* Agent-initiated voice header — the Genie orb leads the conversation panel
+   (uniform with the card / healthcare / home surfaces), with the call status
+   line and the aligned End Call + Reset Scenario actions beneath it. */
+.sentient-voicebar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  /* Extra top room so the orb's expanding halo rings are never clipped by the
+     scroll container above — the whole "circle" reads cleanly. */
+  padding: 26px 0 18px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.sentient-voicebar .gv-orb {
+  flex: 0 0 auto;
+}
+.sentient-voicebar-status {
+  font-size: 0.85rem;
+  opacity: 0.75;
+  text-align: center;
+}
+.sentient-voicebar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sentient-voicebar-actions .sentient-btn-mic {
+  min-width: 160px;
 }
 
 .sentient-btn-mic {

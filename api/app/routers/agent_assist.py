@@ -8,12 +8,14 @@ streaming transcript can push true real-time insights.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import json
 import logging
 import time
 from typing import Any
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException
@@ -75,14 +77,42 @@ class GenieInsightIn(BaseModel):
     language: str | None = None
 
 
+@router.get("/greeting")
+async def greeting(language: str = "en-US", name: str = "") -> dict:
+    """The agent's opening greeting, generated in the caller's ``language``.
+
+    Same design as the card assistant's ``/card/greeting``: one multilingual-model
+    call renders the greeting for ANY supported language (cached per language+name).
+    The client speaks the returned text through the session's cloned voice, which
+    also locks a clean voice reference for the whole call. Returns ``{text}`` ("" if
+    serving is unavailable, so the client can just open the mic without speaking a
+    fake English line).
+    """
+    def _gen() -> dict:
+        try:
+            from realtime_api.tools import billing_greeting
+
+            return {"text": billing_greeting(language, name), "language": language}
+        except Exception:  # noqa: BLE001 — never let a serving hiccup break the open
+            return {"text": "", "language": language}
+
+    return await asyncio.to_thread(_gen)
+
+
 
 def _transcribe_with_deepgram(audio_bytes: bytes, mime_type: str, settings, language: str | None) -> str:
     key = settings.secrets.deepgram_api_key.strip()
     if not key:
         raise HTTPException(status_code=400, detail="DEEPGRAM_API_KEY is not configured")
-    lang = language_spec(language).deepgram_language
+    from genie_voice.providers.stt.deepgram import deepgram_query_params
+
+    params = deepgram_query_params(
+        settings.providers.stt.active_options(),
+        language=language_spec(language).deepgram_language,
+        streaming=False,
+    )
     req = Request(
-        f"https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true&language={lang}",
+        f"https://api.deepgram.com/v1/listen?{urlencode(params)}",
         data=audio_bytes,
         method="POST",
     )

@@ -14,6 +14,26 @@
  *   session.close();     // tear down session + mic
  */
 
+import {
+  isSpeechCaptionSupported,
+  startSpeechCaption,
+  type SpeechCaptionSession,
+} from "./micStream";
+
+/** Result of an async Genie Agent-mode "why" investigation (card profile). */
+export interface DeepDiveReport {
+  useCase: string | null;
+  status: string;
+  report: string;
+  // LLM-generated short spoken "why" (names the cause); the client speaks this
+  // instead of reading the full report. Absent -> client falls back to a heuristic.
+  spokenSummary: string | null;
+  tables: Array<Record<string, unknown>>;
+  sql: string[];
+  reasoning: string[];
+  error: unknown;
+}
+
 export interface RealtimeVoiceCallbacks {
   onSpeechStarted?: (turnId: number) => void;
   onTranscript?: (text: string, language: string, turnId: number) => void;
@@ -26,11 +46,39 @@ export interface RealtimeVoiceCallbacks {
   onError?: (code: string, message: string) => void;
   onSessionReady?: (sessionId: string, language: string) => void;
   onLevel?: (level: number) => void;
+  /**
+   * Live, on-device interim transcript (framework-managed browser caption).
+   *
+   * Fires with partial words AS the caller speaks so the UI can show text with
+   * zero server latency, and with "" when the turn's authoritative
+   * ``transcript.final`` arrives. Display-only — the server transcript is always
+   * the source of truth. No-op where the browser lacks Web Speech support.
+   */
+  onInterimTranscript?: (text: string, turnId: number) => void;
+}
+
+export interface StartRealtimeVoiceOptions {
+  /** Assistant profile. Omit for the telco cockpit; "card" for the card issuer. */
+  profile?: string;
+  /** Start with mic paused (agent-initiated greeting flows). The caller must
+   *  explicitly resumeMic() after the greeting finishes playing. */
+  startMicPaused?: boolean;
+  /** Live on-device caption preview (browser Web Speech API) while the caller
+   *  speaks, surfaced via ``onInterimTranscript``. Default true; set false to opt
+   *  out. Automatically a no-op where the browser lacks Web Speech support. */
+  liveCaption?: boolean;
 }
 
 export interface RealtimeVoiceSession {
   /** Signal end of user speech for the current turn (server VAD also auto-finalizes). */
   endTurn: () => void;
+  /**
+   * Speak agent text through THIS session (no STT turn). The audio streams back
+   * as normal response.audio events, so it shares the session's locked voice
+   * reference — used for the agent-initiated greeting and deep-dive summary so
+   * the whole call keeps ONE consistent voice.
+   */
+  synthesize: (text: string, language?: string) => void;
   /** Pause mic streaming (stop sending audio) without closing the session. */
   pauseMic: () => void;
   /** Resume mic streaming after a pause. */
@@ -71,7 +119,8 @@ export async function startRealtimeVoice(
   callId: string,
   customerId: string,
   callbacks: RealtimeVoiceCallbacks,
-  expectedLanguage?: string
+  expectedLanguage?: string,
+  options?: StartRealtimeVoiceOptions
 ): Promise<RealtimeVoiceSession> {
   // Capture RAW audio for ASR. The browser echo-canceller "locks onto" the TTS
   // playing through the speakers and then gates the caller's own voice into
@@ -82,6 +131,29 @@ export async function startRealtimeVoice(
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   });
+
+  // Framework-level live caption (shared by EVERY voice use case — no per-UI
+  // wiring). The server's STT is whole-utterance (no partials), so text can only
+  // appear after the caller stops + one inference. To show words WHILE the caller
+  // speaks, we run the browser's on-device recognizer purely as a preview and
+  // surface it via onInterimTranscript; the server's transcript.final stays
+  // authoritative. Best-effort: a no-op when unsupported or opted out. Its
+  // pause/resume is driven by the same mic gate used for half-duplex playback so
+  // it never transcribes the agent's own TTS.
+  let caption: SpeechCaptionSession | null = null;
+  let captionTurnId = 0;
+  const wantCaption =
+    (options?.liveCaption ?? true) && !!callbacks.onInterimTranscript && isSpeechCaptionSupported();
+  if (wantCaption) {
+    caption = startSpeechCaption(
+      (text) => callbacks.onInterimTranscript?.(text, captionTurnId),
+      undefined,
+      expectedLanguage || "en-US"
+    );
+    // Agent-initiated flows open with the mic paused (greeting plays first); keep
+    // the caption paused until the mic is resumed so it doesn't hear the greeting.
+    if (options?.startMicPaused) caption?.pause();
+  }
 
   // Request a 16 kHz context; modern Chrome/Edge/Safari honor this and hand back
   // high-quality (browser-resampled) 16 kHz audio. But some browsers/devices
@@ -129,6 +201,8 @@ export async function startRealtimeVoice(
 
   const cleanup = () => {
     closed = true;
+    caption?.close();
+    caption = null;
     cancelAnimationFrame(levelRaf);
     processor.onaudioprocess = null;
     processor.disconnect();
@@ -155,6 +229,8 @@ export async function startRealtimeVoice(
           // STT still auto-detects; this is only used to warn on a mismatch
           // between what the agent selected and what the caller actually speaks.
           ...(expectedLanguage ? { expected_language: expectedLanguage } : {}),
+          // "card" selects the agent-initiated credit-card assistant; omitted for telco.
+          ...(options?.profile ? { profile: options.profile } : {}),
         })
       );
       resolve();
@@ -177,6 +253,7 @@ export async function startRealtimeVoice(
           callbacks.onSessionReady?.(msg.session_id, msg.language);
           break;
         case "speech.started":
+          captionTurnId = typeof msg.turn_id === "number" ? msg.turn_id : captionTurnId;
           callbacks.onSpeechStarted?.(msg.turn_id);
           break;
         case "turn.started":
@@ -185,6 +262,10 @@ export async function startRealtimeVoice(
         case "transcript.final":
           detectedLanguage = msg.language ?? detectedLanguage;
           callbacks.onTranscript?.(msg.text, msg.language, msg.turn_id);
+          // Authoritative transcript arrived: drop the preview and clear the UI's
+          // interim so it doesn't linger next to the finalized turn.
+          caption?.reset();
+          callbacks.onInterimTranscript?.("", msg.turn_id);
           break;
         case "response.text":
           callbacks.onResponseText?.(msg.text, msg.turn_id);
@@ -220,7 +301,7 @@ export async function startRealtimeVoice(
   };
 
   // Stream mic audio as binary PCM frames
-  let micPaused = false;
+  let micPaused = options?.startMicPaused ?? false;
   processor.onaudioprocess = (event) => {
     if (closed || micPaused || ws.readyState !== WebSocket.OPEN) return;
     const channel = event.inputBuffer.getChannelData(0);
@@ -233,11 +314,20 @@ export async function startRealtimeVoice(
         ws.send(JSON.stringify({ type: "audio.end" }));
       }
     },
+    synthesize: (text: string, language?: string) => {
+      if (!closed && ws.readyState === WebSocket.OPEN && text.trim()) {
+        ws.send(JSON.stringify({ type: "synthesize", text, language: language || undefined }));
+      }
+    },
     pauseMic: () => {
       micPaused = true;
+      // Pause the on-device caption in lockstep so it can't transcribe the
+      // agent's TTS coming from the speakers (same half-duplex discipline as mic).
+      caption?.pause();
     },
     resumeMic: () => {
       micPaused = false;
+      caption?.resume();
     },
     close: () => {
       if (!closed) {
@@ -292,31 +382,73 @@ export function decodePcmChunk(
  */
 export class AudioPlaybackQueue {
   private ctx: AudioContext;
+  private analyser: AnalyserNode;
+  private levelBuf: Uint8Array;
   private nextStartTime: number = 0;
   private playing: boolean = false;
+  // Currently scheduled/playing sources, so flush() can stop them on the SAME
+  // context instead of tearing the context down (see flush()).
+  private sources: Set<AudioBufferSourceNode> = new Set();
 
   constructor(sampleRate: number = 24_000) {
     this.ctx = new AudioContext({ sampleRate });
+    this.analyser = this.makeAnalyser();
+    this.levelBuf = new Uint8Array(this.analyser.fftSize);
+  }
+
+  private makeAnalyser(): AnalyserNode {
+    // Route TTS through an analyser so callers can drive a speaking orb from the
+    // ACTUAL audio amplitude (true lip-sync feel) rather than a synthetic wobble.
+    const analyser = this.ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.6;
+    analyser.connect(this.ctx.destination);
+    return analyser;
   }
 
   enqueue(samples: Float32Array, sampleRate: number): void {
+    // Agent-initiated speech (the card greeting / deep-dive summary) is enqueued
+    // from a WS callback, not a user gesture, so the context can be "suspended".
+    // Resume it here (idempotent, no-op if already running) — otherwise scheduled
+    // sources pile up silently and then all fire at once when the context later
+    // resumes, which sounds like badly garbled/overlapping audio.
+    if (this.ctx.state === "suspended") void this.ctx.resume();
+
     const buffer = this.ctx.createBuffer(1, samples.length, sampleRate);
     buffer.copyToChannel(samples as unknown as Float32Array<ArrayBuffer>, 0);
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.ctx.destination);
+    source.connect(this.analyser);
 
     const now = this.ctx.currentTime;
     const startAt = Math.max(now, this.nextStartTime);
     source.start(startAt);
     this.nextStartTime = startAt + buffer.duration;
     this.playing = true;
+    this.sources.add(source);
 
     source.onended = () => {
+      this.sources.delete(source);
       if (this.ctx.currentTime >= this.nextStartTime - 0.01) {
         this.playing = false;
       }
     };
+  }
+
+  /**
+   * Current output loudness in [0, 1], derived from the live waveform (RMS with
+   * a mild curve so quiet speech still nudges the orb). Returns 0 when idle.
+   */
+  getLevel(): number {
+    if (!this.playing) return 0;
+    this.analyser.getByteTimeDomainData(this.levelBuf as unknown as Uint8Array<ArrayBuffer>);
+    let sumSq = 0;
+    for (let i = 0; i < this.levelBuf.length; i++) {
+      const v = (this.levelBuf[i] - 128) / 128; // center silence at 0
+      sumSq += v * v;
+    }
+    const rms = Math.sqrt(sumSq / this.levelBuf.length);
+    return Math.min(1, Math.pow(rms * 2.2, 0.8));
   }
 
   /** Milliseconds until all currently-queued audio finishes playing (0 if idle). */
@@ -326,17 +458,208 @@ export class AudioPlaybackQueue {
 
   /** Stop all queued audio immediately. */
   flush(): void {
+    // Stop the scheduled sources on the EXISTING context rather than closing and
+    // recreating it. Recreating an AudioContext outside a user gesture (this is
+    // called before the agent's greeting / each deep-dive summary, from a WS
+    // callback) yields a "suspended" context, so the freshly-enqueued audio
+    // stacks up and later plays all at once — the "totally messed up" garble.
+    // Reusing the original (running) context keeps playback clean.
+    for (const source of this.sources) {
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        /* already stopped/ended */
+      }
+      source.disconnect();
+    }
+    this.sources.clear();
     this.nextStartTime = 0;
     this.playing = false;
-    void this.ctx.close();
-    this.ctx = new AudioContext({ sampleRate: this.ctx.sampleRate });
+    if (this.ctx.state === "suspended") void this.ctx.resume();
   }
 
   get isPlaying(): boolean {
     return this.playing;
   }
 
+  /** Resume the audio context. Call from a real user gesture (e.g. tapping the
+   *  Genie orb) to unblock playback when the browser suspended the context
+   *  because the call auto-started without a prior interaction. */
+  resume(): void {
+    if (this.ctx.state === "suspended") void this.ctx.resume();
+  }
+
   close(): void {
     void this.ctx.close();
   }
+}
+
+/**
+ * Speak server-synthesized text through the EXISTING TTS API, into a shared
+ * playback queue. Used for the agent's opening greeting and the deep-dive spoken
+ * summary — both of which are plain TTS, so they need no change to the STT→LLM→TTS
+ * voice engine. Resolves once playback has been fully enqueued.
+ */
+export function synthesizeToPlayback(
+  wsBaseUrl: string,
+  text: string,
+  language: string | undefined,
+  playback: AudioPlaybackQueue,
+  opts?: { onStart?: () => void }
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${wsBaseUrl}/realtime/v1/text-to-speech`);
+    ws.binaryType = "arraybuffer";
+    let started = false;
+    let doneTimer = 0;
+    const finish = () => {
+      try {
+        ws.close();
+      } catch {
+        /* already closing */
+      }
+      resolve();
+    };
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          type: "session.start",
+          language: language || "en-US",
+          sample_rate_hz: 24_000,
+          encoding: "pcm_s16le",
+        })
+      );
+    };
+    ws.onmessage = (ev) => {
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(String(ev.data));
+      } catch {
+        return;
+      }
+      switch (msg.type) {
+        case "session.ready":
+          ws.send(JSON.stringify({ type: "synthesize", text, language: language || undefined }));
+          break;
+        case "response.audio": {
+          if (!started) {
+            started = true;
+            opts?.onStart?.();
+          }
+          const { samples } = decodePcmChunk(msg.audio_b64 as string, msg.sample_rate_hz as number);
+          playback.enqueue(samples, msg.sample_rate_hz as number);
+          if (msg.final) {
+            if (doneTimer) window.clearTimeout(doneTimer);
+            doneTimer = window.setTimeout(finish, playback.msUntilIdle() + 200);
+          }
+          break;
+        }
+        case "error":
+          try {
+            ws.close();
+          } catch {
+            /* already closing */
+          }
+          reject(new Error(String(msg.message ?? "TTS failed")));
+          break;
+      }
+    };
+    ws.onerror = () => reject(new Error("TTS connection failed"));
+    ws.onclose = () => {
+      if (!started) resolve();
+    };
+  });
+}
+
+export interface DeepDiveHandlers {
+  /** Server's single-source timeout for this run (ms); use to size the client watchdog. */
+  onMeta?: (timeoutMs: number) => void;
+  onStep?: (step: "reasoning" | "sql", text: string) => void;
+  onReport?: (report: DeepDiveReport) => void;
+  onError?: (message: string) => void;
+  onDone?: () => void;
+}
+
+/**
+ * Stream a Genie Agent-mode "why" investigation from the app backend's SSE proxy
+ * (`GET /card/deepdive`). This calls the Genie Agent Mode API directly through the
+ * proxy — entirely OFF the voice WebSocket — surfacing reasoning steps + SQL live
+ * and the final report. Returns a cancel function.
+ */
+export interface DeepDiveMeta {
+  callId?: string | null;
+  sessionId?: string | null;
+  customerId?: string | null;
+  language?: string | null;
+}
+
+export function streamDeepDive(
+  apiBaseUrl: string,
+  question: string,
+  useCase: string | null,
+  handlers: DeepDiveHandlers,
+  meta?: DeepDiveMeta
+): () => void {
+  const params = new URLSearchParams({ question });
+  if (useCase) params.set("use_case", useCase);
+  // Link the deep-dive trace to the originating voice call (Trace Explorer).
+  if (meta?.callId) params.set("call_id", meta.callId);
+  if (meta?.sessionId) params.set("session_id", meta.sessionId);
+  if (meta?.customerId) params.set("customer_id", meta.customerId);
+  if (meta?.language) params.set("language", meta.language);
+  const es = new EventSource(`${apiBaseUrl}/card/deepdive?${params.toString()}`);
+  let settled = false;
+  const stop = () => {
+    settled = true;
+    es.close();
+  };
+  es.onmessage = (e) => {
+    let ev: Record<string, unknown>;
+    try {
+      ev = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    switch (ev.kind) {
+      case "meta":
+        if (typeof ev.timeout_ms === "number") handlers.onMeta?.(ev.timeout_ms);
+        break;
+      case "reasoning":
+        handlers.onStep?.("reasoning", String(ev.text ?? ""));
+        break;
+      case "sql":
+        handlers.onStep?.("sql", String(ev.sql ?? ""));
+        break;
+      case "report":
+        handlers.onReport?.({
+          useCase: (ev.use_case as string) ?? useCase ?? null,
+          status: (ev.status as string) ?? "unknown",
+          report: (ev.report as string) ?? "",
+          spokenSummary: (ev.spoken_summary as string) ?? null,
+          tables: (ev.tables as Array<Record<string, unknown>>) ?? [],
+          sql: (ev.sql as string[]) ?? [],
+          reasoning: (ev.reasoning as string[]) ?? [],
+          error: null,
+        });
+        break;
+      case "error":
+        handlers.onError?.(
+          String((ev.error as { message?: string } | undefined)?.message ?? "Investigation failed")
+        );
+        break;
+      case "done":
+        stop();
+        handlers.onDone?.();
+        break;
+    }
+  };
+  es.onerror = () => {
+    if (!settled) {
+      stop();
+      handlers.onError?.("Deep-dive connection lost.");
+      handlers.onDone?.();
+    }
+  };
+  return stop;
 }

@@ -50,7 +50,13 @@ ROUTES: tuple[RouteSpec, ...] = (
         capability=SPEECH_LLM_TOOLASSIST_SPEECH,
         path="/v1/speech-llm-toolassist-speech",
         accepts_audio=True,
-        accepts_synthesize=False,
+        # Also accept `synthesize`: agent-initiated flows (e.g. the card assistant's
+        # opening greeting and its deep-dive spoken summary) speak text WITHOUT a
+        # preceding STT turn. Routing them through THIS session — instead of a
+        # separate /text-to-speech socket — means they share the session's locked
+        # voice reference, so the caller hears ONE consistent voice for the whole
+        # call rather than a different timbre per side-channel utterance.
+        accepts_synthesize=True,
         supports_barge_in=True,
     ),
     RouteSpec(
@@ -220,8 +226,15 @@ async def handle_voice_ws(
                 )
                 # Pre-warm the spoken filler for the selected language while the
                 # caller speaks their first (often cold, tool-heavy) turn, so a
-                # slow turn plays "one moment" instead of dead air.
-                if spec.capability == SPEECH_LLM_TOOLASSIST_SPEECH:
+                # slow turn plays "one moment" instead of dead air. Only when a
+                # CONCRETE language was selected: with "auto" there's no language
+                # yet, so warming here would generate a wrong-language clip; the
+                # per-turn warm (after STT resolves the language) covers that case.
+                if (
+                    spec.capability == SPEECH_LLM_TOOLASSIST_SPEECH
+                    and session.config.language
+                    and session.config.language != "auto"
+                ):
                     asyncio.ensure_future(
                         assist_pipeline.warm_filler(bundle, session.config.language)
                     )
@@ -284,8 +297,11 @@ async def handle_voice_ws(
     finally:
         log_event("ws.close", session_id=session_id, capability=spec.capability)
         if task and not task.done():
+            # Let the in-flight final turn drain on graceful shutdown, but never
+            # longer than one LLM turn budget (+5s buffer) — derived from the same
+            # config value the pipeline enforces, so the two can't disagree.
             try:
-                await asyncio.wait_for(task, timeout=55)
+                await asyncio.wait_for(task, timeout=settings.llm_turn_timeout_s + 5)
             except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
                 task.cancel()
         try:

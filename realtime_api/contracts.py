@@ -88,6 +88,10 @@ class SessionStart:
     # turn (``language`` stays "auto"); this is only used to warn the caller when
     # the detected speech doesn't match what they picked. None disables the check.
     expected_language: str | None = None
+    # Assistant profile name. None (default) runs the built-in telco contact-center
+    # behavior; any other value selects a registered VoiceProfile (see profiles.py).
+    # The engine stays domain-agnostic — it never names a specific profile here.
+    profile: str | None = None
 
     @classmethod
     def from_event(cls, payload: dict) -> "SessionStart":
@@ -106,6 +110,14 @@ class SessionStart:
         encoding = str(payload.get("encoding") or "pcm_s16le")
         if encoding != "pcm_s16le":
             raise ValueError("Only pcm_s16le input is supported in v1")
+        profile = _optional_str(payload.get("profile"))
+        if profile is not None:
+            from .profiles import profile_names
+
+            known = profile_names()
+            if profile not in known:
+                allowed = ", ".join(sorted(known)) or "(none registered)"
+                raise ValueError(f"unknown profile {profile!r}; registered profiles: {allowed}")
         return cls(
             language=language,
             sample_rate_hz=sample_rate_hz,
@@ -116,6 +128,7 @@ class SessionStart:
             call_id=_optional_str(payload.get("call_id")),
             customer_id=_optional_str(payload.get("customer_id")),
             expected_language=expected_language,
+            profile=profile,
         )
 
 

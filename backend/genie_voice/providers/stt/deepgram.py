@@ -20,6 +20,51 @@ from genie_voice.models.contracts import CanonicalWord, TranscriptEvent
 from ..base import STTProvider
 
 
+def deepgram_query_params(
+    options: dict[str, Any],
+    *,
+    language: str,
+    streaming: bool,
+    sample_rate: int | None = None,
+) -> dict[str, str]:
+    """Deepgram ``/listen`` query params built from the config ``options`` block.
+
+    The MODEL and formatting flags (``smart_format``/``punctuate``/``endpointing_ms``)
+    come from ``providers.stt.options.deepgram`` in config — never a hardcoded
+    ``nova-3`` in a route. Transport-shape params (``encoding``/``sample_rate``/
+    ``channels``/``interim_results``) are decided by the caller's transport, not
+    config, because the live browser feed is always mono linear16 PCM (diarize /
+    multichannel from config apply to the offline dual-channel bronze path, not
+    these single-mic live/prerecorded callers).
+
+    ``streaming`` selects the live listen socket (adds encoding/sample_rate/channels/
+    interim_results); otherwise it's the prerecorded upload (mime carries the codec).
+    """
+
+    def _flag(key: str, default: bool) -> str:
+        return "true" if bool(options.get(key, default)) else "false"
+
+    params: dict[str, str] = {
+        "model": str(options.get("model") or "nova-3"),
+        "smart_format": _flag("smart_format", True),
+        "punctuate": _flag("punctuate", True),
+        "language": language,
+    }
+    if streaming:
+        endpointing_ms = options.get("endpointing_ms")
+        if endpointing_ms is not None:
+            params["endpointing"] = str(int(endpointing_ms))
+        params.update(
+            {
+                "interim_results": "true",
+                "encoding": "linear16",
+                "sample_rate": str(int(sample_rate or 16000)),
+                "channels": "1",
+            }
+        )
+    return params
+
+
 def _as_list(value: Any) -> list:
     """Coerce a value to a plain Python list.
 

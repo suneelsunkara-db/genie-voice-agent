@@ -281,6 +281,23 @@ def canonical_business_context_instruction(language: str | None) -> str:
 
 
 def localized_reply_opener(language: str | None, *, genie_insight: bool) -> str:
+    """Grounding opener for a billing reply — a hand-authored PROMPT fragment.
+
+    This carries a truthfulness contract: "Based on Genie insights" may ONLY be
+    used when a real Genie insight was fetched (``genie_insight=True``); otherwise
+    it must fall back to a neutral account-grounded opener so the claim is never
+    false. The wording is hand-authored (not LLM-generated) so that contract is
+    exact and testable.
+
+    Coverage is deliberately the contact-center demo's benchmarked languages
+    (en/th/id/zh) — the SAME set the deterministic reply templates in
+    ``assist/reply_plan.py`` cover, since the opener is prepended verbatim there.
+    For any OTHER language there is no deterministic template; that path is served
+    by the FM, which is instructed to start with "the equivalent of" this opener
+    and thus renders it in the caller's language (no English is spoken). This is a
+    prompt, so per the config policy it stays in code rather than being externalized
+    or LLM-generated (which would add latency to the deterministic fallback).
+    """
     language_code = content_language(language)
     if language_code == "th-TH":
         return "จากข้อมูลของ Genie " if genie_insight else "จากข้อมูลบัญชีของคุณ "

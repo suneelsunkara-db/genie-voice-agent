@@ -20,8 +20,13 @@ from genie_voice.i18n import (
 
 
 class GenieClient:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, *, space_name: str | None = None) -> None:
         self.settings = settings or get_settings()
+        # The Genie space is resolved BY NAME (never a hardcoded id). Callers that
+        # target a non-default space (e.g. the card issuer) pass ``space_name``
+        # explicitly instead of poking the private ``_space_id`` — so the
+        # stale-space retry below re-resolves the RIGHT space, not the default.
+        self._space_name: str = space_name or self.settings.databricks.genie_space_name
         self._space_id: str | None = None
 
     @staticmethod
@@ -41,7 +46,7 @@ class GenieClient:
             from genie_voice.databricks.client import get_workspace_client
 
             client = get_workspace_client(self.settings)
-            matches = find_space_ids(client, self.settings.databricks.genie_space_name)
+            matches = find_space_ids(client, self._space_name)
             if len(matches) > 1:
                 raise RuntimeError(
                     "Multiple Genie spaces share the configured name; run "

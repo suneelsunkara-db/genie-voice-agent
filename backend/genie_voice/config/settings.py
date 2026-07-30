@@ -194,6 +194,23 @@ class DatagenConfig(BaseModel):
     months_history: int = 4
 
 
+class CardIssuerConfig(BaseModel):
+    """Credit-card issuer domain: a separate dataset + Genie Agent that lives
+    alongside the contact-center demo. Reuses databricks.catalog and
+    databricks.sql_warehouse_id; namespaced under its OWN schema so the telco
+    tables/volumes/space are never touched."""
+    model_config = {"populate_by_name": True}
+
+    enabled: bool = False
+    schema_name: str = Field("genie_voice_card_issuer", alias="schema")
+    batch_volume: str = "raw_batch_data"
+    reference_subdir: str = "reference"
+    genie_space_name: str = "Genie Voice - Card Issuer"
+    # `population` = random cardholders IN ADDITION to the two hand-seeded archetypes.
+    seed: int = 42
+    population: int = 30
+
+
 class Secrets(BaseModel):
     """Vendor API keys / tokens for live STT/TTS and model-weight downloads.
 
@@ -224,6 +241,7 @@ class Settings(BaseModel):
     pipeline: PipelineConfig
     enrichment: EnrichmentConfig
     datagen: DatagenConfig
+    card_issuer: CardIssuerConfig
     secrets: Secrets
 
     # ---- deployment helpers ----
@@ -284,6 +302,22 @@ class Settings(BaseModel):
         """Fully qualified UC synced-table object name for Lakebase managed sync."""
         return self.fqtn(self.lakebase_synced_table_name(source_table))
 
+    # ---- credit-card issuer domain resolvers (own schema/volume) ----
+    def card_fqtn(self, table: str) -> str:
+        """Fully qualified card-issuer table name catalog.card_schema.table."""
+        return f"{self.databricks.catalog}.{self.card_issuer.schema_name}.{table}"
+
+    @property
+    def card_reference_path(self) -> str:
+        """Volume dir where the card-issuer reference files land."""
+        return (
+            f"/Volumes/{self.databricks.catalog}/{self.card_issuer.schema_name}/"
+            f"{self.card_issuer.batch_volume}/{self.card_issuer.reference_subdir}"
+        )
+
+    def card_reference_table_path(self, table: str) -> str:
+        return f"{self.card_reference_path}/{table}"
+
     @property
     def databricks_host(self) -> str:
         # Config is authoritative. DATABRICKS_HOST is only a last-resort fallback
@@ -329,6 +363,57 @@ def _looks_like_template_config(raw: dict[str, Any]) -> bool:
     return "<your-workspace>" in host
 
 
+class ConfigError(RuntimeError):
+    """Raised when the loaded config omits a deploy-identifying value.
+
+    These values POINT AT A WORKSPACE TARGET (catalog/schema/instance/endpoint/
+    space). A missing one used to fall back to a built-in default and silently
+    read/write the WRONG resource; we now fail fast at load with a clear message.
+    """
+
+
+def _validate_required(raw: dict[str, Any]) -> None:
+    """Fail fast if the (merged) config omits a deploy-identifying value.
+
+    Only checks values that identify a concrete workspace target, and only for
+    features that are actually enabled — a disabled feature has no target so its
+    keys aren't required. Operator-tunable knobs (with sensible code defaults)
+    are intentionally NOT checked here.
+    """
+    databricks = raw.get("databricks") or {}
+    enrichment = raw.get("enrichment") or {}
+    lakebase = raw.get("lakebase") or {}
+    card = raw.get("card_issuer") or {}
+
+    missing: list[str] = []
+
+    def _need(present: Any, dotted: str) -> None:
+        if not str(present or "").strip():
+            missing.append(dotted)
+
+    # Always required: the core UC target + the FM serving endpoint.
+    _need(databricks.get("catalog"), "databricks.catalog")
+    _need(databricks.get("schema"), "databricks.schema")
+    _need(databricks.get("genie_space_name"), "databricks.genie_space_name")
+    _need(enrichment.get("model_endpoint"), "enrichment.model_endpoint")
+
+    # Required only when the feature is turned on (else there is no target).
+    if bool(lakebase.get("enabled")):
+        _need(lakebase.get("instance"), "lakebase.instance")
+        _need(lakebase.get("schema"), "lakebase.schema")
+    if bool(card.get("enabled")):
+        _need(card.get("schema"), "card_issuer.schema")
+        _need(card.get("genie_space_name"), "card_issuer.genie_space_name")
+
+    if missing:
+        raise ConfigError(
+            "Config is missing required deploy-identifying value(s): "
+            + ", ".join(missing)
+            + f". Set them in {_config_path()} (or config.local.yaml). These "
+            "identify a workspace target and have no safe default."
+        )
+
+
 def _load_secrets(yaml_secrets: dict[str, Any] | None = None) -> Secrets:
     sec = yaml_secrets or {}
 
@@ -355,6 +440,7 @@ def get_settings() -> Settings:
         load_dotenv()  # fall back to default search
 
     raw = _load_yaml()
+    _validate_required(raw)
 
     yaml_secrets = raw.pop("secrets", None) or {}
 
@@ -370,5 +456,6 @@ def get_settings() -> Settings:
         pipeline=PipelineConfig(**raw.get("pipeline", {})),
         enrichment=EnrichmentConfig(**raw.get("enrichment", {})),
         datagen=DatagenConfig(**raw.get("datagen", {})),
+        card_issuer=CardIssuerConfig(**raw.get("card_issuer", {})),
         secrets=_load_secrets(yaml_secrets),
     )

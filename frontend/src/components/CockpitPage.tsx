@@ -5,14 +5,12 @@ import {
   InteractionLanguageOption,
   StatusResponse,
 } from "../api/client";
-import architectureHero from "../assets/genie-voice-architecture.jpg";
 import { sortCustomersForQueue, SPOTLIGHT_CUSTOMER_ID, useCustomerCall } from "../hooks/useCustomerCall";
 import { customerIssueTags } from "../lib/customerIssues";
 import { contentLanguage, languageLabel, uiCopy } from "../i18n";
 import { CockpitSession } from "./CallList";
 import {
   letterAt,
-  SentientBrandLockup,
   SentientChoice,
   SentientHCol,
   SentientStep,
@@ -20,12 +18,11 @@ import {
   type TopBarHighlight,
 } from "./sentient/Sentient";
 
-function CockpitLoadingHero({ alt, status }: { alt: string; status: string }) {
+function CockpitLoadingHero({ status }: { status: string }) {
   return (
     <div className="sentient-cockpit sentient-cockpit-loading">
-      <div className="sentient-arch-hero">
-        <SentientBrandLockup className="sentient-brand-lockup-hero" />
-        <img src={architectureHero} alt={alt} className="sentient-arch-hero-img" />
+      <div className="sentient-loading">
+        <span className="sentient-loading-spinner" aria-hidden="true" />
         <p className="sentient-arch-hero-status" aria-live="polite">
           {status}
         </p>
@@ -110,20 +107,8 @@ export function CockpitPage({
     [copy]
   );
 
-  // Highlight the Asian languages in the top-bar context (native names), drawn
-  // from whatever the config actually supports — a headline feature of the demo.
-  const asianLanguageChips = useMemo(() => {
-    const asian = new Set([
-      "th", "ja", "ko", "zh", "vi", "id", "ms", "fil", "hi", "yue", "km", "lo", "my",
-    ]);
-    return languageOptions
-      .filter((item) => asian.has(item.code.split("-")[0].toLowerCase()))
-      .map((item) => item.label ?? item.english_name ?? item.code)
-      .filter((name): name is string => Boolean(name));
-  }, [languageOptions]);
-
   if (customersLoading && !customers.length) {
-    return <CockpitLoadingHero alt={copy.cockpitArchitectureAlt} status={copy.connectingWorkspace} />;
+    return <CockpitLoadingHero status={copy.connectingWorkspace} />;
   }
 
   if (!sortedCustomers.length) {
@@ -145,8 +130,6 @@ export function CockpitPage({
             contextKicker={copy.voiceStackKicker}
             contextDesc={copy.voiceStackDesc(supportedLanguageCount)}
             highlights={topBarHighlights}
-            languagesNote={copy.voiceStackLangs(supportedLanguageCount)}
-            languageChips={asianLanguageChips}
             languageLabel={copy.interactionLanguage}
             options={languageOptions}
             value={interactionLanguage}

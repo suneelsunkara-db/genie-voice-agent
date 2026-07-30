@@ -1,0 +1,92 @@
+/* Shared voice backdrop — one background + language flow + color theme for every
+   use-case page (home, billing, card, healthcare). Deep-navy field, lava-red +
+   Genie-purple glows, supported languages drifting like water. */
+
+:root {
+  --gv-bg: #080b14;
+  --gv-lava: #ff3621;
+  --gv-lava-soft: #ff6b5c;
+  --gv-genie: #7c6cff;
+  --gv-genie-soft: #4ea8ff;
+}
+
+.gv-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 520px at 80% -14%, rgba(255, 54, 33, 0.13), transparent 60%),
+    radial-gradient(880px 560px at 10% 118%, rgba(124, 108, 255, 0.17), transparent 60%),
+    var(--gv-bg);
+}
+
+.gv-langflow {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  opacity: 0.42;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+.gv-langflow-row {
+  display: flex;
+  gap: 46px;
+  white-space: nowrap;
+  width: max-content;
+  will-change: transform;
+}
+
+.gv-langflow-row-0 {
+  animation: gv-drift-left 56s linear infinite;
+}
+.gv-langflow-row-1 {
+  animation: gv-drift-right 70s linear infinite;
+}
+.gv-langflow-row-2 {
+  animation: gv-drift-left 84s linear infinite;
+}
+
+.gv-langflow-word {
+  font-size: clamp(20px, 3.2vh, 30px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: transparent;
+  background: linear-gradient(180deg, rgba(255, 107, 92, 0.55), rgba(124, 108, 255, 0.48));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+@keyframes gv-drift-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes gv-drift-right {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Content sits above the backdrop. */
+.gv-content {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gv-langflow-row {
+    animation: none;
+  }
+}

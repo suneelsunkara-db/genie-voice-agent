@@ -15,35 +15,23 @@ import logging
 import os
 
 from .app import create_app
-from .config import RealtimeSettings, databricks_profile
+from .config import RealtimeSettings
 from .pipelines import ServingBundle
-from .services import DatabricksServing
+from .serving_factory import shared_serving
 
 
-def _bundle_factory(profile: str | None):
-    def factory(settings: RealtimeSettings) -> ServingBundle:
-        serving = DatabricksServing.from_sdk(
-            stt_endpoint=settings.stt_endpoint,
-            llm_endpoint=settings.llm_endpoint,
-            tts_endpoint=settings.tts_endpoint,
-            profile=profile,
-            llm_temperature=settings.llm_temperature,
-            llm_max_tokens=settings.llm_max_tokens,
-            llm_tools_enabled=settings.llm_tools_enabled,
-            llm_max_tool_iterations=settings.llm_max_tool_iterations,
-            tts_inference_timesteps=settings.tts_inference_timesteps,
-            tts_cfg_value=settings.tts_cfg_value,
-        )
-        return ServingBundle(stt=serving, llm=serving, tts=serving)
-
-    return factory
+def _factory(settings: RealtimeSettings) -> ServingBundle:
+    # Process-wide singleton serving (shared with the mounted app): one auth client
+    # for every connection, and warm-up primes the same replicas that serve turns.
+    serving = shared_serving()
+    return ServingBundle(stt=serving, llm=serving, tts=serving)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logging.getLogger("realtime_voice").setLevel(logging.INFO)
 
 settings = RealtimeSettings.resolve()
-app = create_app(settings=settings, bundle_factory=_bundle_factory(databricks_profile()))
+app = create_app(settings=settings, bundle_factory=_factory)
 
 
 if __name__ == "__main__":

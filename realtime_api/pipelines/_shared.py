@@ -33,13 +33,19 @@ def split_sentences(text: str) -> list[str]:
 def resolve_language(session: VoiceSession, detected: str | None) -> str:
     """The language used for the reply + TTS, as a canonical BCP-47 tag.
 
-    STT may report a name ('chinese') or a bare code ('zh'); canonicalize so
-    downstream LLM/TTS always get a proper tag ('zh-CN'). Prefer the detected
-    language; fall back to the explicit session selection, then English.
+    Precedence: the caller's PICKER selection is authoritative, then per-turn STT
+    detection, then English as the last resort. The picker wins because STT
+    language detection is noisy — a mis-heard one-word reply ('yes') can be tagged
+    as another language and flip the whole reply mid-call; when the caller told us
+    their language (via ``expected_language`` in auto mode, or a non-"auto"
+    ``language``) we trust that over a single turn's detection. When no language
+    was picked (billing "auto"), detection drives it. STT may report a name
+    ('chinese') or bare code ('zh'); canonical_tag normalizes to a proper tag.
     """
     pref = session.config.language
-    stt_language = None if (not pref or pref == "auto") else pref
-    return canonical_tag(detected or stt_language or "en-US")
+    selected = None if (not pref or pref == "auto") else pref
+    picked = session.config.expected_language or selected
+    return canonical_tag(picked or detected or "en-US")
 
 
 def language_mismatch(session: VoiceSession, detected: str | None) -> dict | None:

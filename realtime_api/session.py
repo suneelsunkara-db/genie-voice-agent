@@ -65,6 +65,10 @@ class VoiceSession:
     # keeps the legacy energy VAD (also the graceful fallback when models can't
     # load). Injected by the handler at session.start.
     endpointer: TurnEndpointer | None = None
+    # Small, opaque state a selected assistant profile persists across turns (via
+    # its after_turn hook). Empty and unused by the default telco path; the engine
+    # never inspects its contents, so it stays domain-agnostic.
+    profile_state: dict[str, object] = field(default_factory=dict)
 
     def add_audio(self, frame: bytes) -> bool:
         """Append PCM audio and report whether this frame begins speech."""

@@ -2,8 +2,8 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 databricks-sdk>=0.40
 requests>=2.31
-# Optional: only needed for the mlflow-based DatabricksServing.from_workspace path.
-# The server (server.py) uses the SDK client and does not require mlflow.
+# Optional: only for the MLflow trace mirror (tracing.py). Serving is SDK-only
+# (serving_factory.build_serving) — there is no mlflow-based serving path.
 mlflow>=2.20
 # Semantic end-of-turn detection (Silero VAD + smart-turn v3) runs on CPU with
 # numpy + onnxruntime only (no torch / transformers). Models are bundled under

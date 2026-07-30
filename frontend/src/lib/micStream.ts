@@ -29,6 +29,12 @@ export interface MicRecordingSession {
 }
 
 export interface SpeechCaptionSession {
+  /** Pause recognition (e.g. while the agent speaks) without ending the session. */
+  pause: () => void;
+  /** Resume recognition after a pause. */
+  resume: () => void;
+  /** Drop the accumulated final text so the next utterance's caption starts fresh. */
+  reset: () => void;
   stop: () => void;
   close: () => void;
 }
@@ -54,7 +60,7 @@ export function isSpeechCaptionSupported(): boolean {
 export function startSpeechCaption(
   onText: (text: string) => void,
   onUnavailable?: () => void,
-  language: SpeechRecognitionLanguage = "en-US"
+  language: string = "en-US"
 ): SpeechCaptionSession | null {
   const Ctor =
     (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -69,8 +75,13 @@ export function startSpeechCaption(
 
   let finalText = "";
   let stopped = false;
+  // Paused while the agent is speaking (half-duplex): the browser recognizer has
+  // its OWN mic tap, so without this it would transcribe the agent's TTS from the
+  // speakers. We stop it on pause and restart on resume.
+  let paused = false;
 
   rec.onresult = (event: any) => {
+    if (paused) return;
     let interim = "";
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const res = event.results[i];
@@ -82,9 +93,9 @@ export function startSpeechCaption(
     if (display) onText(display);
   };
   // The recognizer ends itself on a pause; restart so the caption keeps flowing
-  // for the whole utterance until we explicitly stop it.
+  // for the whole utterance until we explicitly stop or pause it.
   rec.onend = () => {
-    if (!stopped) {
+    if (!stopped && !paused) {
       try {
         rec.start();
       } catch {
@@ -104,6 +115,26 @@ export function startSpeechCaption(
   }
 
   return {
+    pause: () => {
+      paused = true;
+      try {
+        rec.stop();
+      } catch {
+        /* noop */
+      }
+    },
+    resume: () => {
+      if (stopped) return;
+      paused = false;
+      try {
+        rec.start();
+      } catch {
+        /* already running */
+      }
+    },
+    reset: () => {
+      finalText = "";
+    },
     stop: () => {
       stopped = true;
       try {

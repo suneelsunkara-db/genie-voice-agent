@@ -1,0 +1,123 @@
+/* Shared Genie voice orb — one icon + one "voice feel" for every page.
+   Genie-purple gradient core, pulsing halo rings, level-driven speaking glow.
+   Everything is sized from the orb's font-size (== `size` prop) so it scales
+   cleanly from a hero orb to a compact rail orb. */
+
+.gv-orb {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
+/* Pulsing halo rings (the Genie "presence") — the lamp's lava-red leading ring
+   and a Genie-purple trailing ring, so the circles read clearly on the dark
+   field and match the Genie color pattern. */
+.gv-orb::before,
+.gv-orb::after {
+  content: "";
+  position: absolute;
+  inset: -8%;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 54, 33, 0.7);
+  box-shadow: 0 0 0.5em rgba(255, 54, 33, 0.4);
+  animation: gv-orb-ring 3.4s ease-out infinite;
+  pointer-events: none;
+}
+.gv-orb::after {
+  border-color: rgba(124, 108, 255, 0.7);
+  box-shadow: 0 0 0.5em rgba(124, 108, 255, 0.4);
+  animation-delay: 1.7s;
+}
+
+.gv-orb-core {
+  position: absolute;
+  inset: 9%;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  overflow: hidden;
+  /* Clean white circular badge: the OFFICIAL Genie lamp icon fills it and is
+     clipped round by border-radius, so its square background never shows. The
+     purple halo rings + glow below carry the genie "voice feel". */
+  background: #ffffff;
+  box-shadow: 0 0 0.5em rgba(255, 54, 33, 0.5), 0 0 0.9em rgba(124, 108, 255, 0.45),
+    inset 0 0 0.02em rgba(0, 0, 0, 0.06);
+  transition: transform 90ms ease-out, box-shadow 200ms ease;
+}
+
+/* Official Genie lamp icon fills the circular core (clipped round). */
+.gv-orb-mark {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button.gv-orb-core {
+  cursor: pointer;
+}
+button.gv-orb-core:disabled {
+  cursor: default;
+}
+
+/* State-driven voice feel (all in the Genie-purple theme). */
+.gv-orb-listening .gv-orb-core {
+  box-shadow: 0 0 0.5em rgba(255, 54, 33, 0.55), 0 0 0.9em rgba(124, 108, 255, 0.5),
+    inset 0 0 0.26em rgba(255, 255, 255, 0.16);
+}
+.gv-orb-speaking .gv-orb-core {
+  box-shadow: 0 0 0.6em rgba(255, 54, 33, 0.7), 0 0 1.05em rgba(124, 108, 255, 0.6),
+    inset 0 0 0.3em rgba(255, 255, 255, 0.2);
+  animation: gv-orb-breathe 1.2s ease-in-out infinite;
+}
+.gv-orb-greeting .gv-orb-core,
+.gv-orb-connecting .gv-orb-core {
+  animation: gv-orb-breathe 2.4s ease-in-out infinite;
+}
+.gv-orb-thinking .gv-orb-core {
+  animation: gv-orb-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes gv-orb-ring {
+  0% {
+    transform: scale(0.82);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+@keyframes gv-orb-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.25);
+  }
+}
+@keyframes gv-orb-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0.44em rgba(255, 54, 33, 0.5), 0 0 0.8em rgba(124, 108, 255, 0.45),
+      inset 0 0 0.28em rgba(255, 255, 255, 0.14);
+  }
+  50% {
+    box-shadow: 0 0 0.68em rgba(255, 54, 33, 0.72), 0 0 1.1em rgba(124, 108, 255, 0.62),
+      inset 0 0 0.34em rgba(255, 255, 255, 0.24);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gv-orb::before,
+  .gv-orb::after,
+  .gv-orb-core {
+    animation: none !important;
+  }
+}

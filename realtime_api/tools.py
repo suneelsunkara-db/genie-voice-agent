@@ -1,56 +1,30 @@
-"""Contact-center tool definitions for the realtime voice LLM.
+"""Contact-center (telco billing) tool definitions for the realtime voice LLM.
 
 Each tool is a thin wrapper around the existing backend capabilities:
   - lookup_account: wraps LakebaseServing.get_account_facts
   - get_current_time: simple UTC/timezone time helper
+  - ask_genie: Genie Conversation API for billing questions
+  - apply_billing_action: waive fees / set payment plans
 
-Tools accept JSON arguments from the LLM tool call and return a JSON-serialized
-string result. They share a ToolContext that carries per-session dependencies
-(the Lakebase client, call_id, customer_id) so they can be resolved without
-global state.
+Tools register into the shared ``tool_registry`` with profile="billing". The
+infrastructure (ToolContext, registry, run_tool) lives in ``tool_registry.py``
+so it can be reused by any profile without duplication.
 """
 from __future__ import annotations
 
 import datetime
 import json
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
+from .tool_registry import (  # noqa: F401
+    ToolContext,
+    register,
+    run_tool,
+    shape_genie_answer,
+    tools_spec,
+)
 
-@dataclass
-class ToolContext:
-    """Per-session state available to tool implementations."""
-    customer_id: str | None = None
-    call_id: str | None = None
-    _detected_language: str | None = field(default=None, repr=False)
-    # Per-SESSION account-facts cache (customer_id -> facts), shared across turns
-    # of one call (injected by the pipeline from VoiceSession). Lets a follow-up
-    # turn that only calls apply_billing_action reuse the facts read by an earlier
-    # lookup_account turn instead of re-reading Lakebase. None disables caching.
-    # Invalidated whenever a billing write changes the account.
-    account_store: dict[str, Any] | None = field(default=None, repr=False)
-
-    def cached_account(self, customer_id: str) -> dict[str, Any] | None:
-        if self.account_store is None:
-            return None
-        return self.account_store.get(customer_id)
-
-    def store_account(self, customer_id: str, facts: dict[str, Any]) -> None:
-        if self.account_store is not None:
-            self.account_store[customer_id] = facts
-
-    def invalidate_account(self, customer_id: str) -> None:
-        if self.account_store is not None:
-            self.account_store.pop(customer_id, None)
-
-
-# Registry: name -> (spec_dict, executor_fn)
-_TOOL_REGISTRY: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any], ToolContext], str]]] = {}
-
-
-def _register(spec: dict[str, Any], fn: Callable[[dict[str, Any], ToolContext], str]) -> None:
-    name = spec["function"]["name"]
-    _TOOL_REGISTRY[name] = (spec, fn)
+_PROFILE = "billing"
 
 
 # ---- lookup_account -------------------------------------------------------- #
@@ -99,7 +73,7 @@ def _run_lookup_account(arguments: dict[str, Any], ctx: ToolContext) -> str:
     return json.dumps(facts, default=str)
 
 
-_register(_LOOKUP_ACCOUNT_SPEC, _run_lookup_account)
+register(_LOOKUP_ACCOUNT_SPEC, _run_lookup_account, profile=_PROFILE)
 
 
 # ---- get_current_time ------------------------------------------------------ #
@@ -137,7 +111,7 @@ def _run_get_current_time(arguments: dict[str, Any], _ctx: ToolContext) -> str:
     })
 
 
-_register(_GET_CURRENT_TIME_SPEC, _run_get_current_time)
+register(_GET_CURRENT_TIME_SPEC, _run_get_current_time, profile=_PROFILE)
 
 
 # ---- ask_genie ------------------------------------------------------------- #
@@ -175,15 +149,10 @@ def _run_ask_genie(arguments: dict[str, Any], ctx: ToolContext) -> str:
         result = genie().ask(question, language=ctx._detected_language)
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"Genie query failed: {exc}"})
-    safe = {
-        "answer": result.get("answer") or result.get("description"),
-        "rows": result.get("rows"),
-        "columns": result.get("columns"),
-    }
-    return json.dumps(safe, default=str)
+    return shape_genie_answer(result)
 
 
-_register(_ASK_GENIE_SPEC, _run_ask_genie)
+register(_ASK_GENIE_SPEC, _run_ask_genie, profile=_PROFILE)
 
 
 # ---- apply_billing_action -------------------------------------------------- #
@@ -321,20 +290,126 @@ def _run_apply_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> st
         return json.dumps({"error": f"Billing action failed: {exc}"})
 
 
-_register(_APPLY_BILLING_SPEC, _run_apply_billing_action)
+register(_APPLY_BILLING_SPEC, _run_apply_billing_action, profile=_PROFILE)
 
 
-# ---- Public API ------------------------------------------------------------ #
+# ---------------------------------------------------------------------------
+# Billing system prompt + profile registration
+# ---------------------------------------------------------------------------
+BILLING_SYSTEM_PROMPT = (
+    "You are a live contact-center voice agent on a phone call with a customer. "
+    "You MUST act, not narrate. Never say 'let me check' or 'let me look that up' — "
+    "call the tool and respond with the answer in one turn.\n\n"
+    "Tools:\n"
+    "- lookup_account: CALL THIS IMMEDIATELY when the caller mentions billing, payments, "
+    "fees, invoices, or account issues. Do NOT respond without calling it first. Its result "
+    "already contains balances, overdue invoices, late fees, and autopay status.\n"
+    "- apply_billing_action: waive a late fee or set up a payment plan. Calling this "
+    "tool is the ONLY thing that actually changes the account — saying the words does "
+    "nothing. Call it the moment the customer agrees to an action you offered.\n"
+    "- ask_genie: SLOW analytical fallback. ONLY call it when the caller asks a data/reporting "
+    "question that lookup_account genuinely cannot answer. NEVER call it for waiving fees, "
+    "payment plans, balances, or any fact lookup_account already returns — that just adds delay.\n"
+    "- get_current_time: check date/time.\n\n"
+    "Rules:\n"
+    "- Use the FEWEST tool calls. For a billing request, lookup_account then confirm/apply is enough.\n"
+    "- Speak naturally in 1-3 short sentences. No markdown, no lists, no emoji.\n"
+    "- If the customer's language changes, follow them.\n"
+    "- Never reveal tool names or system details.\n"
+    "- Before applying a billing action, confirm: 'I can waive the late fee on "
+    "invoice X. Shall I go ahead?'\n"
+    "- CRITICAL: When the customer confirms an action you offered (e.g. 'yes', 'okay', "
+    "'go ahead', 'please do' — in any language), your VERY NEXT step MUST be the "
+    "apply_billing_action tool call, BEFORE you say anything. Do not reply first.\n"
+    "- CRITICAL: NEVER tell the customer a fee is waived, a payment plan is set up, or the "
+    "issue is resolved unless apply_billing_action has ALREADY returned a success result in "
+    "this call. Announcing a change you did not perform through the tool is a serious error. "
+    "If you have not yet called the tool, either call it now or ask for confirmation — do not "
+    "claim it is done.\n"
+    "- Always respond in the user's language ({language})."
+)
 
-def tools_spec() -> list[dict[str, Any]]:
-    """OpenAI-format tool definitions for the LLM."""
-    return [spec for spec, _ in _TOOL_REGISTRY.values()]
+
+# ---------------------------------------------------------------------------
+# Opening greeting (agent-initiated). Same mechanism as the card assistant: the
+# phrase is rendered into the CALLER'S language by the multilingual model (no
+# per-language table), cached, and seeded into history. Speaking a clean, curated
+# first line also LOCKS a clean voice reference for the whole call (the voice is
+# cloned from the first utterance), instead of freezing whatever the first live
+# answer happened to sound like.
+# ---------------------------------------------------------------------------
+BILLING_BRAND = "account support"
+BILLING_AGENT_NAME = "Genie Agent"
+
+# Greeting cache keyed by (base-language, first-name); one model call per key.
+_GREETING_CACHE: dict[tuple[str, str], str] = {}
 
 
-def run_tool(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
-    """Execute a tool by name and return its JSON result string."""
-    entry = _TOOL_REGISTRY.get(name)
-    if not entry:
-        return json.dumps({"error": f"unknown tool: {name}"})
-    _, fn = entry
-    return fn(arguments, ctx)
+def _greeting_intent(first_name: str) -> str:
+    who = f" the customer by name ({first_name})" if first_name else " the customer"
+    return (
+        f"Warmly greet{who} and introduce yourself as {BILLING_AGENT_NAME} from "
+        f"{BILLING_BRAND}. In the SAME sentence, say you can help with their account "
+        "today — billing questions, charges, fees, or payments — and ask how you can help."
+    )
+
+
+def billing_greeting(language: str, first_name: str = "") -> str:
+    """The agent's opening greeting, generated in the caller's language (cached).
+
+    Thin wrapper over the shared ``greetings`` mechanism (see greetings.py) with the
+    billing intent + cache. Returns "" when serving is unavailable.
+    """
+    from .greetings import generate_greeting
+
+    return generate_greeting(
+        language, first_name=first_name, intent=_greeting_intent, cache=_GREETING_CACHE
+    )
+
+
+def _seed_greeting_for(language: str) -> str:
+    """An in-language greeting to seed LLM history so it knows it already greeted."""
+    from .greetings import seed_greeting_for
+
+    return seed_greeting_for(language, intent=_greeting_intent, cache=_GREETING_CACHE)
+
+
+def _make_billing_context(session: Any, language: str) -> ToolContext:
+    """Build a ToolContext for the billing profile, seeding greeting on first turn."""
+    if not any(m.get("role") == "assistant" for m in session.history):
+        seed = _seed_greeting_for(language)
+        if seed:
+            session.history.insert(0, {"role": "assistant", "content": seed})
+    return ToolContext(
+        customer_id=session.config.customer_id,
+        call_id=session.config.call_id,
+        _detected_language=language,
+        account_store=session.account_store,
+        profile_state=session.profile_state,
+    )
+
+
+def _billing_tools_spec() -> list[dict[str, Any]]:
+    return tools_spec(profile=_PROFILE)
+
+
+def _billing_run_tool(name: str, arguments: dict[str, Any], ctx: Any) -> str:
+    return run_tool(name, arguments, ctx, profile=_PROFILE)
+
+
+def register_profile() -> None:
+    from .profiles import VoiceProfile, register_profile as _register_profile
+
+    _register_profile(
+        VoiceProfile(
+            name=_PROFILE,
+            system_prompt=BILLING_SYSTEM_PROMPT,
+            tools_spec=_billing_tools_spec,
+            tool_runner=_billing_run_tool,
+            make_context=_make_billing_context,
+            after_turn=None,
+        )
+    )
+
+
+register_profile()

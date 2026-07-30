@@ -8,6 +8,8 @@ hand-maintained per-language name maps anywhere.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from genie_voice.i18n import DEFAULT_LANGUAGE as DEFAULT_TAG
 from genie_voice.i18n import LANGUAGE_CATALOG as CATALOG
 
@@ -65,6 +67,23 @@ def canonical_tag(language: str | None) -> str:
     base = canonical_base(language)
     entry = CATALOG.get(base)
     return entry[0] if entry else str(language or "")
+
+
+def language_payload(base_codes: tuple[str, ...] | list[str]) -> dict[str, Any]:
+    """THE canonical supported-language payload for every UI picker.
+
+    Single source of truth so the billing cockpit, the card page, and the
+    standalone realtime API all report the identical set + shape:
+    ``{languages: [tags], options: [{code, base, english_name}], default, count}``.
+    Native display labels are resolved on the client via Intl.DisplayNames.
+    """
+    options = language_options(base_codes)
+    return {
+        "languages": [item["code"] for item in options],
+        "options": options,
+        "default": DEFAULT_TAG,
+        "count": len(options),
+    }
 
 
 def language_options(base_codes: tuple[str, ...] | list[str]) -> list[dict[str, str]]:

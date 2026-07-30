@@ -1,0 +1,32 @@
+/* Shared Databricks + Genie brand lockup (framework primitive).
+   White pill so the official dark-wordmark logos read on any dark page. */
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+/* Dimensions match the Sentient cockpit lockup (sentient.css) so every page's
+   Databricks + Genie mark is pixel-identical. */
+.brand-lockup-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38), inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+.brand-lockup-logo { display: block; }
+.brand-lockup-logo.dbx { height: 26px; }
+.brand-lockup-logo.genie { height: 30px; }
+.brand-lockup-div {
+  width: 1px;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.14);
+}
+.brand-lockup-product {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  color: rgba(205, 213, 235, 0.78);
+}

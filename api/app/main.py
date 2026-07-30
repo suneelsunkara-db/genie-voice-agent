@@ -6,7 +6,6 @@ All settings (host, port, CORS) come from config. Run:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -35,8 +34,13 @@ from .routers import (
     accounts,
     agent_assist,
     asr_benchmark,
+    card,
+    concierge,
     genie,
     health,
+    hls,
+    languages,
+    me,
     mic_stream,
     pipeline_status,
     traces,
@@ -62,10 +66,15 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(me.router)
+    app.include_router(languages.router)
+    app.include_router(concierge.router)
+    app.include_router(hls.router)
     app.include_router(agent_assist.router)
     app.include_router(mic_stream.router)
     app.include_router(accounts.router)
     app.include_router(genie.router)
+    app.include_router(card.router)
     app.include_router(asr_benchmark.router)
     app.include_router(pipeline_status.router)
     app.include_router(traces.router)
@@ -160,35 +169,16 @@ def _mount_realtime(app: FastAPI) -> None:
     try:
         from realtime_api.app import create_app as create_realtime_app
         from realtime_api.app import warm_serving
-        from realtime_api.config import RealtimeSettings, databricks_profile
+        from realtime_api.config import RealtimeSettings
         from realtime_api.pipelines import ServingBundle
-        from realtime_api.services import DatabricksServing
+        from realtime_api.serving_factory import shared_serving
 
         rt_settings = RealtimeSettings.resolve()
 
-        def _serving_profile() -> str | None:
-            # Databricks Apps inject SP OAuth creds via env -> no CLI profile.
-            if os.getenv("DATABRICKS_CLIENT_ID") or os.getenv("DATABRICKS_APP_NAME"):
-                return None
-            profile = databricks_profile()
-            # Ignore an unfilled placeholder like "<your-databricks-profile>".
-            if not profile or profile.startswith("<"):
-                return None
-            return profile
-
         def _factory(s: RealtimeSettings) -> ServingBundle:
-            serving = DatabricksServing.from_sdk(
-                stt_endpoint=s.stt_endpoint,
-                llm_endpoint=s.llm_endpoint,
-                tts_endpoint=s.tts_endpoint,
-                profile=_serving_profile(),  # CLI profile locally; SP OAuth in-app
-                llm_temperature=s.llm_temperature,
-                llm_max_tokens=s.llm_max_tokens,
-                llm_tools_enabled=s.llm_tools_enabled,
-                llm_max_tool_iterations=s.llm_max_tool_iterations,
-                tts_inference_timesteps=s.tts_inference_timesteps,
-                tts_cfg_value=s.tts_cfg_value,
-            )
+            # Shared, config-driven singleton: the WS loop and the card deep-dive
+            # summarizer use the SAME serving instance and the SAME knobs.
+            serving = shared_serving()
             return ServingBundle(stt=serving, llm=serving, tts=serving)
 
         app.mount("/realtime", create_realtime_app(settings=rt_settings, bundle_factory=_factory))

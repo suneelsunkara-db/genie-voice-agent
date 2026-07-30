@@ -3,7 +3,10 @@ import { api, CustomerWithIssue, InteractionLanguage, StatusResponse } from "./a
 import { useUiLocale } from "./i18n";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
+import { CardIssuerPage } from "./components/CardIssuerPage";
 import { CockpitPage } from "./components/CockpitPage";
+import { HomePage } from "./components/HomePage";
+import { HlsPage } from "./components/HlsPage";
 import { TracesPage } from "./components/TracesPage";
 import { VoiceBenchmarksPage } from "./components/VoiceBenchmarksPage";
 import { SentientShell } from "./components/sentient/Sentient";
@@ -64,9 +67,12 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  const showHome = page === "#/" || page === "#/home";
+  const showHls = page === "#/hls";
   const showBenchmark = page === "#/asr-benchmark";
   const showTraces = page === "#/traces";
   const showVoiceBenchmarks = page === "#/voice-benchmarks";
+  const showCard = page === "#/card";
 
   useEffect(() => {
     // The UI language picker defaults to English and stays where the agent puts
@@ -78,6 +84,15 @@ export default function App() {
     }
   }, [status?.languages, interactionLanguage]);
 
+  // Landing page: the voice concierge that greets the signed-in user and routes
+  // by voice to an industry (Telco -> #/telco, FSI -> #/card, Healthcare -> #/hls).
+  if (showHome) {
+    return <HomePage />;
+  }
+  // Healthcare voice assistant (its own clinical theme).
+  if (showHls) {
+    return <HlsPage />;
+  }
   // Full-screen tool surfaces (their own dark theme), rendered outside the
   // Sentient shell like dedicated tools.
   if (showTraces) {
@@ -85,6 +100,11 @@ export default function App() {
   }
   if (showVoiceBenchmarks) {
     return <VoiceBenchmarksPage />;
+  }
+  // Credit-card issuer: a separate, agent-initiated voice-first product surface
+  // with its own chrome (does not reuse the telco cockpit).
+  if (showCard) {
+    return <CardIssuerPage />;
   }
 
   const navPill: CSSProperties = {
@@ -105,19 +125,11 @@ export default function App() {
       <div style={{ position: "fixed", top: 14, right: 16, zIndex: 50, display: "flex", gap: 8 }}>
         <button
           type="button"
-          onClick={() => (window.location.hash = "#/voice-benchmarks")}
-          title="See how the voice API scores across languages"
+          onClick={() => (window.location.hash = "#/")}
+          title="Back to the Genie Assisted Voice home"
           style={navPill}
         >
-          Benchmarks
-        </button>
-        <button
-          type="button"
-          onClick={() => (window.location.hash = "#/traces")}
-          title="Open the voice trace explorer"
-          style={navPill}
-        >
-          Traces
+          ← Home
         </button>
       </div>
       {showBenchmark ? (
