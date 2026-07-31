@@ -18,6 +18,7 @@ import base64
 import json
 import statistics
 import time
+from collections.abc import Callable
 from typing import Any
 
 import requests
@@ -32,16 +33,20 @@ _SAMPLE_TEXT = {
 }
 
 
-def _auth() -> tuple[str, dict[str, str]]:
+def _auth() -> tuple[str, Callable[[], dict[str, str]]]:
+    """Return the host and a factory for fresh auth headers.
+
+    A factory rather than a dict: OAuth tokens live 60 minutes, and a full
+    sweep across languages and reps runs longer than that.
+    """
     from databricks.sdk import WorkspaceClient
 
     w = WorkspaceClient(profile=databricks().get("profile") or None)
     host = w.config.host.rstrip("/")
-    headers = w.config.authenticate() or {}
-    return host, dict(headers)
+    return host, lambda: {**dict(w.config.authenticate() or {}), "Content-Type": "application/json"}
 
 
-def _stream_call(host: str, headers: dict[str, str], endpoint: str, text: str, ci: dict[str, Any]) -> dict[str, Any]:
+def _stream_call(host: str, auth: Callable[[], dict[str, str]], endpoint: str, text: str, ci: dict[str, Any]) -> dict[str, Any]:
     url = f"{host}/serving-endpoints/{endpoint}/invocations"
     body = {"input": [{"role": "user", "content": text}], "custom_inputs": ci, "stream": True}
     started = time.perf_counter()
@@ -49,7 +54,7 @@ def _stream_call(host: str, headers: dict[str, str], endpoint: str, text: str, c
     chunks = 0
     total_bytes = 0
     final: dict[str, Any] = {}
-    with requests.post(url, headers={**headers, "Content-Type": "application/json"}, json=body, stream=True, timeout=120) as resp:
+    with requests.post(url, headers=auth(), json=body, stream=True, timeout=120) as resp:
         resp.raise_for_status()
         for raw in resp.iter_lines(decode_unicode=True):
             if not raw or not raw.startswith("data:"):
@@ -83,11 +88,11 @@ def _stream_call(host: str, headers: dict[str, str], endpoint: str, text: str, c
     }
 
 
-def _predict_call(host: str, headers: dict[str, str], endpoint: str, text: str, ci: dict[str, Any]) -> dict[str, Any]:
+def _predict_call(host: str, auth: Callable[[], dict[str, str]], endpoint: str, text: str, ci: dict[str, Any]) -> dict[str, Any]:
     url = f"{host}/serving-endpoints/{endpoint}/invocations"
     body = {"input": [{"role": "user", "content": text}], "custom_inputs": ci}
     started = time.perf_counter()
-    resp = requests.post(url, headers={**headers, "Content-Type": "application/json"}, json=body, timeout=120)
+    resp = requests.post(url, headers=auth(), json=body, timeout=120)
     resp.raise_for_status()
     e2e = (time.perf_counter() - started) * 1000.0
     co = (resp.json() or {}).get("custom_outputs") or {}
@@ -112,7 +117,7 @@ def main() -> None:
         "cfg_value": float(defaults.get("cfg_value", 2.0)),
     }
 
-    host, headers = _auth()
+    host, auth = _auth()
     print(f"endpoint={endpoint} reps={args.reps} timesteps={ci_base['inference_timesteps']}\n")
     header = f"{'lang':7} {'stream TTFB':>12} {'stream total':>13} {'chunks':>7} {'predict e2e':>12} {'win (TTFB)':>11}"
     print(header)
@@ -122,9 +127,9 @@ def main() -> None:
         text = _SAMPLE_TEXT.get(language, _SAMPLE_TEXT["en-US"])
         ci = {**ci_base, "text": text, "language": language}
         try:
-            _stream_call(host, headers, endpoint, text, ci)  # warmup
-            stream = [_stream_call(host, headers, endpoint, text, ci) for _ in range(args.reps)]
-            predict = [_predict_call(host, headers, endpoint, text, ci) for _ in range(args.reps)]
+            _stream_call(host, auth, endpoint, text, ci)  # warmup
+            stream = [_stream_call(host, auth, endpoint, text, ci) for _ in range(args.reps)]
+            predict = [_predict_call(host, auth, endpoint, text, ci) for _ in range(args.reps)]
         except Exception as exc:  # noqa: BLE001
             print(f"{language:7} ERROR {str(exc)[:70]}")
             continue

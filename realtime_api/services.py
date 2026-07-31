@@ -91,14 +91,23 @@ class _SdkDeployClient:
         self._stream_timeout_s = stream_timeout_s
         self._w = WorkspaceClient(profile=profile or None)
         self._host = self._w.config.host.rstrip("/")
-        self._headers = {**dict(self._w.config.authenticate() or {}), "Content-Type": "application/json"}
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Fresh auth headers for one request.
+
+        Must be re-read per call: the SP OAuth token the app runs on lives 60
+        minutes, and the SDK only refreshes it when asked. Caching this dict at
+        construction pins one token for the life of the process, so every
+        serving call starts returning 403 an hour after startup.
+        """
+        return {**dict(self._w.config.authenticate() or {}), "Content-Type": "application/json"}
 
     def predict(self, *, endpoint: str, inputs: dict) -> dict:
         import requests as _requests
 
         url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
         resp = _requests.post(
-            url, headers=self._headers, json=inputs, timeout=self._predict_timeout_s
+            url, headers=self._auth_headers(), json=inputs, timeout=self._predict_timeout_s
         )
         resp.raise_for_status()
         return resp.json()
@@ -109,7 +118,11 @@ class _SdkDeployClient:
         body = {**inputs, "stream": True}
         url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
         with requests.post(
-            url, headers=self._headers, json=body, stream=True, timeout=self._stream_timeout_s
+            url,
+            headers=self._auth_headers(),
+            json=body,
+            stream=True,
+            timeout=self._stream_timeout_s,
         ) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):

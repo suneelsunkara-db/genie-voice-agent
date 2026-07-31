@@ -50,7 +50,11 @@ class _SdkDeployClient:
     def __init__(self, workspace) -> None:
         self._w = workspace
         self._host = workspace.config.host.rstrip("/")
-        self._headers = {**dict(workspace.config.authenticate() or {}), "Content-Type": "application/json"}
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Fresh per request: OAuth tokens expire in 60 minutes, and a full
+        multilingual run outlives that."""
+        return {**dict(self._w.config.authenticate() or {}), "Content-Type": "application/json"}
 
     def predict(self, *, endpoint: str, inputs: dict) -> dict:
         return self._w.api_client.do("POST", f"/serving-endpoints/{endpoint}/invocations", body=inputs)
@@ -58,7 +62,9 @@ class _SdkDeployClient:
     def predict_stream(self, *, endpoint: str, inputs: dict):
         body = {**inputs, "stream": True}
         url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
-        with requests.post(url, headers=self._headers, json=body, stream=True, timeout=180) as resp:
+        with requests.post(
+            url, headers=self._auth_headers(), json=body, stream=True, timeout=180
+        ) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
                 if line and line.startswith("data:"):
