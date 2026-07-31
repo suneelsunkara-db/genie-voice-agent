@@ -100,6 +100,16 @@ def create_app() -> FastAPI:
                 serving().ensure_schema()
             except Exception as exc:  # noqa: BLE001
                 print(f"[api-startup] Lakebase schema ensure skipped: {exc}")
+            try:
+                # voice_traces is owned by whichever principal created it, so only
+                # that principal's process can migrate it. Doing it at startup means
+                # the owner (the deployed app) applies pending columns once, rather
+                # than every writer racing to discover them on its first trace.
+                added = serving().migrate_voice_traces()
+                if added:
+                    print(f"[api-startup] voice_traces columns added: {', '.join(added)}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[api-startup] voice_traces migration skipped: {exc}")
             if settings.lakebase.enabled and not settings.databricks.sql_warehouse_id:
                 print(
                     "[api-startup] WARNING: lakebase.enabled requires databricks.sql_warehouse_id "

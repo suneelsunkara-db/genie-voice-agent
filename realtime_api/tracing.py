@@ -33,6 +33,13 @@ logger = logging.getLogger("realtime_voice")
 _MAX_STR = 20_000
 
 
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _truncate(value: Any) -> Any:
     if isinstance(value, str) and len(value) > _MAX_STR:
         return value[:_MAX_STR] + f"…[+{len(value) - _MAX_STR} chars]"
@@ -127,11 +134,50 @@ class TurnTrace:
         self.error: str | None = None
         self.started_at = datetime.now(UTC).isoformat()
         self._t0 = time.perf_counter()
+        # Two different latencies, because a filler clip makes them diverge and
+        # reporting only the flattering one hides real delay:
+        #   ttft_ms        - any audio at all, so a filler ends the dead air
+        #   answer_ttft_ms - the actual reply, which is what the caller was waiting for
+        # Equal when no filler played. The remaining fields describe the ANSWER's
+        # synthesis (a filler is canned, so its timing says nothing about the turn).
+        self.ttft_ms: float | None = None
+        self.answer_ttft_ms: float | None = None
+        self.tts_first_ms: float | None = None  # TTS-local, before our own lookahead
+        self.server_ttfb_ms: float | None = None  # the endpoint's own time to chunk 1
+        self.server_gen_ms: float | None = None  # full synthesis time on the endpoint
         self._spans: list[Span] = []
         self._lock = threading.Lock()
 
     def _now_ms(self) -> float:
         return (time.perf_counter() - self._t0) * 1000.0
+
+    def note_audio(self, event: dict[str, Any], *, primary: bool = True) -> None:
+        """Record first-audio timings from a ``response.audio`` event.
+
+        Called by ``stream_tts`` for every audio event, so timings are captured for
+        every path that speaks (answer, filler, router confirmation, language
+        switch) instead of only the main LLM path. ``primary=False`` marks audio
+        that merely covers latency (a filler): it ends the dead air but is not the
+        reply, so it must not claim the answer's latency.
+        """
+        with self._lock:
+            # One clock reading for both, so that with no filler in play the two
+            # describe the same instant instead of drifting apart by a hair.
+            now = self._now_ms()
+            if self.ttft_ms is None:
+                self.ttft_ms = now
+            if not primary:
+                return
+            if self.answer_ttft_ms is None:
+                self.answer_ttft_ms = now
+            if self.tts_first_ms is None:
+                self.tts_first_ms = _as_float(event.get("tts_first_ms"))
+            # Server timings ride the LAST chunk of a synthesis, so they arrive
+            # after the first audio rather than with it.
+            if self.server_ttfb_ms is None:
+                self.server_ttfb_ms = _as_float(event.get("server_ttfb_ms"))
+            if self.server_gen_ms is None:
+                self.server_gen_ms = _as_float(event.get("server_gen_ms"))
 
     def span(self, name: str, kind: str, *, input: Any = None) -> _SpanHandle:
         span = Span(name=name, kind=kind, start_ms=self._now_ms(), input=input)
@@ -172,6 +218,16 @@ class TurnTrace:
             "lookup_account_count": tool_names.count("lookup_account"),
             "llm_iterations": llm_iterations,
             "started_at": self.started_at,
+            # answer_ttft_ms is the latency to judge the turn on; ttft_ms only says
+            # when the silence ended, and total_ms is the whole turn including
+            # however long the agent then spoke for.
+            "ttft_ms": round(self.ttft_ms, 2) if self.ttft_ms is not None else None,
+            "answer_ttft_ms": (
+                round(self.answer_ttft_ms, 2) if self.answer_ttft_ms is not None else None
+            ),
+            "tts_first_ms": round(self.tts_first_ms, 2) if self.tts_first_ms is not None else None,
+            "server_ttfb_ms": self.server_ttfb_ms,
+            "server_gen_ms": self.server_gen_ms,
             "total_ms": round(self._now_ms(), 2),
             "spans": spans,
         }

@@ -6,10 +6,19 @@ from typing import Any
 from genie_voice.config import Settings, get_settings
 
 
-def _params(values: dict[str, str]) -> list[Any]:
+def _opt_float(value: Any) -> str | None:
+    """Bindable string for a nullable DOUBLE column; None binds SQL NULL."""
+    try:
+        return str(float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _params(values: dict[str, str | None]) -> list[Any]:
     """Build named StatementParameterListItem rows (all bound as STRING, then CAST
     in SQL). Binding values as parameters - never string-interpolating them -
-    removes injection risk for the live-assist write path."""
+    removes injection risk for the live-assist write path. A None value binds SQL
+    NULL, which is how nullable numeric columns stay empty instead of zeroed."""
     from databricks.sdk.service.sql import StatementParameterListItem
 
     return [
@@ -80,10 +89,29 @@ def ensure_voice_traces_table(settings: Settings | None = None) -> None:
             apply_billing_action_called BOOLEAN,
             lookup_account_count        INT,
             llm_iterations              INT,
+            ttft_ms                     DOUBLE,
+            answer_ttft_ms              DOUBLE,
+            tts_first_ms                DOUBLE,
+            server_ttfb_ms              DOUBLE,
+            server_gen_ms               DOUBLE,
             total_ms                    DOUBLE,
             trace                       STRING,
             created_at                  TIMESTAMP
         ) USING DELTA
+        """,
+    )
+    # Latency columns were added after the table shipped, so an existing table
+    # needs them backfilled into its schema or every mirrored insert would fail.
+    execute_sql(
+        settings,
+        f"""
+        ALTER TABLE {tbl} ADD COLUMNS IF NOT EXISTS (
+            ttft_ms        DOUBLE COMMENT 'Time to any audio; a latency filler ends the silence early',
+            answer_ttft_ms DOUBLE COMMENT 'Time until the caller heard the actual reply',
+            tts_first_ms   DOUBLE COMMENT 'TTS-local time to the answer first chunk',
+            server_ttfb_ms DOUBLE COMMENT 'TTS endpoint time to its own first chunk',
+            server_gen_ms  DOUBLE COMMENT 'TTS endpoint full synthesis time'
+        )
         """,
     )
 
@@ -103,12 +131,16 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
           trace_id, session_id, turn_id, call_id, customer_id, capability,
           language, detected_language, status, input_transcript, output_text,
           tool_names, apply_billing_action_called, lookup_account_count,
-          llm_iterations, total_ms, trace, created_at
+          llm_iterations, ttft_ms, answer_ttft_ms, tts_first_ms, server_ttfb_ms,
+          server_gen_ms, total_ms, trace, created_at
         ) VALUES (
           :trace_id, :session_id, CAST(:turn_id AS INT), :call_id, :customer_id, :capability,
           :language, :detected_language, :status, :input_transcript, :output_text,
           :tool_names, CAST(:apply_billing_action_called AS BOOLEAN), CAST(:lookup_account_count AS INT),
-          CAST(:llm_iterations AS INT), CAST(:total_ms AS DOUBLE), :trace, current_timestamp()
+          CAST(:llm_iterations AS INT), CAST(:ttft_ms AS DOUBLE),
+          CAST(:answer_ttft_ms AS DOUBLE), CAST(:tts_first_ms AS DOUBLE),
+          CAST(:server_ttfb_ms AS DOUBLE), CAST(:server_gen_ms AS DOUBLE),
+          CAST(:total_ms AS DOUBLE), :trace, current_timestamp()
         )
     """
     params = _params(
@@ -128,6 +160,14 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
             "apply_billing_action_called": str(bool(trace.get("apply_billing_action_called"))).lower(),
             "lookup_account_count": str(int(trace.get("lookup_account_count") or 0)),
             "llm_iterations": str(int(trace.get("llm_iterations") or 0)),
+            # Left NULL rather than zeroed when a trace never spoke (e.g. an
+            # Agent-Mode deep dive), so latency aggregates ignore it instead of
+            # being dragged down by a fake 0ms.
+            "ttft_ms": _opt_float(trace.get("ttft_ms")),
+            "answer_ttft_ms": _opt_float(trace.get("answer_ttft_ms")),
+            "tts_first_ms": _opt_float(trace.get("tts_first_ms")),
+            "server_ttfb_ms": _opt_float(trace.get("server_ttfb_ms")),
+            "server_gen_ms": _opt_float(trace.get("server_gen_ms")),
             "total_ms": str(float(trace.get("total_ms") or 0.0)),
             "trace": json.dumps(trace),
         }

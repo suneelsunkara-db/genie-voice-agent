@@ -393,6 +393,16 @@ export interface TraceSummary {
   apply_billing_action_called?: boolean;
   lookup_account_count?: number;
   llm_iterations?: number;
+  /** Time to any audio; a latency filler ends the silence before the reply exists. */
+  ttft_ms?: number | null;
+  /** Time until the caller heard the actual reply — the latency to judge a turn on. */
+  answer_ttft_ms?: number | null;
+  /** TTS-local time to the answer's first chunk (excludes STT + LLM + tools). */
+  tts_first_ms?: number | null;
+  /** TTS endpoint's own time to first chunk; the rest of tts_first_ms is transport. */
+  server_ttfb_ms?: number | null;
+  server_gen_ms?: number | null;
+  /** Whole turn including how long the agent then spoke — not perceived latency. */
   total_ms?: number | null;
   started_at?: string;
   created_at?: string;

@@ -62,6 +62,8 @@ def build_trace() -> TurnTrace:
         "tool_call_count", 0
     ).end()
     with t.span("tts", "TTS", input={"text": "ให้ดำเนินการเลยไหมคะ", "language": "th-TH"}) as s:
+        # What stream_tts reports for each audio event; the first one sets ttft.
+        t.note_audio({"tts_first_ms": 610, "server_ttfb_ms": 380.0, "server_gen_ms": 1750.0})
         s.set_output({"chunks": 12})
     t.output_text = "ให้ดำเนินการเลยไหมคะ"
     return t
@@ -82,10 +84,15 @@ def main() -> None:
         print(
             f"  turn#{row['turn_id']} status={row['status']} lang={row['language']} "
             f"tools={row['tool_names']} apply={row['apply_billing_action_called']} "
-            f"lookups={row['lookup_account_count']} iters={row['llm_iterations']} ms={row['total_ms']}"
+            f"lookups={row['lookup_account_count']} iters={row['llm_iterations']} "
+            f"ttft={row['ttft_ms']}ms turn={row['total_ms']}ms"
         )
+    # The list view ranks on time-to-first-audio, so it has to survive the store.
+    assert listed[0]["ttft_ms"] is not None, "ttft_ms missing from the list view"
+    assert listed[0]["server_ttfb_ms"] == 380.0
     full = svc.get_voice_trace(t.trace_id)
     assert full is not None, "get_voice_trace returned None"
+    assert full["ttft_ms"] == listed[0]["ttft_ms"]
     assert full["apply_billing_action_called"] is False
     assert full["lookup_account_count"] == 1
     assert len(full["spans"]) == 6

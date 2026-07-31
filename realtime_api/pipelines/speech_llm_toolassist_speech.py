@@ -196,7 +196,8 @@ async def process_turn(
             if prompt:
                 try:
                     async for event in stream_tts(
-                        bundle, session, turn_id, prompt, mismatch["expected"], emit_text=False
+                        bundle, session, turn_id, prompt, mismatch["expected"],
+                        emit_text=False, trace=trace,
                     ):
                         if turn_id != session.turn_id:
                             break
@@ -269,11 +270,13 @@ async def process_turn(
                 trace.output_text = confirm_text
                 yield {"type": "response.text", "turn_id": turn_id, "text": confirm_text}
                 tts_span = trace.span("tts", "TTS", input={"text": confirm_text, "language": language})
-                async for event in stream_tts(bundle, session, turn_id, confirm_text, language):
+                async for event in stream_tts(
+                    bundle, session, turn_id, confirm_text, language, trace=trace
+                ):
                     if turn_id != session.turn_id:
                         break
                     yield event
-                tts_span.end()
+                tts_span.set_attribute("tts_first_ms", trace.tts_first_ms).end()
             if profile.after_turn is not None:
                 profile.after_turn(tool_ctx, session)
             session.set_cooldown(1.5)
@@ -319,16 +322,24 @@ async def process_turn(
             if not llm_task.done():
                 filler = _FILLER_CACHE.get(base_code(language))
                 if filler:
+                    # Spanned separately from the answer's TTS: the filler is what
+                    # ends the caller's silence, so the waterfall has to show it or
+                    # ttft looks like it came from nowhere.
+                    filler_span = trace.span(
+                        "tts.filler", "TTS", input={"text": filler, "language": language}
+                    )
                     try:
                         async for event in stream_tts(
                             bundle, session, turn_id, filler, language,
-                            mark_final=False, emit_text=False,
+                            mark_final=False, emit_text=False, trace=trace, primary=False,
                         ):
                             if turn_id != session.turn_id:
                                 break
                             yield event
                     except Exception:  # noqa: BLE001
                         logger.warning("filler TTS failed for turn %d", turn_id, exc_info=True)
+                        filler_span.set_status("error")
+                    filler_span.end()
 
             if turn_id != session.turn_id:
                 llm_task.cancel()
@@ -387,13 +398,15 @@ async def process_turn(
             profile.after_turn(tool_ctx, session)
 
         # The span's duration_ms is the FULL synthesis+stream (blocking) time.
-        # tts_first_ms is the server-side time-to-first-audio (what the caller
-        # perceives), captured separately so latency analysis can tell the two
-        # apart instead of only seeing the total.
+        # tts_first_ms is this synthesis' own time-to-first-audio; the turn-level
+        # figure the caller actually felt is trace.ttft_ms, which may belong to a
+        # filler that played earlier.
         tts_span = trace.span("tts", "TTS", input={"text": response_text, "language": language})
         tts_chunks = 0
         tts_first_ms: int | None = None
-        async for event in stream_tts(bundle, session, turn_id, response_text, language):
+        async for event in stream_tts(
+            bundle, session, turn_id, response_text, language, trace=trace
+        ):
             if event.get("type") == "response.audio":
                 tts_chunks += 1
                 if tts_first_ms is None and event.get("tts_first_ms") is not None:

@@ -18,6 +18,7 @@ in-process store so the end-to-end local flow still works.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -28,10 +29,21 @@ from typing import Any
 from genie_voice.config import Settings, get_settings
 from genie_voice.databricks.warehouse_sql import warehouse_configured
 
+logger = logging.getLogger("genie_voice.lakebase")
+
 _MEM: dict[str, dict[str, Any]] = {}
 _MEM_EVENTS: dict[str, list[dict[str, Any]]] = {}
 _MEM_ADJUSTMENTS: dict[str, list[dict[str, Any]]] = {}
 _LOCK = threading.Lock()
+
+# Latency columns promoted out of the trace JSON so the observability list view can
+# sort/aggregate on them. Added after the table first shipped, hence the migration
+# in ``_trace_columns``. answer_ttft_ms (time until the caller heard the actual
+# reply) is the headline metric; ttft_ms only says when the silence ended, which a
+# latency filler can do early; total_ms is the whole turn including speaking time.
+_TRACE_LATENCY_COLUMNS = (
+    "ttft_ms", "answer_ttft_ms", "tts_first_ms", "server_ttfb_ms", "server_gen_ms",
+)
 _ISSUES_CACHE: dict[str, Any] = {"ts": 0.0, "value": None}
 _ISSUES_TTL_S = 60.0
 
@@ -545,6 +557,9 @@ class LakebaseServing:
         if row and row[0] is not None:
             self._traces_table_ready = True
             return
+        # Not reached for an existing table, so a cold create is the only place
+        # that needs the current column list; older tables are migrated by
+        # _trace_columns() instead.
         # Cold table: create it (we necessarily own what we just created).
         self._ensure_serving_schema(cur)
         # Voice observability: one row per turn holding the full span tree
@@ -568,6 +583,11 @@ class LakebaseServing:
                 apply_billing_action_called BOOLEAN,
                 lookup_account_count        INTEGER,
                 llm_iterations              INTEGER,
+                ttft_ms                     DOUBLE PRECISION,
+                answer_ttft_ms              DOUBLE PRECISION,
+                tts_first_ms                DOUBLE PRECISION,
+                server_ttfb_ms              DOUBLE PRECISION,
+                server_gen_ms               DOUBLE PRECISION,
                 total_ms                    DOUBLE PRECISION,
                 trace                       JSONB,
                 created_at                  TIMESTAMPTZ DEFAULT now()
@@ -583,6 +603,77 @@ class LakebaseServing:
             f"ON {traces_tbl} (created_at DESC)"
         )
         self._traces_table_ready = True
+
+    def _trace_columns(self) -> set[str]:
+        """Latency columns present on ``voice_traces``, migrating them in if absent.
+
+        Runs on its OWN connection, never the caller's, because ALTER TABLE needs
+        ownership: voice_traces is typically owned by whichever principal created
+        it (the deployed app's service principal), while other roles hold DML only.
+        A denied ALTER must therefore cost nothing more than the column staying
+        absent — trace writes continue against whatever shape exists. Cached per
+        process, so this costs one round-trip per worker.
+        """
+        cached = getattr(self, "_trace_columns_cache", None)
+        if cached is not None:
+            return cached
+        present: set[str] = set()
+        added: list[str] = []
+        try:
+            with self._conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = %s AND table_name = 'voice_traces'",
+                    (self.settings.lakebase.schema_name,),
+                )
+                present = {str(r[0]) for r in cur.fetchall()}
+                missing = [c for c in _TRACE_LATENCY_COLUMNS if c not in present]
+                if missing:
+                    tbl = self._table("voice_traces")
+                    for column in missing:
+                        try:
+                            cur.execute(
+                                f"ALTER TABLE {tbl} "
+                                f"ADD COLUMN IF NOT EXISTS {column} DOUBLE PRECISION"
+                            )
+                            present.add(column)
+                            added.append(column)
+                        except Exception:  # noqa: BLE001 - not the table owner
+                            logger.warning(
+                                "voice_traces is missing %s and this role cannot add it; "
+                                "latency stays readable in the trace JSON only", column,
+                            )
+                            break
+        except Exception:  # noqa: BLE001 - never let schema probing break a write
+            logger.warning("voice_traces column probe failed", exc_info=True)
+            return set()
+        self._trace_columns_cache = present
+        self._trace_columns_added = added
+        return present
+
+    def migrate_voice_traces(self) -> list[str]:
+        """Create ``voice_traces`` if absent, add missing latency columns.
+
+        Returns the columns this call added. Only the table's owner can add them,
+        so for any other principal this is an informative no-op.
+        """
+        if not self.enabled:
+            return []
+        with self._conn() as conn, conn.cursor() as cur:
+            self._ensure_traces_table(cur)
+        self._trace_columns_cache = None
+        self._trace_columns()
+        return list(getattr(self, "_trace_columns_added", []))
+
+    def _trace_write_columns(self, values: dict[str, Any]) -> list[str]:
+        """Column names to write/read, dropping latency columns not (yet) migrated.
+
+        Names come from a literal dict here, never from caller input, so they are
+        safe to interpolate into SQL.
+        """
+        present = self._trace_columns()
+        return [c for c in values if c not in _TRACE_LATENCY_COLUMNS or c in present]
+
     def _trace_file(self) -> str:
         """Durable local store for traces when Lakebase is disabled (dev/offline).
 
@@ -636,37 +727,40 @@ class LakebaseServing:
                 pass
             return
         tbl = self._table("voice_traces")
+        values: dict[str, Any] = {
+            "trace_id": trace_id,
+            "session_id": trace.get("session_id"),
+            "turn_id": trace.get("turn_id"),
+            "call_id": trace.get("call_id"),
+            "customer_id": trace.get("customer_id"),
+            "capability": trace.get("capability"),
+            "language": trace.get("language"),
+            "detected_language": trace.get("detected_language"),
+            "status": trace.get("status"),
+            "input_transcript": trace.get("input_transcript"),
+            "output_text": trace.get("output_text"),
+            "tool_names": json.dumps(trace.get("tool_names") or []),
+            "apply_billing_action_called": bool(trace.get("apply_billing_action_called")),
+            "lookup_account_count": int(trace.get("lookup_account_count") or 0),
+            "llm_iterations": int(trace.get("llm_iterations") or 0),
+            "ttft_ms": trace.get("ttft_ms"),
+            "answer_ttft_ms": trace.get("answer_ttft_ms"),
+            "tts_first_ms": trace.get("tts_first_ms"),
+            "server_ttfb_ms": trace.get("server_ttfb_ms"),
+            "server_gen_ms": trace.get("server_gen_ms"),
+            "total_ms": trace.get("total_ms"),
+            "trace": json.dumps(trace),
+        }
         with self._conn() as conn, conn.cursor() as cur:
             self._ensure_traces_table(cur)
+            columns = self._trace_write_columns(values)
             cur.execute(
                 f"""
-                INSERT INTO {tbl}
-                  (trace_id, session_id, turn_id, call_id, customer_id, capability,
-                   language, detected_language, status, input_transcript, output_text,
-                   tool_names, apply_billing_action_called, lookup_account_count,
-                   llm_iterations, total_ms, trace, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+                INSERT INTO {tbl} ({", ".join(columns)}, created_at)
+                VALUES ({", ".join(["%s"] * len(columns))}, now())
                 ON CONFLICT (trace_id) DO NOTHING
                 """,
-                (
-                    trace_id,
-                    trace.get("session_id"),
-                    trace.get("turn_id"),
-                    trace.get("call_id"),
-                    trace.get("customer_id"),
-                    trace.get("capability"),
-                    trace.get("language"),
-                    trace.get("detected_language"),
-                    trace.get("status"),
-                    trace.get("input_transcript"),
-                    trace.get("output_text"),
-                    json.dumps(trace.get("tool_names") or []),
-                    bool(trace.get("apply_billing_action_called")),
-                    int(trace.get("lookup_account_count") or 0),
-                    int(trace.get("llm_iterations") or 0),
-                    trace.get("total_ms"),
-                    json.dumps(trace),
-                ),
+                tuple(values[c] for c in columns),
             )
         # Mirror to the governed UC Delta table for retained, SQL-queryable eval
         # history. Runs on the writer thread, so it never adds turn latency.
@@ -698,14 +792,19 @@ class LakebaseServing:
             params.append(call_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
+        selected = [
+            "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
+            "language", "detected_language", "status", "input_transcript", "output_text",
+            "tool_names", "apply_billing_action_called", "lookup_account_count",
+            "llm_iterations", "ttft_ms", "answer_ttft_ms", "tts_first_ms",
+            "server_ttfb_ms", "server_gen_ms", "total_ms", "created_at",
+        ]
         with self._conn() as conn, conn.cursor() as cur:
             self._ensure_traces_table(cur)
+            columns = self._trace_write_columns({c: None for c in selected})
             cur.execute(
                 f"""
-                SELECT trace_id, session_id, turn_id, call_id, customer_id, capability,
-                       language, detected_language, status, input_transcript, output_text,
-                       tool_names, apply_billing_action_called, lookup_account_count,
-                       llm_iterations, total_ms, created_at
+                SELECT {", ".join(columns)}
                 FROM {tbl}
                 {where}
                 ORDER BY created_at DESC
@@ -743,7 +842,8 @@ class LakebaseServing:
             "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
             "language", "detected_language", "status", "input_transcript", "output_text",
             "tool_names", "apply_billing_action_called", "lookup_account_count",
-            "llm_iterations", "total_ms", "started_at",
+            "llm_iterations", "ttft_ms", "answer_ttft_ms", "tts_first_ms",
+            "server_ttfb_ms", "server_gen_ms", "total_ms", "started_at",
         )
         return {k: trace.get(k) for k in keys}
 

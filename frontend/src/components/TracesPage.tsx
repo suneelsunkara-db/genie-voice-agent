@@ -16,6 +16,113 @@ function ms(value?: number | null): string {
   return `${Math.round(value)}ms`;
 }
 
+function num(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+interface TurnTiming {
+  /** When any audio started; a filler can make this much earlier than the answer. */
+  firstSoundMs: number | null;
+  /** When the caller heard the reply. The number a turn should be judged on. */
+  answerAtMs: number | null;
+  /** True when a latency-covering clip spoke before the reply. */
+  filled: boolean;
+  /** Additive segments of the wait; these sum to answerAtMs. */
+  listeningMs: number | null;
+  thinkingMs: number | null;
+  blockedMs: number | null;
+  voiceMs: number | null;
+  /** Audio streamed after the answer began — not part of the wait. */
+  speakingMs: number | null;
+}
+
+/** Attribute a turn's wait to stages, from the span tree.
+ *
+ * The stages are taken by span KIND and order, not by name, so a profile that
+ * names its spans differently still decomposes correctly:
+ *   listening = STT
+ *   thinking  = everything non-TTS after STT, i.e. until the reply text existed
+ *   blocked   = reply text ready, but the answer's TTS had not started yet
+ *               (with a filler in flight this is the wait for it to drain)
+ *   voice     = the answer's own synthesis up to its first audio chunk
+ */
+function turnTiming(trace: TraceDetail): TurnTiming {
+  const spans = trace.spans ?? [];
+  const ttsSpans = spans.filter((s) => s.kind === "TTS");
+  const answer = ttsSpans.length ? ttsSpans[ttsSpans.length - 1] : null;
+  const ends = (kindMatch: (s: TraceSpan) => boolean) =>
+    spans.filter(kindMatch).map((s) => num(s.end_ms) ?? 0);
+
+  const sttEnds = ends((s) => s.kind === "STT");
+  const listeningMs = sttEnds.length ? Math.max(...sttEnds) : null;
+  const preTtsEnds = ends((s) => s.kind !== "TTS");
+  // When the reply text existed: the last thing that had to finish before speaking.
+  const readyMs = preTtsEnds.length ? Math.max(...preTtsEnds) : listeningMs;
+
+  const answerStart = answer ? num(answer.start_ms) : null;
+  const answerFirstChunk =
+    num(answer?.attributes?.tts_first_ms) ?? num(trace.tts_first_ms);
+  const answerAtMs =
+    num(trace.answer_ttft_ms) ??
+    (answerStart !== null && answerFirstChunk !== null ? answerStart + answerFirstChunk : null);
+
+  return {
+    firstSoundMs: num(trace.ttft_ms),
+    answerAtMs,
+    filled: ttsSpans.length > 1,
+    listeningMs,
+    thinkingMs: readyMs !== null && listeningMs !== null ? Math.max(readyMs - listeningMs, 0) : null,
+    blockedMs:
+      answerStart !== null && readyMs !== null ? Math.max(answerStart - readyMs, 0) : null,
+    voiceMs: answerAtMs !== null && answerStart !== null ? Math.max(answerAtMs - answerStart, 0) : null,
+    speakingMs:
+      answerAtMs !== null && trace.total_ms ? Math.max(trace.total_ms - answerAtMs, 0) : null,
+  };
+}
+
+/** Stacked bar attributing the caller's wait to stages, so the total is auditable. */
+function WaitBreakdown({ timing }: { timing: TurnTiming }) {
+  const segments = [
+    { key: "listening", label: "Listening", hint: "speech to text", value: timing.listeningMs },
+    { key: "thinking", label: "Thinking", hint: "LLM + tools", value: timing.thinkingMs },
+    { key: "blocked", label: "Blocked", hint: "reply ready, not speaking", value: timing.blockedMs },
+    { key: "voice", label: "Voice", hint: "synthesis to first audio", value: timing.voiceMs },
+  ].filter((s) => s.value !== null && s.value > 0) as Array<{
+    key: string;
+    label: string;
+    hint: string;
+    value: number;
+  }>;
+  const total = segments.reduce((acc, s) => acc + s.value, 0);
+  if (!segments.length || total <= 0) {
+    return <div className="tv-callout">No spoken reply in this turn, so there is no wait to attribute.</div>;
+  }
+  return (
+    <div className="tv-wait">
+      <div className="tv-wait-bar">
+        {segments.map((s) => (
+          <div
+            key={s.key}
+            className={`tv-wait-seg ${s.key}`}
+            style={{ width: `${(s.value / total) * 100}%` }}
+            title={`${s.label}: ${ms(s.value)}`}
+          />
+        ))}
+      </div>
+      <div className="tv-wait-legend">
+        {segments.map((s) => (
+          <div key={s.key} className="tv-wait-item">
+            <span className={`tv-wait-dot ${s.key}`} />
+            <span className="tv-wait-label">{s.label}</span>
+            <span className="tv-wait-value">{ms(s.value)}</span>
+            <span className="tv-wait-hint">{s.hint}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function shortId(id?: string | null): string {
   if (!id) return "—";
   return id.length > 10 ? `${id.slice(0, 8)}…` : id;
@@ -130,17 +237,56 @@ function SpanDetail({ span }: { span: TraceSpan }) {
 function Waterfall({
   spans,
   totalMs,
+  firstSoundMs,
+  answerAtMs,
   selected,
   onSelect,
 }: {
   spans: TraceSpan[];
   totalMs: number;
+  firstSoundMs?: number | null;
+  answerAtMs?: number | null;
   selected: number;
   onSelect: (i: number) => void;
 }) {
   const scale = totalMs > 0 ? totalMs : 1;
+  const pct = (value?: number | null) =>
+    value !== null && value !== undefined ? Math.min((value / scale) * 100, 100) : null;
+  // Two moments worth marking: when the line stopped being silent, and when the
+  // caller actually got their answer. They only differ when a filler played, so
+  // collapse to a single "answer" mark when nothing spoke ahead of the reply.
+  const soundAt = pct(firstSoundMs);
+  const answerAt = pct(answerAtMs);
+  const coincide = soundAt !== null && answerAt !== null && Math.abs(soundAt - answerAt) <= 0.5;
+  const marks: Array<{ key: string; label: string; at: number; value: number }> = [];
+  if (soundAt !== null && !coincide) {
+    marks.push({
+      key: "sound",
+      label: answerAt === null ? "sound, no answer" : "first sound",
+      at: soundAt,
+      value: firstSoundMs as number,
+    });
+  }
+  if (answerAt !== null) {
+    marks.push({ key: "answer", label: "answer", at: answerAt, value: answerAtMs as number });
+  }
   return (
     <div className="tv-waterfall">
+      {marks.length > 0 && (
+        <div className="tv-span-row tv-mark-row">
+          <div className="tv-span-name">
+            <span className="tv-mark-caption">caller hears</span>
+          </div>
+          <div className="tv-bar-track">
+            {marks.map((m) => (
+              <div key={m.key} className={`tv-mark-flag ${m.key}`} style={{ left: `${m.at}%` }}>
+                <span>{m.label} {ms(m.value)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="tv-span-dur" />
+        </div>
+      )}
       {spans.map((s, i) => {
         const left = ((s.start_ms ?? 0) / scale) * 100;
         const width = Math.max(((s.duration_ms ?? 0) / scale) * 100, 0.6);
@@ -159,6 +305,11 @@ function Waterfall({
                 className={`tv-bar${s.status === "error" ? " err" : ""}`}
                 style={{ left: `${left}%`, width: `${width}%` }}
               />
+              {/* Carried through every row so you can read which stage was still
+                  running at each moment the caller heard something. */}
+              {marks.map((m) => (
+                <div key={m.key} className={`tv-guide ${m.key}`} style={{ left: `${m.at}%` }} />
+              ))}
             </div>
             <div className="tv-span-dur">{ms(s.duration_ms)}</div>
           </div>
@@ -175,6 +326,7 @@ function TraceDetailView({ trace }: { trace: TraceDetail }) {
     () => Math.max(trace.total_ms ?? 0, ...trace.spans.map((s) => s.end_ms ?? 0), 1),
     [trace]
   );
+  const timing = useMemo(() => turnTiming(trace), [trace]);
   const applied = trace.apply_billing_action_called;
   return (
     <div>
@@ -196,9 +348,43 @@ function TraceDetailView({ trace }: { trace: TraceDetail }) {
               : ""}
           </div>
         </div>
+        <div className="tv-meta is-headline">
+          <div className="tv-meta-label">Answer heard at</div>
+          <div className="tv-meta-value">
+            {ms(timing.answerAtMs)}
+            <span className="tv-meta-hint">
+              {timing.answerAtMs === null ? "no spoken reply" : "what the caller waited for"}
+            </span>
+          </div>
+        </div>
         <div className="tv-meta">
-          <div className="tv-meta-label">Total latency</div>
-          <div className="tv-meta-value">{ms(trace.total_ms)}</div>
+          <div className="tv-meta-label">First sound</div>
+          <div className="tv-meta-value">
+            {ms(timing.firstSoundMs)}
+            <span className="tv-meta-hint">
+              {timing.filled ? "filler broke the silence" : "the reply itself"}
+            </span>
+          </div>
+        </div>
+        <div className="tv-meta">
+          <div className="tv-meta-label">Voice engine</div>
+          <div className="tv-meta-value">
+            {ms(trace.tts_first_ms)}
+            <span className="tv-meta-hint">
+              {num(trace.server_ttfb_ms) !== null && num(trace.tts_first_ms) !== null
+                ? `${ms(trace.server_ttfb_ms)} model · ${ms(
+                    (trace.tts_first_ms as number) - (trace.server_ttfb_ms as number)
+                  )} transport`
+                : "endpoint timing not reported"}
+            </span>
+          </div>
+        </div>
+        <div className="tv-meta">
+          <div className="tv-meta-label">Turn duration</div>
+          <div className="tv-meta-value">
+            {ms(trace.total_ms)}
+            <span className="tv-meta-hint">{ms(timing.speakingMs)} of it speaking</span>
+          </div>
         </div>
         <div className="tv-meta">
           <div className="tv-meta-label">LLM iterations</div>
@@ -231,10 +417,21 @@ function TraceDetailView({ trace }: { trace: TraceDetail }) {
 
       {trace.error && <div className="tv-callout">error: {trace.error}</div>}
 
+      <div className="tv-section-title">Where the wait went</div>
+      <WaitBreakdown timing={timing} />
+      {timing.blockedMs !== null && timing.blockedMs > 250 && (
+        <div className="tv-callout warn">
+          The reply was ready {ms(timing.blockedMs)} before the agent started speaking it —
+          audio already in flight had to finish first.
+        </div>
+      )}
+
       <div className="tv-section-title">Span waterfall</div>
       <Waterfall
         spans={trace.spans}
         totalMs={totalMs}
+        firstSoundMs={timing.firstSoundMs}
+        answerAtMs={timing.answerAtMs}
         selected={selectedSpan}
         onSelect={setSelectedSpan}
       />
@@ -321,12 +518,31 @@ export function TracesPage() {
     return groups;
   }, [filtered]);
 
+  // Rolled up over turns that produced a spoken reply; deep dives and dropped
+  // turns never answer and would otherwise skew the percentiles.
+  const answerStats = useMemo(() => {
+    const values = filtered
+      .map((t) => num(t.answer_ttft_ms) ?? num(t.ttft_ms))
+      .filter((v): v is number => v !== null)
+      .sort((a, b) => a - b);
+    if (!values.length) return null;
+    const at = (q: number) => values[Math.min(values.length - 1, Math.floor(q * values.length))];
+    return { p50: at(0.5), p95: at(0.95), count: values.length };
+  }, [filtered]);
+
   return (
     <div className="tv-root">
       <div className="tv-header">
         <div className="tv-title">
           <span>Genie</span> Voice · Trace Explorer
         </div>
+        {answerStats && (
+          <div className="tv-ttft-stat">
+            time to answer p50 <strong>{ms(answerStats.p50)}</strong> · p95{" "}
+            <strong>{ms(answerStats.p95)}</strong>
+            <span className="tv-ttft-stat-sub">{answerStats.count} answered turns</span>
+          </div>
+        )}
         <div className="tv-header-spacer" />
         <div className="tv-filters">
           {(["all", "ok", "issues"] as StatusFilter[]).map((f) => (
@@ -386,7 +602,10 @@ export function TracesPage() {
                       ))}
                     </div>
                   </div>
-                  <div className="tv-turn-right">{ms(t.total_ms)}</div>
+                  <div className="tv-turn-right">
+                    <div className="tv-turn-ttft">{ms(t.answer_ttft_ms ?? t.ttft_ms)}</div>
+                    <div className="tv-turn-total">to answer</div>
+                  </div>
                 </div>
               ))}
             </div>

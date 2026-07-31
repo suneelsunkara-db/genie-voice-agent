@@ -12,6 +12,7 @@ from typing import AsyncIterator
 
 from ..languages import CATALOG, canonical_base, canonical_tag
 from ..session import VoiceSession
+from ..tracing import TurnTrace
 from . import ServingBundle
 
 _SENTENCE_RE = re.compile(r"[^.!?。！？…\n]+(?:[.!?。！？…]+|\n|$)", re.UNICODE)
@@ -104,6 +105,8 @@ async def stream_tts(
     *,
     mark_final: bool = True,
     emit_text: bool = True,
+    trace: TurnTrace | None = None,
+    primary: bool = True,
 ) -> AsyncIterator[dict]:
     """Stream TTS audio for `text` as response.audio events.
 
@@ -111,6 +114,11 @@ async def stream_tts(
     doesn't signal turn completion before the real answer streams. emit_text=False
     suppresses the transcript text carried on the first chunk (used for fillers,
     which shouldn't appear as an agent turn).
+
+    Passing `trace` records time-to-first-audio here rather than at each call
+    site, so every path that speaks reports the same latency metric. primary=False
+    marks latency-covering audio (a filler), which ends the dead air without being
+    the reply the caller is waiting for.
     """
     reference_b64 = session.voice_reference_b64
     voice_id = session.voice_id
@@ -151,6 +159,8 @@ async def stream_tts(
                 event = pending.event(turn_id, chunk_index=index, final=False, text=first_text)
                 if index == 0:
                     event["tts_first_ms"] = tts_first_ms
+                if trace is not None:
+                    trace.note_audio(event, primary=primary)
                 yield event
                 index += 1
             pending = chunk
@@ -159,6 +169,8 @@ async def stream_tts(
             event = pending.event(turn_id, chunk_index=index, final=mark_final, text=first_text)
             if index == 0:
                 event["tts_first_ms"] = tts_first_ms
+            if trace is not None:
+                trace.note_audio(event, primary=primary)
             yield event
         _lock_voice_reference(session, bytes(capture) if capture is not None else b"", capture_sr)
         return
@@ -182,12 +194,15 @@ async def stream_tts(
             reference_b64 = session.voice_reference_b64
             voice_id = session.voice_id
         is_last = index == total - 1
-        yield audio_response.event(
+        event = audio_response.event(
             turn_id,
             chunk_index=index,
             final=is_last and mark_final,
             text=sentence if emit_text else None,
         )
+        if trace is not None:
+            trace.note_audio(event, primary=primary)
+        yield event
 
 
 def _voice_id_for(wav_bytes: bytes) -> str:

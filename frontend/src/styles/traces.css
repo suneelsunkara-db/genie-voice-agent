@@ -78,6 +78,9 @@
 .tv-turn-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tv-turn-sub { color: var(--tv-muted); font-size: 11px; display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
 .tv-turn-right { text-align: right; color: var(--tv-muted); font-size: 11px; }
+/* Time to first audio leads; turn duration is context, not the headline. */
+.tv-turn-ttft { color: var(--tv-text); font-size: 12px; font-family: ui-monospace, monospace; }
+.tv-turn-total { font-size: 10px; opacity: 0.7; }
 
 .tv-badge {
   border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 600;
@@ -100,6 +103,7 @@
 .tv-meta { background: var(--tv-panel); border: 1px solid var(--tv-border); border-radius: 8px; padding: 8px 10px; }
 .tv-meta-label { color: var(--tv-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
 .tv-meta-value { font-size: 13px; margin-top: 2px; word-break: break-word; }
+.tv-meta-hint { display: block; color: var(--tv-muted); font-size: 10px; margin-top: 1px; }
 
 .tv-section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--tv-muted); margin: 14px 0 8px; }
 
@@ -115,6 +119,60 @@
 .tv-bar-track { position: relative; height: 14px; background: #0d1220; border-radius: 3px; }
 .tv-bar { position: absolute; height: 14px; border-radius: 3px; background: var(--tv-accent); opacity: 0.85; min-width: 2px; }
 .tv-bar.err { background: var(--tv-err); }
+
+/* Dead-air row: shades the silence before first audio and marks where it ended,
+   so the waterfall shows what the caller waited through, not just span durations. */
+.tv-ttft-stat {
+  margin-left: 16px; font-size: 11px; color: var(--tv-muted);
+  border: 1px solid var(--tv-border); border-radius: 8px; padding: 4px 10px; background: var(--tv-panel);
+}
+.tv-ttft-stat strong { color: var(--tv-text); font-family: ui-monospace, monospace; }
+.tv-ttft-stat-sub { display: block; font-size: 10px; opacity: 0.7; }
+
+/* --- wait attribution: segments that sum to the time-to-answer -------------- */
+.tv-wait { background: var(--tv-panel); border: 1px solid var(--tv-border); border-radius: 8px; padding: 10px; }
+.tv-wait-bar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; background: #0d1220; }
+.tv-wait-seg { height: 16px; }
+.tv-wait-seg.listening { background: #3f7fb0; }
+.tv-wait-seg.thinking { background: #7a63d8; }
+.tv-wait-seg.blocked { background: #b06a3f; }
+.tv-wait-seg.voice { background: #c86fae; }
+.tv-wait-legend {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 4px 14px; margin-top: 10px;
+}
+.tv-wait-item { display: flex; align-items: baseline; gap: 6px; font-size: 11px; min-width: 0; }
+.tv-wait-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.tv-wait-dot.listening { background: #3f7fb0; }
+.tv-wait-dot.thinking { background: #7a63d8; }
+.tv-wait-dot.blocked { background: #b06a3f; }
+.tv-wait-dot.voice { background: #c86fae; }
+.tv-wait-label { color: var(--tv-text); }
+.tv-wait-value { font-family: ui-monospace, monospace; color: var(--tv-text); }
+.tv-wait-hint { color: var(--tv-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- waterfall markers for the two moments the caller hears something ------- */
+.tv-mark-row { cursor: default; background: #0b0f1a; border-bottom: 1px solid #23283a; }
+.tv-mark-row:hover { background: #0b0f1a; }
+.tv-mark-row .tv-bar-track { background: transparent; }
+.tv-mark-caption {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--tv-muted);
+}
+.tv-mark-flag { position: absolute; top: 0; height: 14px; border-left: 2px solid; padding-left: 4px; }
+.tv-mark-flag span { font-size: 9px; line-height: 14px; white-space: nowrap; }
+.tv-mark-flag.sound { border-color: var(--tv-warn); }
+.tv-mark-flag.sound span { color: var(--tv-warn); }
+.tv-mark-flag.answer { border-color: var(--tv-ok); }
+.tv-mark-flag.answer span { color: var(--tv-ok); }
+/* Extends past the 14px track so each mark reads as one continuous line down the
+   whole waterfall rather than a dash per row. */
+.tv-guide {
+  position: absolute; top: -7px; bottom: -8px; width: 1px; pointer-events: none; opacity: 0.45;
+}
+.tv-guide.sound { background: var(--tv-warn); }
+.tv-guide.answer { background: var(--tv-ok); }
+
+.tv-meta.is-headline { border-color: #2f4a6b; background: #101a2b; }
+.tv-callout.warn { border-color: #6b551b; color: var(--tv-warn); }
 .tv-span-dur { text-align: right; color: var(--tv-muted); font-size: 11px; font-family: ui-monospace, monospace; }
 
 .tv-span-detail { margin-top: 12px; }
