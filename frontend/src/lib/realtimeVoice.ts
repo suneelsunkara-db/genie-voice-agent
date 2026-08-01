@@ -32,6 +32,8 @@ export interface DeepDiveReport {
   sql: string[];
   reasoning: string[];
   error: unknown;
+  /** True while a translation of `report` is still on its way (see onReportLocalized). */
+  localizationPending: boolean;
 }
 
 export interface RealtimeVoiceCallbacks {
@@ -587,6 +589,12 @@ export interface DeepDiveHandlers {
   onMeta?: (timeoutMs: number) => void;
   onStep?: (step: "reasoning" | "sql", text: string) => void;
   onReport?: (report: DeepDiveReport) => void;
+  /**
+   * The report text translated into the caller's language, arriving AFTER the
+   * report so the voice never waits on the translator. Only sent when the report
+   * announced `localizationPending`; replace the on-screen text in place.
+   */
+  onReportLocalized?: (report: string, language: string) => void;
   onError?: (message: string) => void;
   onDone?: () => void;
 }
@@ -651,7 +659,14 @@ export function streamDeepDive(
           sql: (ev.sql as string[]) ?? [],
           reasoning: (ev.reasoning as string[]) ?? [],
           error: null,
+          localizationPending: ev.localization_pending === true,
         });
+        break;
+      case "report_localized":
+        handlers.onReportLocalized?.(
+          String(ev.report ?? ""),
+          String(ev.report_language ?? "")
+        );
         break;
       case "error":
         handlers.onError?.(

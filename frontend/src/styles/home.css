@@ -161,6 +161,12 @@
   font-size: clamp(12px, 1.7vh, 15px);
   margin: 0;
 }
+.home-instruction {
+  margin: 4px 0 0;
+  font-size: clamp(12px, 1.6vh, 14px);
+  color: #b9c6e8;
+  font-weight: 500;
+}
 .home-controls {
   display: flex;
   align-items: center;

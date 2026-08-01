@@ -108,13 +108,17 @@ async def deepdive(
     Query params:
       - question:    the full "why" question (already scoped to the cardholder).
       - use_case:    optional label, echoed back on each event for UI routing.
-      - language:    caller's BCP-47 tag, so the spoken summary is in their language.
+      - language:    caller's BCP-47 tag, driving BOTH the spoken summary and the
+        translation of the on-screen report.
       - call_id / session_id / customer_id: link this deep dive's trace to the
         originating voice call in Trace Explorer.
 
     Emits ``data: {json}`` events with kinds: started | reasoning | sql | report |
-    error | done. ``:`` heartbeat comments keep intermediaries from closing idle
-    connections during the agent's long reasoning gaps.
+    report_localized | error | done. ``report`` carries the spoken summary and the
+    agent's English text so the voice can start immediately; when it sets
+    ``localization_pending`` a ``report_localized`` follows with the translated
+    text for the screen. ``:`` heartbeat comments keep intermediaries from closing
+    idle connections during the agent's long reasoning gaps.
     """
     async def event_stream():
         from genie_voice.config import get_settings

@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import AsyncIterator
 
 from ..capabilities import SPEECH_LLM_TOOLASSIST_SPEECH
+from ..guardrails import report
 from ..languages import base_code, english_name
 from ..profiles import get_profile
 from ..session import VoiceSession
@@ -171,11 +172,41 @@ async def process_turn(
             "stt turn %d: %dms detected=%s len=%d text=%r",
             turn_id, stt_ms, detected, len(transcript), transcript[:120],
         )
+        # Group B: what Qwen3-ASR owns for us. Recorded honestly — "delegated" only
+        # when its language ID actually ran, which it does not when the session
+        # pinned a language (then `detected` merely echoes our own choice).
+        pinned = bool(session.config.language) and session.config.language != "auto"
+        report(
+            trace.guards, "language_id",
+            "not_evaluated" if pinned else "delegated",
+            stage="stt", owner="qwen",
+            reason=(
+                f"session pinned language={session.config.language}"
+                if pinned
+                else f"detected_language={detected or 'unknown'}"
+            ),
+        )
+        report(
+            trace.guards, "no_speech_suppression",
+            "fired" if not transcript.strip() else "passed",
+            stage="stt", owner="qwen",
+            reason="empty transcript from STT" if not transcript.strip() else None,
+        )
+
         if turn_id != session.turn_id:
             trace.status = "superseded"
+            report(
+                trace.guards, "stale_turn", "fired",
+                stage="turn", surface="internal",
+                reason=f"turn {turn_id} superseded by {session.turn_id}",
+            )
             return
         if not transcript.strip():
             trace.status = "empty_transcript"
+            report(
+                trace.guards, "empty_transcript", "fired",
+                stage="turn", surface="internal", reason="blank transcript; turn dropped",
+            )
             return
         # Language gate: if the caller isn't speaking the selected language, don't
         # surface the off-language transcript or run the assistant. Warn the UI
@@ -183,6 +214,23 @@ async def process_turn(
         # the picker — the spoken guidance lives here because this is the only route
         # with a TTS stage. The turn is otherwise dropped (no history, no LLM/reply).
         mismatch = language_mismatch(session, detected)
+        if not session.config.expected_language:
+            report(
+                trace.guards, "language_gate", "not_evaluated",
+                seam="decision", stage="routing",
+                reason="session set no expected_language",
+            )
+        else:
+            report(
+                trace.guards, "language_gate", "fired" if mismatch else "passed",
+                seam="decision", stage="routing",
+                reason=(
+                    f"expected={mismatch['expected']} detected={mismatch['detected']}; "
+                    "turn dropped, switch prompt spoken"
+                    if mismatch
+                    else f"detected={detected or 'unknown'} matches selection"
+                ),
+            )
         if mismatch:
             trace.status = "language_mismatch"
             with trace.span("language.gate", "GUARD", input={"detected": detected}) as gate:
@@ -238,7 +286,7 @@ async def process_turn(
         # and still call the tool itself. Fully generic: the engine never names
         # a domain — only the profile knows what its intents are.
         resolver = getattr(profile, "resolve_intents", None)
-        resolved = resolver(transcript, language) if resolver is not None else []
+        resolved = resolver(transcript, language, trace.guards) if resolver is not None else []
         if resolved:
             with trace.span("intent.router", "GUARD", input={"transcript": transcript}) as span:
                 span.set_output({"intents": [r.name for r in resolved]})

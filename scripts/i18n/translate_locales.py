@@ -36,24 +36,48 @@ EN_PATH = LOCALES_DIR / "en.json"
 # (same audio language) are never machine-translated.
 SKIP_CODES = {"en-US", "th-TH", "id-ID", "zh-CN", "zh-CN-sensevoice", "zh-CN-paraformer"}
 
-# Tokens the model must copy verbatim (brands, schema, currency, IDs).
+# Tokens the model must copy verbatim (brands, schema, currency, IDs). "Autopay" is
+# treated as a product-feature name and kept in its canonical Latin form: it has no
+# stable word in many scripts and gemma mistransliterates it (Hindi produced the
+# non-word "ऑटोपेट"/"autopet"), so a consistent brand form is safer than a guess.
 _PROTECTED = (
     "Genie, Databricks, Deepgram, Qwen3, SenseVoice, Paraformer, VoxCPM, STT, TTS, "
-    "ASR, Lakebase, Customer 360, USD, the '$' sign, and any INV-/CUST-/CALL- IDs"
+    "ASR, Lakebase, Customer 360, Autopay, USD, the '$' sign, and any "
+    "INV-/CUST-/CALL- IDs"
 )
 
 # Keys are translated in chunks to keep each response well within output limits.
 _CHUNK = 40
+
+# Domain context. Without it the model translates one-word labels by guessing:
+# "overdue" came back in Hindi as "अधिकांश" ("most/majority") because, on its own,
+# the word reads as "over-". The key names carry the meaning, so say so explicitly.
+_DOMAIN = (
+    "The product is a voice assistant that helps customer-service agents resolve "
+    "telecom and credit-card BILLING issues on a live call. Use the key name as "
+    "context for short values: 'valueStatus*' are one-word states of an invoice or "
+    "a support issue (overdue = a bill past its due date; open = an unresolved "
+    "issue; paid = a settled invoice; closed = a resolved issue; at_risk = a "
+    "customer likely to churn), 'valueReason*' explain why an action was refused, "
+    "'valueIntent*' are what the customer is calling about, and 'resolutionNote*' "
+    "are notes on a case timeline. Translate these with the financial/support "
+    "meaning, using the term a bank or telco would print on a real bill."
+)
 
 
 def _system_prompt(language_name: str, tag: str) -> str:
     return (
         f"You are a professional software localizer. Translate the VALUES of a UI "
         f"string catalog from English into {language_name} ({tag}). "
+        f"{_DOMAIN} "
         "Return ONLY a valid JSON object with EXACTLY the same keys as the input; "
         "translate only the values. "
         f"Keep every {{placeholder}} token EXACTLY as-is (same name, keep the braces). "
         f"Do NOT translate these tokens — copy them verbatim: {_PROTECTED}. "
+        "For product/technology terms that have no established word in the target "
+        "language (e.g. 'plan', 'refund'), prefer the accepted local term; if you "
+        "must transliterate, transliterate the FULL word correctly and never invent a "
+        "spelling. "
         "Preserve arrows (→), ellipses (…), and punctuation. Keep translations short "
         "and natural for UI labels/buttons. Do not add notes, comments, or code fences."
     )
@@ -93,9 +117,13 @@ def _translate_chunk(client, endpoint: str, language_name: str, tag: str, chunk:
         {"role": "system", "content": _system_prompt(language_name, tag)},
         {"role": "user", "content": json.dumps(chunk, ensure_ascii=False, indent=0)},
     ]
+    # No `temperature`: the frontier endpoints worth using for terminology reject
+    # any non-default value ("does not support 0 with this model"), and a one-shot
+    # offline pass whose output is committed to git doesn't need sampling to be
+    # reproducible.
     resp = client.predict(
         endpoint=endpoint,
-        inputs={"messages": messages, "max_tokens": 4000, "temperature": 0.0},
+        inputs={"messages": messages, "max_tokens": 4000},
     )
     choices = resp.get("choices") or []
     content = _strip_fences((choices[0].get("message") or {}).get("content") if choices else "")
@@ -125,7 +153,14 @@ def main() -> int:
 
     settings = RealtimeSettings.resolve()
     client = _SdkDeployClient(databricks_profile())
-    endpoint = settings.llm_endpoint
+    # This runs OFFLINE, so it is not bound to the low-latency model the call path
+    # uses. Terminology is where a small model fails: the runtime 80B rendered
+    # "overdue" in Hindi as "अधिकांश" ("most") and then "अतिव्याप्त"
+    # ("overlapping"), neither of which is a billing term.
+    endpoint = next(
+        (a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--endpoint=")),
+        settings.i18n_endpoint or settings.llm_endpoint,
+    )
     print(f"LLM endpoint: {endpoint} | languages: {len(targets)} | keys: {len(items)}")
 
     for tag in targets:

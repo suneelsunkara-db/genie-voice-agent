@@ -1,10 +1,12 @@
 import { CSSProperties, useEffect, useState } from "react";
-import { api, CustomerWithIssue, InteractionLanguage, StatusResponse } from "./api/client";
+import { api, CustomerWithIssue, StatusResponse } from "./api/client";
+import { useAppLanguage } from "./lib/appLanguage";
 import { useUiLocale } from "./i18n";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
 import { CardIssuerPage } from "./components/CardIssuerPage";
 import { CockpitPage } from "./components/CockpitPage";
+import { GuardrailsPage } from "./components/GuardrailsPage";
 import { HomePage } from "./components/HomePage";
 import { HlsPage } from "./components/HlsPage";
 import { TracesPage } from "./components/TracesPage";
@@ -18,7 +20,9 @@ export default function App() {
   const [customersErr, setCustomersErr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(() => window.location.hash || "#/");
-  const [interactionLanguage, setInteractionLanguage] = useState<InteractionLanguage>("en-US");
+  // The one language chosen on the home page; the cockpit reads it and its picker
+  // is locked (see CockpitPage). Changing language happens on #/ only.
+  const [interactionLanguage, setInteractionLanguage] = useAppLanguage();
 
   // Load (and cache) the pre-generated UI-copy bundle for the selected language;
   // re-renders the tree once it lands so uiCopy() picks up the localized chrome.
@@ -70,7 +74,10 @@ export default function App() {
   const showHome = page === "#/" || page === "#/home";
   const showHls = page === "#/hls";
   const showBenchmark = page === "#/asr-benchmark";
-  const showTraces = page === "#/traces";
+  // The Trace Explorer takes an optional ?trace=<id> so the Guardrails view can
+  // deep-link a specific turn.
+  const showTraces = page === "#/traces" || page.startsWith("#/traces?");
+  const showGuardrails = page === "#/guardrails";
   const showVoiceBenchmarks = page === "#/voice-benchmarks";
   const showCard = page === "#/card";
 
@@ -84,8 +91,8 @@ export default function App() {
     }
   }, [status?.languages, interactionLanguage]);
 
-  // Landing page: the voice concierge that greets the signed-in user and routes
-  // by voice to an industry (Telco -> #/telco, FSI -> #/card, Healthcare -> #/hls).
+  // Landing page: choose the app language and click into an industry
+  // (Telco -> #/telco, FSI -> #/card, Healthcare -> #/hls).
   if (showHome) {
     return <HomePage />;
   }
@@ -97,6 +104,9 @@ export default function App() {
   // Sentient shell like dedicated tools.
   if (showTraces) {
     return <TracesPage />;
+  }
+  if (showGuardrails) {
+    return <GuardrailsPage />;
   }
   if (showVoiceBenchmarks) {
     return <VoiceBenchmarksPage />;

@@ -201,3 +201,133 @@
   border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px;
 }
 .tv-callout.ok { border-color: #1f5c46; background: #0f2019; color: #9fe6c2; }
+
+/* ---- Guardrails view -------------------------------------------------- */
+/* Shares the trace-view palette (same .tv-root scope) so the two observability
+   surfaces read as one tool. Coverage is the headline here, not incidents. */
+.gr-body { flex: 1; overflow-y: auto; padding: 16px 20px 40px; }
+
+.gr-headline {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px; margin-bottom: 6px;
+}
+.gr-stat {
+  background: var(--tv-panel); border: 1px solid var(--tv-border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.gr-stat.is-clean { border-color: #1f5c46; }
+.gr-stat.is-hit { border-color: #6b551b; }
+.gr-stat-value { font-size: 26px; font-weight: 700; line-height: 1.1; }
+.gr-stat.is-clean .gr-stat-value { color: var(--tv-ok); }
+.gr-stat.is-hit .gr-stat-value { color: var(--tv-warn); }
+.gr-stat-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--tv-muted); margin-top: 4px;
+}
+.gr-stat-sub { font-size: 11px; color: var(--tv-muted); opacity: 0.85; margin-top: 3px; }
+
+.gr-guards { display: flex; flex-direction: column; gap: 8px; }
+.gr-guard {
+  background: var(--tv-panel); border: 1px solid var(--tv-border);
+  border-radius: 10px; padding: 11px 13px;
+}
+.gr-guard-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gr-guard-name { font-weight: 600; }
+.gr-guard-id {
+  font-family: ui-monospace, monospace; font-size: 11px; color: var(--tv-muted);
+  background: #0d1220; border: 1px solid var(--tv-border); border-radius: 4px; padding: 1px 5px;
+}
+.gr-owner {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  border-radius: 4px; padding: 2px 6px; background: #17324a; color: #7fc4ff;
+}
+.gr-owner.is-qwen { background: #2a2350; color: #b9a7ff; }
+.gr-stage {
+  font-size: 10px; color: var(--tv-muted); border: 1px solid var(--tv-border);
+  border-radius: 4px; padding: 1px 6px;
+}
+.gr-guard-runs { margin-left: auto; font-size: 11px; color: var(--tv-muted); }
+.gr-guard-runs em { color: var(--tv-warn); font-style: normal; }
+.gr-guard-blurb { color: var(--tv-muted); font-size: 12px; margin: 6px 0 8px; max-width: 90ch; }
+
+.gr-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; }
+.gr-bar-seg { display: block; height: 100%; }
+.gr-bar-seg.is-passed { background: var(--tv-ok); }
+.gr-bar-seg.is-fired { background: var(--tv-warn); }
+.gr-bar-seg.is-delegated { background: #b9a7ff; }
+.gr-bar-seg.is-not_evaluated { background: #4a5568; }
+.gr-bar-seg.is-disabled { background: #2f3646; }
+.gr-bar-seg.is-error { background: var(--tv-err); }
+
+.gr-guard-foot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px;
+}
+.gr-outcome {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+  border: 1px solid var(--tv-border); border-radius: 999px; padding: 1px 8px;
+  color: var(--tv-muted); cursor: help;
+}
+.gr-outcome strong { color: var(--tv-text); font-size: 11px; }
+.gr-outcome.is-passed { color: var(--tv-ok); border-color: #1f5c46; }
+.gr-outcome.is-fired { color: var(--tv-warn); border-color: #6b551b; }
+.gr-outcome.is-delegated { color: #b9a7ff; border-color: #3a3170; }
+.gr-outcome.is-error { color: var(--tv-err); border-color: #6b2b2b; }
+.gr-reason {
+  margin-left: auto; font-size: 11px; color: var(--tv-muted);
+  font-family: ui-monospace, monospace;
+}
+
+.gr-fired { display: flex; flex-direction: column; gap: 6px; }
+.gr-fired-row {
+  display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
+  background: var(--tv-panel); border: 1px solid #6b551b; border-radius: 8px;
+  padding: 8px 11px; color: var(--tv-text); font: inherit; cursor: pointer;
+}
+.gr-fired-row:hover { background: var(--tv-panel-2); }
+.gr-fired-guard { font-family: ui-monospace, monospace; font-size: 11px; color: var(--tv-warn); }
+.gr-fired-reason { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-fired-meta { margin-left: auto; font-size: 11px; color: var(--tv-muted); white-space: nowrap; }
+
+.gr-langs { display: flex; flex-direction: column; gap: 6px; }
+.gr-lang {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: var(--tv-panel); border: 1px solid var(--tv-border);
+  border-radius: 8px; padding: 7px 11px;
+}
+.gr-lang-code { font-family: ui-monospace, monospace; font-size: 12px; min-width: 64px; }
+
+/* ---- Catalog rails (the rail menu, decorated with live detections) ---- */
+.gr-subgroup { margin-top: 6px; }
+.gr-subhead {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--tv-muted); margin: 12px 0 6px; opacity: 0.9;
+}
+.gr-rail { border-left: 3px solid transparent; }
+.gr-rail.is-live { border-left-color: #1f5c46; }
+.gr-rail.is-delegated { border-left-color: #3a3170; }
+/* Planned rails are visibly not-yet-shipped without disappearing. */
+.gr-rail.is-planned { border-left-color: #3a4358; opacity: 0.82; }
+
+.gr-kind {
+  font-size: 10px; color: var(--tv-muted); border: 1px solid var(--tv-border);
+  border-radius: 4px; padding: 1px 6px; text-transform: lowercase;
+}
+.gr-status {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  border-radius: 4px; padding: 2px 6px; border: 1px solid transparent;
+}
+.gr-status.is-live { background: #0f2019; color: var(--tv-ok); border-color: #1f5c46; }
+.gr-status.is-delegated { background: #17132e; color: #b9a7ff; border-color: #3a3170; }
+.gr-status.is-planned { background: #171d28; color: #8fa3c2; border-color: #34405360; }
+
+.gr-phase {
+  font-size: 10px; font-weight: 600; color: #8fa3c2;
+  border: 1px dashed #34405380; border-radius: 4px; padding: 1px 6px;
+}
+.gr-idle { font-size: 11px; color: var(--tv-muted); opacity: 0.8; }
+.gr-profiles {
+  display: inline-block; font-size: 10px; font-weight: 600; color: #7fc4ff;
+  background: #10233a; border: 1px solid #1c3a57; border-radius: 4px;
+  padding: 1px 6px; margin-right: 8px; text-transform: uppercase; letter-spacing: 0.3px;
+  vertical-align: middle;
+}

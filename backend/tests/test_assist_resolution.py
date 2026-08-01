@@ -1,6 +1,9 @@
 from genie_voice.assist.resolution import (
+    NOTE_ISSUE_CLOSED,
+    NOTE_ISSUE_GUIDED,
     evaluate_resolution,
     finalize_resolution_after_billing,
+    note_text,
     resolution_event_for_transition,
 )
 
@@ -191,6 +194,27 @@ def test_finalize_resolution_commits_close_only_after_billing():
     assert closed["actions"]["payment_plan_applied"] is True
     assert closed["actions"]["waiver_applied"] is True
     assert "pending_close" not in closed["actions"]
+    assert closed["note"] == NOTE_ISSUE_CLOSED
+
+
+def test_notes_are_canonical_codes_not_prose():
+    """The UI localizes the timeline from these codes, so prose here would be
+    untranslatable — which is how a Hindi call ended up showing an English note."""
+    inner = {"resolution": {"status": "open", "actions": {}}}
+    nudge = {"available": True, "customer_signal": "request_help"}
+    account = {"found": True, "summary": {"overdue_invoice_count": 1, "overdue_amount": 239.0}}
+    out = evaluate_resolution(inner, "I need help with this bill.", 1, account, nudge)
+    assert out["note"] == NOTE_ISSUE_GUIDED
+    assert " " not in out["note"]
+
+
+def test_note_text_renders_english_for_non_ui_consumers():
+    # The LLM prompt context reads prose, not codes.
+    assert note_text(NOTE_ISSUE_GUIDED, status="in_progress").startswith("Issue in_progress:")
+    assert "payment arrangement confirmed" in note_text(NOTE_ISSUE_CLOSED)
+    assert note_text(None) == ""
+    # Rows written before codes existed hold prose; it must survive untouched.
+    assert note_text("Issue closed: legacy free text.") == "Issue closed: legacy free text."
 
 
 def test_finalize_resolution_blocks_close_when_billing_fails():

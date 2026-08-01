@@ -52,11 +52,17 @@ def client(monkeypatch):
     monkeypatch.setattr(agent_mode, "GenieAgentModeClient", _FakeAgent)
     captured: list = []
     monkeypatch.setattr(tracing, "submit_trace", lambda t: captured.append(t))
-    # Stub the spoken-summary LLM so the test stays hermetic (no Databricks call).
+    # Stub BOTH report-rendering LLM calls so the test stays hermetic (no Databricks
+    # call): the spoken "why" and the on-screen translation.
     monkeypatch.setattr(
         deep_dive_mod,
         "summarize_deepdive",
         lambda question, report_text, language: f"In short: {report_text} [{language}]",
+    )
+    monkeypatch.setattr(
+        deep_dive_mod,
+        "localize_report",
+        lambda report_text, language: f"[{language}] {report_text}",
     )
 
     app = FastAPI()
@@ -103,12 +109,22 @@ def test_deepdive_streams_contract_and_echoes_use_case(client):
         if e["kind"] not in ("done", "meta"):
             assert e.get("use_case") == "statement_insights"
 
+    # The report arrives in two beats: one the caller can hear immediately (the
+    # agent's English text + the spoken "why"), then the translation that replaces
+    # the on-screen text, so the voice never waits on the translator.
     report = next(e for e in evs if e["kind"] == "report")
     assert "$2,450" in report["report"]
-    # The report carries the LLM spoken "why" summary, generated in the caller's
-    # language, for the client to speak instead of reading the whole report.
+    assert report["report_language"] == "en"
+    assert report["localization_pending"] is True
+    # The spoken "why" is generated in the caller's language for the client to speak
+    # instead of reading the whole report.
     assert "$2,450" in report["spoken_summary"]
     assert "es-ES" in report["spoken_summary"]
+
+    patch = next(e for e in evs if e["kind"] == "report_localized")
+    assert patch["report"] == "[es-ES] Your expenses rose $2,450 vs your typical month."
+    assert patch["report_language"] == "es-ES"
+    assert evs.index(report) < evs.index(patch)
 
 
 def test_deepdive_submits_linked_trace(client):

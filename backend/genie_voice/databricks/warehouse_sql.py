@@ -95,13 +95,15 @@ def ensure_voice_traces_table(settings: Settings | None = None) -> None:
             server_ttfb_ms              DOUBLE,
             server_gen_ms               DOUBLE,
             total_ms                    DOUBLE,
+            guard_roster                STRING,
             trace                       STRING,
             created_at                  TIMESTAMP
         ) USING DELTA
         """,
     )
-    # Latency columns were added after the table shipped, so an existing table
-    # needs them backfilled into its schema or every mirrored insert would fail.
+    # Columns added after the table shipped. An existing table needs them
+    # backfilled into its schema or every mirrored insert would fail — silently,
+    # since the mirror is best-effort (lakebase.py `_mirror_trace_to_uc`).
     execute_sql(
         settings,
         f"""
@@ -110,7 +112,8 @@ def ensure_voice_traces_table(settings: Settings | None = None) -> None:
             answer_ttft_ms DOUBLE COMMENT 'Time until the caller heard the actual reply',
             tts_first_ms   DOUBLE COMMENT 'TTS-local time to the answer first chunk',
             server_ttfb_ms DOUBLE COMMENT 'TTS endpoint time to its own first chunk',
-            server_gen_ms  DOUBLE COMMENT 'TTS endpoint full synthesis time'
+            server_gen_ms  DOUBLE COMMENT 'TTS endpoint full synthesis time',
+            guard_roster   STRING COMMENT 'JSON array: every guardrail check on the turn, incl. passed/delegated'
         )
         """,
     )
@@ -132,7 +135,7 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
           language, detected_language, status, input_transcript, output_text,
           tool_names, apply_billing_action_called, lookup_account_count,
           llm_iterations, ttft_ms, answer_ttft_ms, tts_first_ms, server_ttfb_ms,
-          server_gen_ms, total_ms, trace, created_at
+          server_gen_ms, total_ms, guard_roster, trace, created_at
         ) VALUES (
           :trace_id, :session_id, CAST(:turn_id AS INT), :call_id, :customer_id, :capability,
           :language, :detected_language, :status, :input_transcript, :output_text,
@@ -140,7 +143,7 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
           CAST(:llm_iterations AS INT), CAST(:ttft_ms AS DOUBLE),
           CAST(:answer_ttft_ms AS DOUBLE), CAST(:tts_first_ms AS DOUBLE),
           CAST(:server_ttfb_ms AS DOUBLE), CAST(:server_gen_ms AS DOUBLE),
-          CAST(:total_ms AS DOUBLE), :trace, current_timestamp()
+          CAST(:total_ms AS DOUBLE), :guard_roster, :trace, current_timestamp()
         )
     """
     params = _params(
@@ -169,6 +172,7 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
             "server_ttfb_ms": _opt_float(trace.get("server_ttfb_ms")),
             "server_gen_ms": _opt_float(trace.get("server_gen_ms")),
             "total_ms": str(float(trace.get("total_ms") or 0.0)),
+            "guard_roster": json.dumps(trace.get("guard_roster") or []),
             "trace": json.dumps(trace),
         }
     )

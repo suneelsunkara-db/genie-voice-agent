@@ -14,7 +14,10 @@ API free of any card- (or telco-) specific ``if`` checks.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol
+
+if TYPE_CHECKING:
+    from .guardrails import GuardLedger
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,20 @@ class ResolvedIntent:
     confirm_intent: str | None = None
 
 
+class IntentResolver(Protocol):
+    """A profile's deterministic pre-router.
+
+    ``ledger`` is optional so the resolver stays callable (and unit-testable)
+    without a live turn, but the pipeline always passes the turn's ledger: the
+    router belongs to the DECISION seam, which keeps its own logic and reports its
+    outcomes — including declines — to the shared roster.
+    """
+
+    def __call__(
+        self, transcript: str, language: str, ledger: "GuardLedger | None" = None
+    ) -> list["ResolvedIntent"]: ...
+
+
 @dataclass(frozen=True)
 class VoiceProfile:
     """Everything the tool-assist loop needs to run as a specific assistant."""
@@ -47,12 +64,12 @@ class VoiceProfile:
     # Optional hook run after each turn to persist small state across turns
     # (ctx, session) -> None. State should live on ``session.profile_state``.
     after_turn: Callable[[Any, Any], None] | None = None
-    # Optional deterministic intent pre-router: (transcript, language) ->
-    # list[ResolvedIntent]. Runs BEFORE the LLM each turn. Return a confident
-    # intent to short-circuit the LLM (run tool + speak confirmation); return
-    # an empty list to defer to the LLM (ambiguous / not a selection). Keeps the
-    # engine domain-agnostic — only the profile knows what its intents are.
-    resolve_intents: Callable[[str, str], list["ResolvedIntent"]] | None = None
+    # Optional deterministic intent pre-router (see IntentResolver). Runs BEFORE
+    # the LLM each turn. Return a confident intent to short-circuit the LLM (run
+    # tool + speak confirmation); return an empty list to defer to the LLM
+    # (ambiguous / not a selection). Keeps the engine domain-agnostic — only the
+    # profile knows what its intents are.
+    resolve_intents: IntentResolver | None = None
 
 
 _PROFILES: dict[str, VoiceProfile] = {}

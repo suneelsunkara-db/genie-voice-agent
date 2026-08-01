@@ -1,7 +1,8 @@
-"""Tests for the voice_traces latency-column migration and TTFT persistence.
+"""Tests for the voice_traces promoted-column migration and TTFT persistence.
 
-``ttft_ms`` (time to first audio) and the TTS timing columns were added after the
-table shipped, and ``voice_traces`` is owned by whichever principal created it —
+``ttft_ms`` (time to first audio), the TTS timing columns and ``guard_roster``
+(the per-turn guardrail ledger) were all added after the table first shipped, and
+``voice_traces`` is owned by whichever principal created it —
 in practice the deployed app's service principal, while a developer's own role
 holds DML only. So the migration has to satisfy three things at once:
 
@@ -18,7 +19,11 @@ import json
 
 import pytest
 
-from genie_voice.serve.lakebase import _TRACE_LATENCY_COLUMNS, LakebaseServing
+from genie_voice.serve.lakebase import (
+    _TRACE_LATENCY_COLUMNS,
+    _TRACE_MIGRATED_COLUMNS,
+    LakebaseServing,
+)
 
 _V1_COLUMNS = [
     "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
@@ -49,6 +54,9 @@ class FakeCursor:
             self._last = [("serving.voice_traces",)]
         else:
             self._last = []
+
+    # psycopg exposes result column names here; the list path zips them onto rows.
+    description = ()
 
     def fetchall(self):
         return self._last
@@ -104,6 +112,7 @@ class FakeServing:
     _trace_write_columns = LakebaseServing._trace_write_columns
     migrate_voice_traces = LakebaseServing.migrate_voice_traces
     insert_voice_trace = LakebaseServing.insert_voice_trace
+    list_voice_traces = LakebaseServing.list_voice_traces
 
 
 class _Lakebase:
@@ -128,22 +137,36 @@ def _insert_params(serving: FakeServing) -> tuple:
     raise AssertionError("no INSERT was executed")
 
 
-def test_owner_adds_every_latency_column_once():
+def test_owner_adds_every_promoted_column_once():
     s = FakeServing(can_alter=True)
     added = s.migrate_voice_traces()
-    assert added == list(_TRACE_LATENCY_COLUMNS)
+    assert added == list(_TRACE_MIGRATED_COLUMNS)
 
     alters = [sql for sql, _ in s.cursor.executed if sql.strip().upper().startswith("ALTER")]
-    assert len(alters) == len(_TRACE_LATENCY_COLUMNS)
+    assert len(alters) == len(_TRACE_MIGRATED_COLUMNS)
 
     # Cached: a second pass neither re-probes nor re-alters.
     before = len(s.cursor.executed)
-    assert s._trace_columns() >= set(_TRACE_LATENCY_COLUMNS)
+    assert s._trace_columns() >= set(_TRACE_MIGRATED_COLUMNS)
     assert len(s.cursor.executed) == before
 
 
+def test_each_column_is_added_with_its_own_type():
+    # The migration started out latency-only and hardcoded DOUBLE PRECISION;
+    # guard_roster is JSONB, so a shared type would produce an unusable column.
+    s = FakeServing(can_alter=True)
+    s.migrate_voice_traces()
+    alters = {
+        sql.split("IF NOT EXISTS")[1].strip(): sql
+        for sql, _ in s.cursor.executed
+        if sql.strip().upper().startswith("ALTER")
+    }
+    assert alters["guard_roster JSONB"]
+    assert alters["ttft_ms DOUBLE PRECISION"]
+
+
 def test_already_migrated_table_issues_no_ddl():
-    s = FakeServing(_V1_COLUMNS + list(_TRACE_LATENCY_COLUMNS), can_alter=True)
+    s = FakeServing(_V1_COLUMNS + list(_TRACE_MIGRATED_COLUMNS), can_alter=True)
     assert s.migrate_voice_traces() == []
     assert not [sql for sql, _ in s.cursor.executed if sql.strip().upper().startswith("ALTER")]
 
@@ -151,7 +174,50 @@ def test_already_migrated_table_issues_no_ddl():
 def test_non_owner_migration_is_a_no_op_not_an_error():
     s = FakeServing(can_alter=False)
     assert s.migrate_voice_traces() == []
-    assert s._trace_columns().isdisjoint(_TRACE_LATENCY_COLUMNS)
+    assert s._trace_columns().isdisjoint(_TRACE_MIGRATED_COLUMNS)
+
+
+def test_guard_roster_is_written_as_json_once_the_column_exists():
+    s = FakeServing(_V1_COLUMNS + list(_TRACE_MIGRATED_COLUMNS), can_alter=True)
+    roster = [{"guard_id": "language_gate", "outcome": "passed"}]
+    s.insert_voice_trace({"trace_id": "t1", "total_ms": 1.0, "guard_roster": roster})
+
+    columns = _insert_sql(s).split("(", 1)[1].split(")", 1)[0].split(", ")
+    params = _insert_params(s)
+    assert json.loads(params[columns.index("guard_roster")]) == roster
+
+
+def test_list_reads_the_roster_from_json_when_the_column_is_absent():
+    # Only the table's owner can add the column, so a developer's role reads a
+    # table without it. The roster is in the trace document either way, and the
+    # Guardrails view must not look empty just because the ALTER was denied.
+    s = FakeServing(can_alter=False)
+    s.list_voice_traces(limit=5)
+    select = next(
+        sql for sql, _ in s.cursor.executed if sql.strip().upper().startswith("SELECT TRACE_ID")
+    )
+    assert "trace -> 'guard_roster' AS guard_roster" in select
+
+
+def test_list_prefers_the_promoted_column_when_it_exists():
+    s = FakeServing(_V1_COLUMNS + list(_TRACE_MIGRATED_COLUMNS), can_alter=True)
+    s.list_voice_traces(limit=5)
+    select = next(
+        sql for sql, _ in s.cursor.executed if sql.strip().upper().startswith("SELECT TRACE_ID")
+    )
+    assert "trace ->" not in select
+    assert "guard_roster" in select
+
+
+def test_guard_roster_absent_column_does_not_break_the_write():
+    s = FakeServing(can_alter=False)
+    s.insert_voice_trace({"trace_id": "t1", "total_ms": 1.0, "guard_roster": [{"guard_id": "x"}]})
+    sql = _insert_sql(s)
+    assert "guard_roster" not in sql
+    # The roster still rides along inside the trace document.
+    params = _insert_params(s)
+    blob = json.loads([p for p in params if isinstance(p, str) and p.startswith("{")][-1])
+    assert blob["guard_roster"] == [{"guard_id": "x"}]
 
 
 def test_ttft_is_written_once_the_columns_exist():

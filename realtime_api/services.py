@@ -413,19 +413,23 @@ class DatabricksServing:
         user: str,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        endpoint: str | None = None,
     ) -> str:
         """One-shot, tool-free system+user completion returning plain text.
 
         Public entrypoint for callers that need a bounded LLM completion (e.g. the
-        deep-dive spoken 'why' summary) WITHOUT reaching into the private ``_chat``
-        or spinning up a second serving client. ``temperature``/``max_tokens`` are
-        per-call overrides of the instance defaults for that specific need.
+        deep-dive spoken 'why' summary and report translation) WITHOUT reaching
+        into the private ``_chat`` or spinning up a second serving client.
+        ``temperature``/``max_tokens`` are per-call overrides of the instance
+        defaults; ``endpoint`` routes this one call to a different model (the
+        text-to-text conversion model) while the voice turns keep ``llm_endpoint``.
         """
         message = self._chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             tools=None,
             temperature=temperature,
             max_tokens=max_tokens,
+            endpoint=endpoint,
         )
         return _message_text(message).strip()
 
@@ -436,6 +440,7 @@ class DatabricksServing:
         tools: list[dict[str, Any]] | None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        endpoint: str | None = None,
     ) -> dict[str, Any]:
         inputs: dict[str, Any] = {
             "messages": messages,
@@ -445,7 +450,7 @@ class DatabricksServing:
         if tools:
             inputs["tools"] = tools
             inputs["tool_choice"] = "auto"
-        response = self.client.predict(endpoint=self.llm_endpoint, inputs=inputs)
+        response = self.client.predict(endpoint=endpoint or self.llm_endpoint, inputs=inputs)
         payload = response if isinstance(response, dict) else dict(response)
         choices = payload.get("choices") or []
         if choices and isinstance(choices[0], dict):

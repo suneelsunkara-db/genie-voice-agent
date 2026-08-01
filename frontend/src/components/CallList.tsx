@@ -113,6 +113,13 @@ export function CockpitSession({
   const language = selectedLanguage;
   const copy = uiCopy(language);
 
+  // A pending "you spoke X but the call is in Y" warning is about the language the
+  // call USED to run in, so keeping it after a switch leaves the caller reading a
+  // contradiction (the card assistant clears it the same way).
+  useEffect(() => {
+    setLanguageMismatch(null);
+  }, [selectedLanguage]);
+
   useEffect(() => {
     let active = true;
     setFacts(null);
@@ -289,6 +296,7 @@ export function CockpitSession({
       onLocalTurn={onAppendLocalTurn}
       onUpdateLastCustomerTurn={onUpdateLastCustomerTurn}
       onRemoveLastCustomerTurn={onRemoveLastCustomerTurn}
+      onClearTranscript={onResetLocalTurns}
       onVoiceUiChange={setVoiceUi}
       onLanguageDetected={(lang) => {
         // Show what STT heard, but never silently switch the agent's selection —
@@ -498,7 +506,11 @@ export function CockpitSession({
                   <span>{localizedValue(language, ev.event_type)}</span>
                   <span>{localizedValue(language, ev.issue_status ?? "open")}</span>
                 </div>
-                {ev.note && <div className="sentient-timeline-note">{localizeResolutionNote(language, ev.note)}</div>}
+                {ev.note && (
+                  <div className="sentient-timeline-note">
+                    {localizeResolutionNote(language, ev.note, ev.issue_status)}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -767,8 +779,8 @@ function buildResolutionJourney({
   }
   if (doneThrough >= 5) {
     details.close =
-      localizeResolutionNote(language, resolution?.note) ||
-      localizeResolutionNote(language, facts?.summary?.resolution_note) ||
+      localizeResolutionNote(language, resolution?.note, status) ||
+      localizeResolutionNote(language, facts?.summary?.resolution_note, status) ||
       copy.issueClosed;
   }
 
@@ -963,6 +975,7 @@ function LiveAssist({
   onLocalTurn,
   onUpdateLastCustomerTurn: _onUpdateLastCustomerTurn,
   onRemoveLastCustomerTurn: _onRemoveLastCustomerTurn,
+  onClearTranscript,
   onVoiceUiChange,
   onLanguageDetected,
   onLanguageMismatch,
@@ -981,6 +994,8 @@ function LiveAssist({
   onLocalTurn: (turn: LocalTurn) => void;
   onUpdateLastCustomerTurn: (turn: LocalTurn) => void;
   onRemoveLastCustomerTurn: () => void;
+  /** Drop the on-screen turns (used when a language switch restarts the call). */
+  onClearTranscript: () => void;
   onVoiceUiChange: (state: VoiceUiState) => void;
   onLanguageDetected?: (lang: string) => void;
   onLanguageMismatch?: (expected: string, detected: string) => void;
@@ -1001,6 +1016,10 @@ function LiveAssist({
   // omitted interimText it would blank the caption between interim events and the
   // text would flicker in/out while the caller speaks.
   const interimTextRef = useRef("");
+  // The language THIS session was opened with. The picker's value can change
+  // mid-call, and the session can't follow it without being reopened, so the two
+  // are tracked separately.
+  const callLanguageRef = useRef<string>(expectedLanguage ?? language);
 
   // Shared half-duplex plumbing (playback queue + mic gating), identical to the
   // card assistant: while the agent's TTS plays we mute the mic so it doesn't loop
@@ -1012,6 +1031,7 @@ function LiveAssist({
     gateMic,
     ungateMicAfter,
     handleResponseAudio,
+    switchLanguage,
     teardownPlayback,
   } = useHalfDuplexVoice({
     sessionRef: rtSessionRef,
@@ -1019,6 +1039,23 @@ function LiveAssist({
       voicePhaseRef.current = "speaking";
       onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
     },
+    callLanguageRef,
+    isCallLive: () => rtSessionRef.current !== null,
+    closeSession: () => {
+      // Deliberately no playback teardown here: the queue was already flushed,
+      // and closing/recreating the AudioContext mid-switch is what Chrome
+      // suspends (which garbles the first audio of the new session). startVoice
+      // installs a fresh queue via resetPlayback.
+      rtSessionRef.current?.close();
+      rtSessionRef.current = null;
+      startingRef.current = false;
+      interimTextRef.current = "";
+      setInCall(false);
+    },
+    reopenSession: (nextLanguage) => startVoice(nextLanguage),
+    // Only the transcript: the account panels are data (localized live from the
+    // catalog), while these turns are speech frozen in the language just left.
+    clearConversation: onClearTranscript,
   });
 
   // Opening greeting, generated in the call language by the backend (cached per
@@ -1057,7 +1094,7 @@ function LiveAssist({
     onLocalTurn({ text: textToSpeak, speaker: 0 });
     voicePhaseRef.current = "agent_reply";
     onVoiceUiChange({ phase: "agent_reply", source: "mic", processingLabel: textToSpeak });
-    session.synthesize(textToSpeak, expectedLanguage || language);
+    session.synthesize(textToSpeak, callLanguageRef.current);
   };
 
   useEffect(() => {
@@ -1070,10 +1107,16 @@ function LiveAssist({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const startVoice = async () => {
-    if (inCall || rtSessionRef.current || startingRef.current) return;
+  // `langOverride` is how a language switch reopens the call: the picker's new
+  // value arrives here directly rather than via a prop that may not have
+  // re-rendered yet. Guarded on refs only (not `inCall`, whose setState hasn't
+  // flushed when a restart closes and reopens in the same tick).
+  const startVoice = async (langOverride?: string) => {
+    if (rtSessionRef.current || startingRef.current) return;
     startingRef.current = true;
     setErr(null);
+    const callLanguage = langOverride ?? expectedLanguage ?? language;
+    callLanguageRef.current = callLanguage;
 
     try {
       voicePhaseRef.current = "speaking";
@@ -1082,7 +1125,7 @@ function LiveAssist({
       resetPlayback();
       // Warm the greeting cache while the socket connects so it's ready to speak
       // the instant the session opens.
-      void fetchGreeting(expectedLanguage || language);
+      void fetchGreeting(callLanguage);
 
       const session = await startRealtimeVoice(WS_BASE_URL, callId, customerId, {
         onLanguageMismatch: (expected, detected) => {
@@ -1108,7 +1151,7 @@ function LiveAssist({
           // rtSessionRef is assigned by the time we synthesize. If no greeting is
           // available, just open the mic so the caller can still speak.
           void (async () => {
-            const text = await fetchGreeting(expectedLanguage || language);
+            const text = await fetchGreeting(callLanguage);
             if (text) {
               speakGreeting(text);
             } else {
@@ -1197,7 +1240,7 @@ function LiveAssist({
             onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
           }
         },
-      }, expectedLanguage, { startMicPaused: true });
+      }, callLanguage, { startMicPaused: true });
       rtSessionRef.current = session;
       setInCall(true);
     } catch (e) {
@@ -1230,6 +1273,15 @@ function LiveAssist({
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Follow the language picker mid-call. The language is negotiated once in the
+  // session.start payload, so the framework reopens the session in the new
+  // language (which also re-greets in it) instead of leaving the caller with an
+  // English-speaking agent behind a translated UI.
+  useEffect(() => {
+    void switchLanguage(expectedLanguage ?? language);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expectedLanguage, language, switchLanguage]);
 
   // Tapping the Genie orb: pre-call it starts the call; in-call it resumes audio
   // playback in case the browser suspended the context (auto-start with no prior

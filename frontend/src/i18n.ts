@@ -26,7 +26,7 @@ export function languageLabel(code: string, inLanguage?: string): string {
   }
 }
 
-type UiCopy = {
+export type UiCopy = {
   navCockpit: string;
   navBenchmark: string;
   runtime: string;
@@ -194,6 +194,60 @@ type UiCopy = {
   zhAsrPrimaryPath?: string;
   zhAsrShadowReplay?: string;
   zhAsrSelectedModel?: string;
+  // Data VALUES the backend returns as canonical enum codes (invoice/issue status,
+  // decline reasons), rendered via localizedValue(). They live in this catalog
+  // rather than a separate table so the offline translator covers every supported
+  // language — the table they replaced only had the four authored locales, so a
+  // Hindi call showed "overdue"/"paid"/"closed" in English inside a Hindi UI.
+  valueStatusOpen: string;
+  valueStatusClosed: string;
+  valueStatusInProgress: string;
+  valueStatusOverdue: string;
+  valueStatusPaid: string;
+  valueStatusResolved: string;
+  valueStatusActive: string;
+  valueStatusAtRisk: string;
+  valueStatusNeutral: string;
+  valueStatusNegative: string;
+  valueStatusPositive: string;
+  valueStatusStable: string;
+  valueStatusElevated: string;
+  valueStatusStatusChanged: string;
+  valueReasonNoOverdueInvoice: string;
+  valueReasonAgentReplyUnavailable: string;
+  valueReasonPendingCustomerConfirmation: string;
+  valueReasonReplyFailedMetricValidation: string;
+  valueReasonLanguageMismatch: string;
+  valueIntentBillingDispute: string;
+  valueIntentLateFee: string;
+  valueIntentPaymentArrangement: string;
+  valueIntentRefund: string;
+  valueIntentAutopayIssue: string;
+  valueIntentPlanInquiry: string;
+  valueIntentCancellationRisk: string;
+  valueIntentBillingInquiry: string;
+  // Resolution-timeline notes. The backend emits canonical codes (see
+  // genie_voice/assist/resolution.py) so the note is rendered here per language
+  // instead of the UI regex-patching English prose for a handful of locales.
+  resolutionNoteIssueClosedArrangementWaiver: string;
+  resolutionNoteIssueGuidedByGenie: (status: string) => string;
+  // Genie Agent-Mode deep-dive panel. The report itself is localized in the
+  // backend (realtime_api/deep_dive.py); these are the frame around it, so the
+  // whole panel reads in one language instead of a localized report inside
+  // English chrome.
+  deepStagePlan: string;
+  deepStageQuery: string;
+  deepStageCompute: string;
+  deepStageExplain: string;
+  deepHint: string;
+  deepQuerying: string;
+  deepPulledQueries: (count: string) => string;
+  deepWorking: (agent: string) => string;
+  deepReasoningStep: string;
+  deepTranslating: string;
+  deepFailed: (reason: string) => string;
+  deepNoSummary: (status: string) => string;
+  deepShowData: (count: string) => string;
 };
 
 const EN: UiCopy = {
@@ -371,6 +425,50 @@ const EN: UiCopy = {
   askGenie: "Ask Genie",
   asking: "Asking...",
   language: "Language",
+  valueStatusOpen: "open",
+  valueStatusClosed: "closed",
+  valueStatusInProgress: "in progress",
+  valueStatusOverdue: "overdue",
+  valueStatusPaid: "paid",
+  valueStatusResolved: "resolved",
+  valueStatusActive: "active",
+  valueStatusAtRisk: "at risk",
+  valueStatusNeutral: "neutral",
+  valueStatusNegative: "negative",
+  valueStatusPositive: "positive",
+  valueStatusStable: "stable",
+  valueStatusElevated: "elevated",
+  valueStatusStatusChanged: "status changed",
+  valueReasonNoOverdueInvoice: "no overdue invoice",
+  valueReasonAgentReplyUnavailable: "agent reply unavailable",
+  valueReasonPendingCustomerConfirmation: "pending customer confirmation",
+  valueReasonReplyFailedMetricValidation: "reply failed validation",
+  valueReasonLanguageMismatch: "language mismatch",
+  valueIntentBillingDispute: "billing dispute",
+  valueIntentLateFee: "late fee",
+  valueIntentPaymentArrangement: "payment arrangement",
+  valueIntentRefund: "refund",
+  valueIntentAutopayIssue: "autopay issue",
+  valueIntentPlanInquiry: "plan inquiry",
+  valueIntentCancellationRisk: "cancellation risk",
+  valueIntentBillingInquiry: "billing inquiry",
+  resolutionNoteIssueClosedArrangementWaiver:
+    "Issue closed: payment arrangement confirmed and waiver flow applied. Update will reflect on next statement.",
+  resolutionNoteIssueGuidedByGenie: (status) =>
+    `Issue ${status}: guided by Genie and account context.`,
+  deepStagePlan: "Plan",
+  deepStageQuery: "Query",
+  deepStageCompute: "Compute",
+  deepStageExplain: "Explain",
+  deepHint: "Deep analysis typically takes 30–60s…",
+  deepQuerying: "Querying your accounts…",
+  deepPulledQueries: (count) => `Pulled your data across ${count} queries`,
+  deepWorking: (agent) => `${agent} is working`,
+  deepReasoningStep: "Working through your statements and transactions",
+  deepTranslating: "Translating the full report…",
+  deepFailed: (reason) => `Couldn’t complete the deep dive: ${reason}`,
+  deepNoSummary: (status) => `No summary returned (status: ${status})`,
+  deepShowData: (count) => `Show the data (${count} queries)`,
 };
 
 const TH: UiCopy = {
@@ -548,6 +646,50 @@ const TH: UiCopy = {
   askGenie: "ถาม Genie",
   asking: "กำลังถาม...",
   language: "ภาษา",
+  valueStatusOpen: "เปิดอยู่",
+  valueStatusClosed: "ปิดแล้ว",
+  valueStatusInProgress: "กำลังดำเนินการ",
+  valueStatusOverdue: "ค้างชำระ",
+  valueStatusPaid: "ชำระแล้ว",
+  valueStatusResolved: "แก้ไขแล้ว",
+  valueStatusActive: "ใช้งานอยู่",
+  valueStatusAtRisk: "มีความเสี่ยง",
+  valueStatusNeutral: "เป็นกลาง",
+  valueStatusNegative: "เชิงลบ",
+  valueStatusPositive: "เชิงบวก",
+  valueStatusStable: "คงที่",
+  valueStatusElevated: "สูงขึ้น",
+  valueStatusStatusChanged: "เปลี่ยนสถานะ",
+  valueReasonNoOverdueInvoice: "ไม่พบใบแจ้งหนี้ค้างชำระ",
+  valueReasonAgentReplyUnavailable: "ไม่มีคำตอบสำหรับเจ้าหน้าที่",
+  valueReasonPendingCustomerConfirmation: "รอการยืนยันจากลูกค้า",
+  valueReasonReplyFailedMetricValidation: "คำตอบไม่ผ่านการตรวจสอบข้อมูล",
+  valueReasonLanguageMismatch: "ภาษาไม่ตรงกับที่เลือก",
+  valueIntentBillingDispute: "โต้แย้งบิล",
+  valueIntentLateFee: "ค่าปรับล่าช้า",
+  valueIntentPaymentArrangement: "จัดแผนชำระเงิน",
+  valueIntentRefund: "ขอคืนเงิน",
+  valueIntentAutopayIssue: "ปัญหาชำระอัตโนมัติ",
+  valueIntentPlanInquiry: "สอบถามแพ็กเกจ",
+  valueIntentCancellationRisk: "เสี่ยงยกเลิก",
+  valueIntentBillingInquiry: "สอบถามบิล",
+  resolutionNoteIssueClosedArrangementWaiver:
+    "ปิดเคสแล้ว: ยืนยันแผนชำระเงินและใช้การยกเว้นค่าธรรมเนียมแล้ว การอัปเดตจะแสดงในใบแจ้งหนี้รอบถัดไป",
+  resolutionNoteIssueGuidedByGenie: (status) =>
+    `เคส${status}: นำทางด้วย Genie และบริบทบัญชี`,
+  deepStagePlan: "วางแผน",
+  deepStageQuery: "ค้นข้อมูล",
+  deepStageCompute: "คำนวณ",
+  deepStageExplain: "อธิบาย",
+  deepHint: "การวิเคราะห์เชิงลึกมักใช้เวลา 30–60 วินาที…",
+  deepQuerying: "กำลังค้นข้อมูลบัญชีของคุณ…",
+  deepPulledQueries: (count) => `ดึงข้อมูลของคุณจาก ${count} คำค้น`,
+  deepWorking: (agent) => `${agent} กำลังทำงาน`,
+  deepReasoningStep: "กำลังตรวจสอบใบแจ้งหนี้และรายการธุรกรรมของคุณ",
+  deepTranslating: "กำลังแปลรายงานฉบับเต็ม…",
+  deepFailed: (reason) => `ไม่สามารถวิเคราะห์เชิงลึกได้: ${reason}`,
+  deepNoSummary: (status) => `ไม่มีสรุปที่ส่งกลับ (สถานะ: ${status})`,
+  deepShowData: (count) => `ดูข้อมูล (${count} คำค้น)`,
 };
 
 const ID: UiCopy = {
@@ -725,6 +867,50 @@ const ID: UiCopy = {
   askGenie: "Tanya Genie",
   asking: "Bertanya...",
   language: "Bahasa",
+  valueStatusOpen: "terbuka",
+  valueStatusClosed: "selesai",
+  valueStatusInProgress: "sedang diproses",
+  valueStatusOverdue: "jatuh tempo",
+  valueStatusPaid: "dibayar",
+  valueStatusResolved: "terselesaikan",
+  valueStatusActive: "aktif",
+  valueStatusAtRisk: "berisiko",
+  valueStatusNeutral: "netral",
+  valueStatusNegative: "negatif",
+  valueStatusPositive: "positif",
+  valueStatusStable: "stabil",
+  valueStatusElevated: "meningkat",
+  valueStatusStatusChanged: "status berubah",
+  valueReasonNoOverdueInvoice: "tidak ada invoice jatuh tempo",
+  valueReasonAgentReplyUnavailable: "respons agen tidak tersedia",
+  valueReasonPendingCustomerConfirmation: "menunggu konfirmasi pelanggan",
+  valueReasonReplyFailedMetricValidation: "respons gagal validasi metrik",
+  valueReasonLanguageMismatch: "bahasa tidak sesuai",
+  valueIntentBillingDispute: "sengketa tagihan",
+  valueIntentLateFee: "biaya keterlambatan",
+  valueIntentPaymentArrangement: "pengaturan pembayaran",
+  valueIntentRefund: "permintaan refund",
+  valueIntentAutopayIssue: "masalah autopay",
+  valueIntentPlanInquiry: "pertanyaan paket",
+  valueIntentCancellationRisk: "risiko pembatalan",
+  valueIntentBillingInquiry: "pertanyaan tagihan",
+  resolutionNoteIssueClosedArrangementWaiver:
+    "Masalah selesai: pengaturan pembayaran dikonfirmasi dan pembebasan biaya diterapkan. Perubahan akan tampil pada tagihan berikutnya.",
+  resolutionNoteIssueGuidedByGenie: (status) =>
+    `Masalah ${status}: dipandu oleh Genie dan konteks akun.`,
+  deepStagePlan: "Rencana",
+  deepStageQuery: "Kueri",
+  deepStageCompute: "Hitung",
+  deepStageExplain: "Jelaskan",
+  deepHint: "Analisis mendalam biasanya butuh 30–60 detik…",
+  deepQuerying: "Mengambil data akun Anda…",
+  deepPulledQueries: (count) => `Mengambil data Anda dari ${count} kueri`,
+  deepWorking: (agent) => `${agent} sedang bekerja`,
+  deepReasoningStep: "Menelaah tagihan dan transaksi Anda",
+  deepTranslating: "Menerjemahkan laporan lengkap…",
+  deepFailed: (reason) => `Tidak dapat menyelesaikan analisis mendalam: ${reason}`,
+  deepNoSummary: (status) => `Tidak ada ringkasan (status: ${status})`,
+  deepShowData: (count) => `Lihat data (${count} kueri)`,
 };
 
 const ZH: UiCopy = {
@@ -908,6 +1094,49 @@ const ZH: UiCopy = {
   zhAsrPrimaryPath: "主路径转写",
   zhAsrShadowReplay: "后台重放",
   zhAsrSelectedModel: "当前选择",
+  valueStatusOpen: "未关闭",
+  valueStatusClosed: "已关闭",
+  valueStatusInProgress: "处理中",
+  valueStatusOverdue: "逾期",
+  valueStatusPaid: "已支付",
+  valueStatusResolved: "已解决",
+  valueStatusActive: "正常",
+  valueStatusAtRisk: "有风险",
+  valueStatusNeutral: "中性",
+  valueStatusNegative: "负面",
+  valueStatusPositive: "正面",
+  valueStatusStable: "稳定",
+  valueStatusElevated: "升高",
+  valueStatusStatusChanged: "状态已变更",
+  valueReasonNoOverdueInvoice: "没有逾期发票",
+  valueReasonAgentReplyUnavailable: "客服回复不可用",
+  valueReasonPendingCustomerConfirmation: "等待客户确认",
+  valueReasonReplyFailedMetricValidation: "回复未通过指标验证",
+  valueReasonLanguageMismatch: "语言不匹配",
+  valueIntentBillingDispute: "账单争议",
+  valueIntentLateFee: "滞纳金",
+  valueIntentPaymentArrangement: "付款安排",
+  valueIntentRefund: "退款请求",
+  valueIntentAutopayIssue: "自动付款问题",
+  valueIntentPlanInquiry: "套餐咨询",
+  valueIntentCancellationRisk: "取消风险",
+  valueIntentBillingInquiry: "账单咨询",
+  resolutionNoteIssueClosedArrangementWaiver:
+    "问题已关闭：付款安排已确认，减免流程已应用。更新将在下期账单中体现。",
+  resolutionNoteIssueGuidedByGenie: (status) => `问题${status}：由 Genie 和账户上下文指导。`,
+  deepStagePlan: "规划",
+  deepStageQuery: "查询",
+  deepStageCompute: "计算",
+  deepStageExplain: "解释",
+  deepHint: "深度分析通常需要 30–60 秒…",
+  deepQuerying: "正在查询您的账户…",
+  deepPulledQueries: (count) => `已通过 ${count} 次查询获取您的数据`,
+  deepWorking: (agent) => `${agent} 正在处理`,
+  deepReasoningStep: "正在梳理您的账单和交易",
+  deepTranslating: "正在翻译完整报告…",
+  deepFailed: (reason) => `无法完成深度分析：${reason}`,
+  deepNoSummary: (status) => `未返回摘要（状态：${status}）`,
+  deepShowData: (count) => `查看数据（${count} 次查询）`,
 };
 
 // ---------------------------------------------------------------------------
@@ -935,6 +1164,12 @@ const FUNCTION_FIELDS: Record<string, string[]> = {
   genieConfirmedOverdue: ["count", "amount"],
   billingUpdated: ["invoice"],
   billingNotUpdated: ["reason"],
+  resolutionNoteIssueGuidedByGenie: ["status"],
+  deepPulledQueries: ["count"],
+  deepWorking: ["agent"],
+  deepFailed: ["reason"],
+  deepNoSummary: ["status"],
+  deepShowData: ["count"],
 };
 
 /** Flatten a UiCopy into a translatable catalog of strings + {placeholder} templates. */
@@ -1050,169 +1285,22 @@ export function uiCopy(language: InteractionLanguage | undefined): UiCopy {
   return COPY_CACHE.get(code) ?? EN;
 }
 
-const VALUE_LABELS: Partial<Record<InteractionLanguage, Record<string, Record<string, string>>>> = {
-  "en-US": {
-    status: {
-      open: "open",
-      closed: "closed",
-      in_progress: "in progress",
-      overdue: "overdue",
-      paid: "paid",
-      resolved: "resolved",
-      active: "active",
-      at_risk: "at risk",
-      neutral: "neutral",
-      negative: "negative",
-      positive: "positive",
-      stable: "stable",
-      elevated: "elevated",
-      status_changed: "status changed",
-    },
-    reason: {
-      no_overdue_invoice: "no overdue invoice",
-      agent_reply_unavailable: "agent reply unavailable",
-      pending_customer_confirmation: "pending customer confirmation",
-      reply_failed_metric_validation: "reply failed validation",
-      language_mismatch: "language mismatch",
-    },
-  },
-  "th-TH": {
-    status: {
-      open: "เปิดอยู่",
-      closed: "ปิดแล้ว",
-      in_progress: "กำลังดำเนินการ",
-      overdue: "ค้างชำระ",
-      paid: "ชำระแล้ว",
-      resolved: "แก้ไขแล้ว",
-      active: "ใช้งานอยู่",
-      at_risk: "มีความเสี่ยง",
-      neutral: "เป็นกลาง",
-      negative: "เชิงลบ",
-      positive: "เชิงบวก",
-      stable: "คงที่",
-      elevated: "สูงขึ้น",
-      status_changed: "เปลี่ยนสถานะ",
-    },
-    intent: {
-      billing_dispute: "โต้แย้งบิล",
-      late_fee: "ค่าปรับล่าช้า",
-      payment_arrangement: "จัดแผนชำระเงิน",
-      refund: "ขอคืนเงิน",
-      autopay_issue: "ปัญหาชำระอัตโนมัติ",
-      plan_inquiry: "สอบถามแพ็กเกจ",
-      cancellation_risk: "เสี่ยงยกเลิก",
-      billing_inquiry: "สอบถามบิล",
-    },
-    profile: {
-      consumer: "ลูกค้าบุคคล",
-      business: "ลูกค้าธุรกิจ",
-      premium: "พรีเมียม",
-      standard: "มาตรฐาน",
-      basic: "พื้นฐาน",
-      apac: "เอเชียแปซิฟิก",
-      emea: "ยุโรป ตะวันออกกลาง และแอฟริกา",
-      amer: "อเมริกา",
-    },
-    reason: {
-      no_overdue_invoice: "ไม่พบใบแจ้งหนี้ค้างชำระ",
-      agent_reply_unavailable: "ไม่มีคำตอบสำหรับเจ้าหน้าที่",
-      pending_customer_confirmation: "รอการยืนยันจากลูกค้า",
-      reply_failed_metric_validation: "คำตอบไม่ผ่านการตรวจสอบข้อมูล",
-      language_mismatch: "ภาษาไม่ตรงกับที่เลือก",
-    },
-  },
-  "id-ID": {
-    status: {
-      open: "terbuka",
-      closed: "selesai",
-      in_progress: "sedang diproses",
-      overdue: "jatuh tempo",
-      paid: "dibayar",
-      resolved: "terselesaikan",
-      active: "aktif",
-      at_risk: "berisiko",
-      neutral: "netral",
-      negative: "negatif",
-      positive: "positif",
-      stable: "stabil",
-      elevated: "meningkat",
-      status_changed: "status berubah",
-    },
-    intent: {
-      billing_dispute: "sengketa tagihan",
-      late_fee: "biaya keterlambatan",
-      payment_arrangement: "pengaturan pembayaran",
-      refund: "permintaan refund",
-      autopay_issue: "masalah autopay",
-      plan_inquiry: "pertanyaan paket",
-      cancellation_risk: "risiko pembatalan",
-      billing_inquiry: "pertanyaan tagihan",
-    },
-    profile: {
-      consumer: "konsumen",
-      business: "bisnis",
-      premium: "premium",
-      standard: "standar",
-      basic: "dasar",
-      apac: "APAC",
-      emea: "EMEA",
-      amer: "Amerika",
-    },
-    reason: {
-      no_overdue_invoice: "tidak ada invoice jatuh tempo",
-      agent_reply_unavailable: "respons agen tidak tersedia",
-      pending_customer_confirmation: "menunggu konfirmasi pelanggan",
-      reply_failed_metric_validation: "respons gagal validasi metrik",
-      language_mismatch: "bahasa tidak sesuai",
-    },
-  },
-  "zh-CN": {
-    status: {
-      open: "未关闭",
-      closed: "已关闭",
-      in_progress: "处理中",
-      overdue: "逾期",
-      paid: "已支付",
-      resolved: "已解决",
-      active: "正常",
-      at_risk: "有风险",
-      neutral: "中性",
-      negative: "负面",
-      positive: "正面",
-      stable: "稳定",
-      elevated: "升高",
-      status_changed: "状态已变更",
-    },
-    intent: {
-      billing_dispute: "账单争议",
-      late_fee: "滞纳金",
-      payment_arrangement: "付款安排",
-      refund: "退款请求",
-      autopay_issue: "自动付款问题",
-      plan_inquiry: "套餐咨询",
-      cancellation_risk: "取消风险",
-      billing_inquiry: "账单咨询",
-    },
-    profile: {
-      consumer: "个人客户",
-      business: "企业客户",
-      premium: "高级",
-      standard: "标准",
-      basic: "基础",
-      apac: "亚太",
-      emea: "欧洲中东非洲",
-      amer: "美洲",
-    },
-    reason: {
-      no_overdue_invoice: "没有逾期发票",
-      agent_reply_unavailable: "客服回复不可用",
-      pending_customer_confirmation: "等待客户确认",
-      reply_failed_metric_validation: "回复未通过指标验证",
-      language_mismatch: "语言不匹配",
-    },
-  },
-};
+/** Catalog key for one canonical value, e.g. ("status", "at_risk") -> valueStatusAtRisk. */
+function valueLabelKey(group: string, code: string): string {
+  const camel = code.replace(/_+([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
+  if (!camel) return "";
+  return `value${group.charAt(0).toUpperCase()}${group.slice(1)}${camel.charAt(0).toUpperCase()}${camel.slice(1)}`;
+}
 
+/**
+ * Render a canonical backend value (invoice/issue status, decline reason, intent)
+ * in the caller's language.
+ *
+ * Reads the SAME generated message catalog as the rest of the chrome, so all ~24
+ * supported languages are covered. This used to be a hand-maintained table with
+ * only the four authored locales, which silently returned English — a Hindi call
+ * showed "overdue" and "paid" inside an otherwise Hindi UI.
+ */
 export function localizedValue(
   language: InteractionLanguage | undefined,
   value: unknown,
@@ -1222,85 +1310,40 @@ export function localizedValue(
   const raw = String(value);
   const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
   const baseCode = normalized.split(":")[0];
-  const labels = VALUE_LABELS[contentLanguage(language)] ?? VALUE_LABELS["en-US"] ?? {};
-  return labels[group]?.[normalized] ?? labels[group]?.[baseCode] ?? labels.status?.[normalized] ?? raw.replace(/_/g, " ");
+  const copy = uiCopy(language) as unknown as Record<string, unknown>;
+  const lookup = (code: string): string | undefined => {
+    for (const key of [valueLabelKey(group, code), valueLabelKey("status", code)]) {
+      const text = key ? copy[key] : undefined;
+      if (typeof text === "string" && text) return text;
+    }
+    return undefined;
+  };
+  // Unknown codes still read as words rather than raw enum snake_case.
+  return lookup(normalized) ?? lookup(baseCode) ?? raw.replace(/_/g, " ");
 }
 
-export function localizeRationale(
-  language: InteractionLanguage | undefined,
-  text: string | null | undefined
-): string {
-  if (!text) return "";
-  const lang = contentLanguage(language);
-  if (lang === "id-ID") {
-    return text
-      .replace(/overdue invoice exposure/gi, "eksposur invoice jatuh tempo")
-      .replace(/declined payments/gi, "pembayaran ditolak")
-      .replace(/declined payment/gi, "pembayaran ditolak")
-      .replace(/account needs agent assist/gi, "akun perlu bantuan agen")
-      .replace(/billing risk/gi, "risiko tagihan")
-      .replace(/open issue/gi, "masalah terbuka")
-      .replace(/overdue/gi, "jatuh tempo")
-      .replace(/invoice/gi, "invoice")
-      .replace(/payment/gi, "pembayaran");
-  }
-  if (lang === "zh-CN") {
-    return text
-      .replace(/overdue invoice exposure/gi, "存在逾期发票风险")
-      .replace(/declined payments/gi, "付款失败")
-      .replace(/declined payment/gi, "付款失败")
-      .replace(/account needs agent assist/gi, "账户需要客服协助")
-      .replace(/billing risk/gi, "账单风险")
-      .replace(/open issue/gi, "未关闭问题")
-      .replace(/overdue/gi, "逾期")
-      .replace(/invoice/gi, "发票")
-      .replace(/payment/gi, "付款");
-  }
-  if (lang !== "th-TH") return text;
-  return text
-    .replace(/overdue invoice exposure/gi, "มีใบแจ้งหนี้ค้างชำระ")
-    .replace(/declined payments/gi, "มีการชำระเงินไม่สำเร็จ")
-    .replace(/declined payment/gi, "มีการชำระเงินไม่สำเร็จ")
-    .replace(/account needs agent assist/gi, "บัญชีนี้ต้องการความช่วยเหลือจากเจ้าหน้าที่")
-    .replace(/billing risk/gi, "ความเสี่ยงด้านบิล")
-    .replace(/open issue/gi, "ปัญหาที่ยังเปิดอยู่")
-    .replace(/overdue/gi, "ค้างชำระ")
-    .replace(/invoice/gi, "ใบแจ้งหนี้")
-    .replace(/payment/gi, "การชำระเงิน");
-}
-
+/**
+ * Render a resolution-timeline note in the caller's language.
+ *
+ * The backend emits canonical note CODES (genie_voice/assist/resolution.py), so
+ * this is a catalog lookup covering every supported language. Rows written before
+ * the codes existed hold English prose, which passes through unchanged.
+ */
 export function localizeResolutionNote(
   language: InteractionLanguage | undefined,
-  text: string | null | undefined
+  note: string | null | undefined,
+  issueStatus?: string | null
 ): string {
-  if (!text) return "";
-  const lang = contentLanguage(language);
-  if (lang === "id-ID") {
-    return text
-      .replace(/issue_in_progress/gi, "masalah sedang diproses")
-      .replace(/guided by Genie and account context/gi, "dipandu oleh Genie dan konteks akun")
-      .replace(/overdue amount/gi, "jumlah jatuh tempo")
-      .replace(/STATUS_CHANGED/gi, "status berubah")
-      .replace(/IN_PROGRESS/gi, "sedang diproses")
-      .replace(/overdue/gi, "jatuh tempo");
+  if (!note) return "";
+  const copy = uiCopy(language);
+  switch (note) {
+    case "issue_closed_arrangement_waiver":
+      return copy.resolutionNoteIssueClosedArrangementWaiver;
+    case "issue_guided_by_genie":
+      return copy.resolutionNoteIssueGuidedByGenie(localizedValue(language, issueStatus ?? "open"));
+    default:
+      return note;
   }
-  if (lang === "zh-CN") {
-    return text
-      .replace(/issue_in_progress/gi, "问题处理中")
-      .replace(/guided by Genie and account context/gi, "由 Genie 和账户上下文指导")
-      .replace(/overdue amount/gi, "逾期金额")
-      .replace(/STATUS_CHANGED/gi, "状态已变更")
-      .replace(/IN_PROGRESS/gi, "处理中")
-      .replace(/overdue/gi, "逾期");
-  }
-  if (lang !== "th-TH") return text;
-  return text
-    .replace(/issue_in_progress/gi, "ปัญหากำลังดำเนินการ")
-    .replace(/guided by Genie and account context/gi, "นำทางด้วย Genie และบริบทบัญชี")
-    .replace(/overdue amount/gi, "ยอดค้างชำระ")
-    .replace(/STATUS_CHANGED/gi, "เปลี่ยนสถานะ")
-    .replace(/IN_PROGRESS/gi, "กำลังดำเนินการ")
-    .replace(/overdue/gi, "ค้างชำระ");
 }
 
 export function localizedLanguageName(

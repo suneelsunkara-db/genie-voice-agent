@@ -162,6 +162,7 @@ export function SentientTopBar({
   options,
   value,
   onChange,
+  languageDisabled,
 }: {
   contextKicker: string;
   contextDesc: string;
@@ -172,6 +173,9 @@ export function SentientTopBar({
   options: InteractionLanguageOption[];
   value: InteractionLanguage;
   onChange: (language: InteractionLanguage) => void;
+  // Language is chosen on the home page and locked here; the select is shown
+  // (so the capability is visible) but not changeable.
+  languageDisabled?: boolean;
 }) {
   return (
     <div className="sentient-topbar">
@@ -207,6 +211,7 @@ export function SentientTopBar({
             className="sentient-lang-select"
             value={value}
             aria-label={languageLabel}
+            disabled={languageDisabled}
             onChange={(event) => onChange(event.target.value)}
           >
             {options.map((item) => (

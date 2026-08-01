@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, TraceDetail, TraceSpan, TraceSummary } from "../api/client";
+import { api, GuardEntry, TraceDetail, TraceSpan, TraceSummary } from "../api/client";
 import "../styles/traces.css";
 
 type StatusFilter = "all" | "ok" | "issues";
@@ -417,6 +417,8 @@ function TraceDetailView({ trace }: { trace: TraceDetail }) {
 
       {trace.error && <div className="tv-callout">error: {trace.error}</div>}
 
+      <GuardrailStrip roster={trace.guard_roster} />
+
       <div className="tv-section-title">Where the wait went</div>
       <WaitBreakdown timing={timing} />
       {timing.blockedMs !== null && timing.blockedMs > 250 && (
@@ -440,6 +442,50 @@ function TraceDetailView({ trace }: { trace: TraceDetail }) {
   );
 }
 
+/**
+ * What the turn's guardrails did — the whole roster, not just the hits.
+ *
+ * Filtered to `surface === "guardrail"`: turn-integrity mechanics stay in the
+ * waterfall below (this is the debug view, so nothing is hidden there), but they
+ * are not guardrails and must not pad the count. A `not_evaluated` row is styled
+ * distinctly from `passed` on purpose — a language check that never ran is not a
+ * check that succeeded.
+ */
+function GuardrailStrip({ roster }: { roster?: GuardEntry[] | null }) {
+  const entries = (roster ?? []).filter((e) => (e.surface ?? "guardrail") === "guardrail");
+  if (entries.length === 0) return null;
+  const fired = entries.filter((e) => e.outcome === "fired");
+  const delegated = entries.filter((e) => e.outcome === "delegated");
+  return (
+    <>
+      <div className="tv-section-title">Guardrails on this turn</div>
+      <div className="tv-meta" style={{ marginBottom: 12 }}>
+        <div className="tv-meta-label">
+          {entries.length} {entries.length === 1 ? "check" : "checks"} ran ·{" "}
+          {delegated.length} delegated to Qwen3-ASR · {fired.length} fired
+        </div>
+        <div className="gr-guard-foot" style={{ marginTop: 8 }}>
+          {entries.map((e, i) => (
+            <span
+              key={`${e.guard_id}-${i}`}
+              className={`gr-outcome is-${e.outcome}`}
+              title={e.reason || undefined}
+            >
+              {e.guard_id}
+              <strong>{e.outcome === "not_evaluated" ? "n/a" : e.outcome}</strong>
+            </span>
+          ))}
+        </div>
+        {fired.map((e, i) => (
+          <div key={`reason-${i}`} className="tv-meta-hint" style={{ marginTop: 6 }}>
+            {e.guard_id}: {e.reason || "acted on this turn"}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 interface SessionGroup {
   sessionId: string;
   callId?: string | null;
@@ -449,11 +495,17 @@ interface SessionGroup {
   languages: string[];
 }
 
+/** `#/traces?trace=<id>` — how the Guardrails view links to one turn. */
+function traceIdFromHash(): string | null {
+  const query = window.location.hash.split("?")[1];
+  return query ? new URLSearchParams(query).get("trace") : null;
+}
+
 export function TracesPage() {
   const [traces, setTraces] = useState<TraceSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(traceIdFromHash);
   const [detail, setDetail] = useState<TraceDetail | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 

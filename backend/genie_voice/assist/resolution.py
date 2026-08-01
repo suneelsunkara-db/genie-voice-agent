@@ -9,10 +9,34 @@ from genie_voice.assist.billing_intent import detect_waiver_plan_request
 from genie_voice.assist.validation import validate_close_eligible
 from genie_voice.config import Settings, get_settings
 
-_CLOSED_NOTE = (
-    "Issue closed: payment arrangement confirmed and waiver flow applied. "
-    "Update will reflect on next statement."
-)
+# Resolution notes travel as CANONICAL CODES, not prose. The timeline is rendered
+# in the caller's language, and English prose can only be localized by the UI
+# guessing at it — which is what happened before: a Hindi call showed an English
+# note because the frontend only had regex translations for three languages.
+# Every display string for these lives in the UI message catalog (keyed
+# resolutionNote<Code>), which the offline translator covers for every language.
+NOTE_ISSUE_CLOSED = "issue_closed_arrangement_waiver"
+NOTE_ISSUE_GUIDED = "issue_guided_by_genie"
+
+# English renderings, for consumers that are NOT the UI (LLM prompt context,
+# logs). Kept here so the code stays the single source of truth for its meaning.
+_NOTE_TEXT = {
+    NOTE_ISSUE_CLOSED: (
+        "Issue closed: payment arrangement confirmed and waiver flow applied. "
+        "Update will reflect on next statement."
+    ),
+    NOTE_ISSUE_GUIDED: "Issue {status}: guided by Genie and account context.",
+}
+
+
+def note_text(code: str | None, *, status: str | None = None) -> str:
+    """Render a note code as English prose. Unknown/legacy values pass through."""
+    if not code:
+        return ""
+    template = _NOTE_TEXT.get(code)
+    if template is None:
+        return code  # pre-existing rows stored prose; show it as-is.
+    return template.format(status=status or "update")
 
 _CONFIRM_SHORT = frozenset(
     {
@@ -188,12 +212,10 @@ def evaluate_resolution(
     existing["actions"] = actions
     existing["resolution_source"] = "fm"
     if account and account.get("found") and not existing.get("note") and status != "open":
-        summary = account.get("summary") or {}
-        overdue_amount = summary.get("overdue_amount")
-        existing["note"] = (
-            f"Issue {status}: guided by Genie and account context"
-            + (f" (overdue amount ${overdue_amount})." if overdue_amount is not None else ".")
-        )
+        # The overdue amount this note used to append is already on screen in the
+        # invoice table, and carrying it here would need a currency-formatted
+        # parameter in 24 languages for no new information.
+        existing["note"] = NOTE_ISSUE_GUIDED
     return existing
 
 
@@ -215,7 +237,7 @@ def finalize_resolution_after_billing(
         actions.pop("close_blocked", None)
         actions.pop("close_block_reason", None)
         out["resolved_at"] = datetime.now(UTC).isoformat()
-        out["note"] = _CLOSED_NOTE
+        out["note"] = NOTE_ISSUE_CLOSED
     else:
         out["status"] = "in_progress"
         actions["close_blocked"] = True

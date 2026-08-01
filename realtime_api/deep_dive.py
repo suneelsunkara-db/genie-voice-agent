@@ -7,9 +7,13 @@ take up to a minute). It is industry-agnostic — a profile just points its
 
   1. streams Genie Agent Mode SSE progress (reasoning / SQL / report),
   2. records a ``TurnTrace`` linked to the originating voice call, and
-  3. adds a SHORT spoken "why" summary (one shared-serving LLM call) in the
-     caller's language, so the voice pinpoints the cause instead of reading the
-     whole report.
+  3. renders the finished report for the caller's language: a SHORT spoken "why"
+     for the voice, then the on-screen report translated out of the agent's
+     English (the agent is always asked in English because asking it to write in
+     the caller's language kills the run for some languages — see
+     ``GenieAgentModeClient.ask``). Both come from the SHARED voice serving, and
+     the spoken line is released FIRST so the voice never waits on the
+     translation.
 
 No card- (or telco-) specific logic lives here; the only inputs are the question,
 the caller's language, and the trace-linking ids.
@@ -19,27 +23,71 @@ from __future__ import annotations
 import json
 import queue
 from functools import lru_cache
-from typing import Any
+from typing import Any, Callable
 
 # Capability label for the deep-dive trace (distinguishes it from voice turns).
 DEEPDIVE_CAPABILITY = "genie-agent-mode-deepdive"
 
 
 @lru_cache(maxsize=1)
-def _summary_knobs() -> tuple[float, int]:
-    """Config-sourced summarizer sampling (temperature, max_tokens).
+def _summary_knobs() -> tuple[float, int, int]:
+    """Config-sourced summarizer sampling (temperature, summary/localize max_tokens).
 
-    The spoken "why" must be SHORT and factual → low temperature + capped tokens.
-    Operator-tunable via realtime_voice.deep_dive.summary_{temperature,max_tokens};
-    cached (config is static per process). Falls back to sane defaults on error.
+    The spoken "why" must be SHORT and factual → low temperature + capped tokens;
+    the report translation shares the temperature but needs room for a whole
+    report. Operator-tunable via realtime_voice.deep_dive.*; cached (config is
+    static per process). Falls back to sane defaults on error.
     """
     try:
         from .config import RealtimeSettings
 
         s = RealtimeSettings.resolve()
-        return float(s.deep_dive_summary_temperature), int(s.deep_dive_summary_max_tokens)
+        return (
+            float(s.deep_dive_summary_temperature),
+            int(s.deep_dive_summary_max_tokens),
+            int(s.deep_dive_localize_max_tokens),
+        )
     except Exception:  # noqa: BLE001
-        return 0.3, 220
+        return 0.3, 220, 1800
+
+
+@lru_cache(maxsize=1)
+def _conversion_endpoint() -> str | None:
+    """Config-sourced endpoint for the text-to-text conversions (summary + report
+    translation). ``None`` → the shared serving falls back to its ``llm_endpoint``.
+    Cached; config is static per process."""
+    try:
+        from .config import RealtimeSettings
+
+        return RealtimeSettings.resolve().conversion_endpoint or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def is_english(language: str | None) -> bool:
+    """True when a BCP-47 tag (or None) means "English" — i.e. nothing to translate."""
+    return not language or str(language).split("-", 1)[0].strip().lower() == "en"
+
+
+def language_name(language: str | None) -> str:
+    """English NAME of a BCP-47 tag ('hi-IN' → 'Hindi') for use inside a prompt.
+
+    A prompt that says "write in hi-IN" is a worse instruction than one that says
+    "write in Hindi". Matches the shared catalog on the normalized tag rather than
+    splitting the subtag, so nb-NO resolves to Norwegian instead of missing. Falls
+    back to the raw tag, which is still better than dropping the instruction.
+    """
+    tag = str(language or "")
+    try:
+        from genie_voice.i18n import LANGUAGE_CATALOG, language_spec, normalize_language
+
+        norm = normalize_language(tag)  # raises on unsupported → fall back below
+        return next(
+            (eng for (cat_tag, eng) in LANGUAGE_CATALOG.values() if cat_tag == norm),
+            None,
+        ) or language_spec(norm).english_name
+    except Exception:  # noqa: BLE001
+        return tag
 
 
 def summarize_deepdive(question: str, report_text: str, language: str | None) -> str:
@@ -68,13 +116,100 @@ def summarize_deepdive(question: str, report_text: str, language: str | None) ->
         "Output ONLY the spoken sentences."
     )
     user = f"Customer asked: {question}\n\nAnalysis to summarize:\n{text[:6000]}"
-    temperature, max_tokens = _summary_knobs()
+    temperature, max_tokens, _ = _summary_knobs()
     return shared_serving().summarize(
         system=system,
         user=user,
         temperature=temperature,
         max_tokens=max_tokens,
+        endpoint=_conversion_endpoint(),
     )
+
+
+def localize_report(report_text: str, language: str | None) -> str:
+    """Translate the agent's English report into the caller's language for the UI.
+
+    Agent Mode answers in English (see ``GenieAgentModeClient.ask`` for why we no
+    longer ask it to do otherwise), so the on-screen "why" is translated here — one
+    call on the SAME shared voice serving as the spoken summary, no new client and
+    no new endpoint. Markdown structure, figures and citation markers are preserved
+    so the report keeps its provenance. Returns "" for English or on any failure,
+    which leaves the caller showing the English original rather than nothing.
+    """
+    text = (report_text or "").strip()
+    if not text or is_english(language):
+        return ""
+    from .serving_factory import shared_serving
+
+    name = language_name(language)
+    system = (
+        f"You are a professional financial translator. Translate the user's report into {name}. "
+        "Rules: keep the markdown structure exactly as-is (headings, bold, bullet lists, "
+        "tables); keep every number, currency amount, date, merchant name and citation "
+        "marker such as [[1]] unchanged; translate the surrounding prose and any table "
+        "headers. Do not summarize, do not add commentary, do not answer the report. "
+        f"Output ONLY the translated report in {name}."
+    )
+    temperature, _, max_tokens = _summary_knobs()
+    try:
+        return shared_serving().summarize(
+            system=system,
+            user=text[:8000],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            endpoint=_conversion_endpoint(),
+        ).strip()
+    except Exception:  # noqa: BLE001 — an English report beats a blank panel
+        return ""
+
+
+def stream_report_renderings(
+    question: str,
+    ev: dict[str, Any],
+    language: str | None,
+    emit: Callable[[dict[str, Any]], None],
+) -> None:
+    """Emit the finished report in two beats so the VOICE never waits on translation.
+
+    The customer is already 30-60s into the investigation, so the moment the short
+    spoken "why" exists we hand it over — with the agent's English report, which is
+    what we have — and the caller starts hearing the answer. The translation runs
+    concurrently and arrives as a second ``report_localized`` event that replaces the
+    on-screen text in place. ``localization_pending`` tells the client a swap is
+    coming so it can say so instead of appearing to change its mind.
+
+    Both renderings are best-effort and independent: a failed translation leaves the
+    English report standing, a failed summary leaves the report without a spoken
+    line, and neither can block the other.
+    """
+    from concurrent.futures import Future, ThreadPoolExecutor
+
+    def _settled(f: "Future[str]") -> str:
+        try:
+            return f.result() or ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    english = str(ev.get("report") or "")
+    pending = bool(english) and not is_english(language)
+    # One worker: the translation runs in it while the summary runs on this thread.
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="deepdive-i18n") as pool:
+        localized: "Future[str] | None" = (
+            pool.submit(localize_report, english, language) if pending else None
+        )
+        try:
+            spoken = summarize_deepdive(question, english, language)
+        except Exception:  # noqa: BLE001 — the client falls back to reading nothing aloud
+            spoken = ""
+
+        first = {**ev, "report_language": "en", "localization_pending": pending}
+        if spoken:
+            first["spoken_summary"] = spoken
+        emit(first)
+
+        text = _settled(localized) if localized is not None else ""
+        if text:
+            emit({"kind": "report_localized", "report": text, "report_language": language})
 
 
 # --------------------------------------------------------------------------- #
@@ -131,6 +266,12 @@ def record_deepdive_event(trace: Any, ev: dict[str, Any]) -> None:
                 s.set_attribute("tables", len(ev.get("tables") or []))
                 s.set_attribute("sql_calls", len(ev.get("sql") or []))
                 s.set_attribute("reasoning_steps", len(ev.get("reasoning") or []))
+        elif kind == "report_localized":
+            # The customer read the translation, so that is what the trace shows;
+            # the span records that a translation happened and into what.
+            trace.output_text = ev.get("report")
+            with trace.span("report.localize", "LLM") as s:
+                s.set_attribute("language", ev.get("report_language"))
         elif kind == "error":
             trace.status = "error"
             trace.error = json.dumps(ev.get("error"), default=str)[:2000]
@@ -166,10 +307,9 @@ def run_deep_dive(
     ``genie_space_name`` selects WHICH Genie Agent (space) answers, so this lane
     is industry-agnostic — the card route passes the card space, a billing route
     would pass the billing space, and neither relies on an Agent-Mode default.
-    The on-screen report is requested in the caller's ``language`` (Agent Mode
-    frames its narrative accordingly) and a short spoken summary is added in the
-    same language. A terminal ``{"kind": "done"}`` always follows so the SSE
-    generator can stop.
+    The agent is asked in English; ``language`` decides what the caller then reads
+    and hears, both rendered here. A terminal ``{"kind": "done"}`` always follows
+    so the SSE generator can stop.
     """
     timeout = read_timeout_s if read_timeout_s is not None else deep_dive_read_timeout_s()
     trace = None
@@ -185,19 +325,21 @@ def run_deep_dive(
     except Exception:  # noqa: BLE001 - tracing setup must not block the run
         trace = None
 
-    def _on_event(ev: dict[str, Any]) -> None:
-        # On the terminal report, add a spoken "why" summary (one LLM call) so the
-        # voice pinpoints the cause instead of reading the whole report.
-        if isinstance(ev, dict) and ev.get("kind") == "report":
-            try:
-                spoken = summarize_deepdive(question, ev.get("report") or "", language)
-                if spoken:
-                    ev = {**ev, "spoken_summary": spoken}
-            except Exception:  # noqa: BLE001 - summary is best-effort; client has a fallback
-                pass
+    def _put(ev: dict[str, Any]) -> None:
         if trace is not None:
             record_deepdive_event(trace, ev)
         sink.put(ev)
+
+    def _on_event(ev: dict[str, Any]) -> None:
+        # The terminal report becomes two events: one the caller can immediately
+        # HEAR, then the translated text they READ (see stream_report_renderings).
+        if isinstance(ev, dict) and ev.get("kind") == "report":
+            try:
+                stream_report_renderings(question, ev, language, _put)
+                return
+            except Exception:  # noqa: BLE001 - rendering is best-effort; the report still ships
+                pass
+        _put(ev)
 
     try:
         from genie_voice.genie.agent_mode import GenieAgentModeClient
@@ -205,7 +347,6 @@ def run_deep_dive(
         GenieAgentModeClient().ask(
             question,
             on_event=_on_event,
-            language=language,
             space_name=genie_space_name,
             read_timeout_s=timeout,
         )

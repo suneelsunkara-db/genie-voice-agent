@@ -17,17 +17,30 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any
 
+from .config import ConciergeRouterConfig, concierge_router_config
+from .guardrails import report
+from .languages import base_code
 from .tool_registry import ToolContext, register, run_tool, tools_spec
 
+if TYPE_CHECKING:
+    from .guardrails import GuardLedger
+
 _PROFILE = "concierge"
-INDUSTRIES = {"telco", "fsi", "healthcare"}
-_INDUSTRY_LABELS = {
-    "telco": "Telco — Billing Support",
-    "fsi": "Financial Services — Credit Card",
-    "healthcare": "Healthcare",
-}
+
+
+@lru_cache(maxsize=1)
+def router() -> ConciergeRouterConfig:
+    """The routing table, from config. Cached: the file is read once per process.
+
+    Deliberately not module-level constants. These gate which assistant a caller
+    reaches, and a validated config block makes a change to a cue or a threshold
+    reviewable instead of a literal edit inside the router.
+    """
+    return concierge_router_config()
+
 
 CONCIERGE_AGENT_NAME = "Genie"
 CONCIERGE_BRAND = "Databricks Genie Assisted Voice"
@@ -39,99 +52,144 @@ _GREETING_CACHE: dict[tuple[str, str], str] = {}
 # ---------------------------------------------------------------------------
 # select_industry (routing)
 # ---------------------------------------------------------------------------
-_SELECT_INDUSTRY_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "select_industry",
-        "description": (
-            "Record which industry experience the user chose by voice so the UI can "
-            "navigate there. Call this as SOON as they pick one: 'telco' (billing "
-            "support), 'fsi' (credit-card assistant), or 'healthcare'."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "industry": {
-                    "type": "string",
-                    "enum": ["telco", "fsi", "healthcare"],
-                    "description": "The chosen industry experience.",
+def _select_industry_spec() -> dict[str, Any]:
+    """Tool spec built from the configured destinations, so the model's enum and
+    the router's cue table can never drift apart."""
+    keys = list(router().keys)
+    labels = ", ".join(f"'{i.key}' ({i.label})" for i in router().industries)
+    return {
+        "type": "function",
+        "function": {
+            "name": "select_industry",
+            "description": (
+                "Record which industry experience the user chose by voice so the UI can "
+                f"navigate there. Call this as SOON as they pick one: {labels}."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "industry": {
+                        "type": "string",
+                        "enum": keys,
+                        "description": "The chosen industry experience.",
+                    },
                 },
+                "required": ["industry"],
             },
-            "required": ["industry"],
         },
-    },
-}
+    }
 
 
 def _run_select_industry(arguments: dict[str, Any], ctx: ToolContext) -> str:
-    industry = str(arguments.get("industry") or "").lower()
-    if industry not in INDUSTRIES:
-        return json.dumps({"error": "industry must be 'telco', 'fsi', or 'healthcare'"})
-    ctx.profile_state["industry"] = industry
-    return json.dumps({"ok": True, "industry": industry, "label": _INDUSTRY_LABELS[industry]})
+    key = str(arguments.get("industry") or "").lower()
+    route = router().industry(key)
+    if route is None:
+        return json.dumps(
+            {"error": "industry must be one of: " + ", ".join(router().keys)}
+        )
+    ctx.profile_state["industry"] = route.key
+    return json.dumps({"ok": True, "industry": route.key, "label": route.label})
 
 
-register(_SELECT_INDUSTRY_SPEC, _run_select_industry, profile=_PROFILE)
+register(_select_industry_spec(), _run_select_industry, profile=_PROFILE)
 
 
 # ---------------------------------------------------------------------------
 # Deterministic intent pre-router (framework seam)
 # ---------------------------------------------------------------------------
-# The concierge's whole job is to route by voice, and the home page is
-# English-only (the language picker is disabled and defaults to English), so a
-# small English cue table resolves the selection reliably WITHOUT waiting on the
-# conversational LLM to emit the tool call. This is Tier 1; the LLM (Tier 2)
-# still handles anything ambiguous or phrased as a question.
-_INDUSTRY_CUES: dict[str, tuple[str, ...]] = {
-    "telco": ("telco", "telecom", "telecoms", "billing", "phone bill", "phone", "mobile", "wireless", "cellular"),
-    "fsi": ("fsi", "financial", "finance", "credit card", "credit-card", "card", "bank", "banking", "statement"),
-    "healthcare": ("healthcare", "health", "clinical", "clinic", "patient", "medical", "claim", "claims", "coverage"),
-}
-# One warm confirmation instruction per industry, voiced in the caller's
-# language (generated + cached by the pipeline). Instruction, not a literal line.
-_CONFIRM_LABELS = {
-    "telco": "Telco billing support",
-    "fsi": "the credit-card assistant",
-    "healthcare": "the healthcare assistant",
-}
-# Only route short, selection-style replies deterministically; longer utterances
-# (questions, elaboration) defer to the LLM so we don't route on "what is
-# healthcare?" — the confidence guardrail behind always-confirm-then-route.
-_MAX_SELECTION_WORDS = 8
-
-
+# The concierge's whole job is to route by voice, so a cue table resolves the
+# selection reliably WITHOUT waiting on the conversational LLM to emit the tool
+# call. This is Tier 1; the LLM (Tier 2) still handles anything ambiguous or
+# phrased as a question. The table, the length limit and the languages it is
+# authored for all come from realtime_voice.concierge_router in config.
 def _matches(cue: str, text: str) -> bool:
     if " " in cue or "-" in cue:
         return cue in text
     return re.search(rf"\b{re.escape(cue)}\b", text) is not None
 
 
-def resolve_industry(transcript: str) -> str | None:
+def _declined(ledger: "GuardLedger | None", guard_id: str, reason: str) -> None:
+    """A decline IS an action: it stopped a deterministic route and handed the turn
+    to the LLM. Recording it is the point — until now a decline left no trace at
+    all, which is why "why didn't saying Telco route me?" had no answer."""
+    report(ledger, guard_id, "fired", seam="decision", stage="routing", reason=reason)
+
+
+def _held(ledger: "GuardLedger | None", guard_id: str, reason: str | None = None) -> None:
+    report(ledger, guard_id, "passed", seam="decision", stage="routing", reason=reason)
+
+
+def resolve_industry(
+    transcript: str, ledger: "GuardLedger | None" = None, language: str | None = None
+) -> str | None:
     """Confidently map a short spoken reply to an industry, else None.
 
     Returns an industry only when EXACTLY ONE matches (no match or a cross-domain
-    tie is treated as ambiguous and left to the LLM).
+    tie is treated as ambiguous and left to the LLM). Reports each gate's outcome
+    to ``ledger`` when one is supplied; reasons carry counts and industry names
+    only, never the transcript, because the roster is persisted.
     """
-    text = (transcript or "").strip().lower()
-    if not text or len(text.split()) > _MAX_SELECTION_WORDS:
+    cfg = router()
+    # The cue table is authored for specific languages (English today). Matching
+    # it against a transcript in another language would route on coincidence, so
+    # the router steps aside and lets the model handle the turn.
+    if language and base_code(language) not in cfg.languages:
+        report(
+            ledger, "selection_language_scope", "not_evaluated",
+            seam="decision", stage="routing",
+            reason=f"cues authored for {list(cfg.languages)}, call is {base_code(language)}",
+        )
         return None
-    matched = {ind for ind, cues in _INDUSTRY_CUES.items() if any(_matches(c, text) for c in cues)}
-    return next(iter(matched)) if len(matched) == 1 else None
+
+    text = (transcript or "").strip().lower()
+    words = len(text.split())
+    if not text:
+        report(
+            ledger, "selection_length", "not_evaluated",
+            seam="decision", stage="routing", reason="empty transcript",
+        )
+        return None
+    if words > cfg.max_selection_words:
+        _declined(
+            ledger, "selection_length",
+            f"{words} words > {cfg.max_selection_words}; deferred to LLM",
+        )
+        return None
+    _held(ledger, "selection_length", f"{words} words")
+
+    matched = {i.key for i in cfg.industries if any(_matches(c, text) for c in i.cues)}
+    if not matched:
+        _declined(ledger, "selection_allowlist", "no industry cue matched; deferred to LLM")
+        return None
+    _held(ledger, "selection_allowlist", f"matched {sorted(matched)}")
+
+    if len(matched) > 1:
+        _declined(
+            ledger, "selection_ambiguity",
+            f"{len(matched)} industries matched {sorted(matched)}; deferred to LLM",
+        )
+        return None
+    _held(ledger, "selection_ambiguity")
+    return next(iter(matched))
 
 
-def _resolve_concierge_intents(transcript: str, language: str) -> list[Any]:
+def _resolve_concierge_intents(
+    transcript: str, language: str, ledger: "GuardLedger | None" = None
+) -> list[Any]:
     from .profiles import ResolvedIntent
 
-    industry = resolve_industry(transcript)
+    industry = resolve_industry(transcript, ledger, language)
     if industry is None:
         return []
+    route = router().industry(industry)
+    assert route is not None  # resolve_industry only returns configured keys
     return [
         ResolvedIntent(
             name="select_industry",
             arguments={"industry": industry},
             confirm_intent=(
                 f"In ONE short, warm sentence, tell the user you're taking them to "
-                f"{_CONFIRM_LABELS[industry]} now. No lists, no emoji."
+                f"{route.confirm_label} now. No lists, no emoji."
             ),
         )
     ]

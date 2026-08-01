@@ -16,11 +16,14 @@ questions to the card Genie Agent and diffs the report against GROUND_TRUTH.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from genie_voice.config import Settings, get_settings
+
+logger = logging.getLogger("genie_voice.agent_mode")
 
 
 @dataclass
@@ -41,33 +44,6 @@ class AgentModeResult:
             default=str,
         )
         return re.sub(r"(?<=\d),(?=\d)", "", blob)
-
-
-def _with_language_directive(question: str, language: str | None) -> str:
-    """Append a 'write the report in <language>' directive for non-English callers.
-
-    The agent's SQL/analysis is language-agnostic; this only steers the NARRATIVE
-    report so a non-English caller sees a localized "why" on screen. No-op for
-    English or an unknown/None language (English is the agent's default).
-    """
-    if not language:
-        return question
-    try:
-        from genie_voice.i18n import LANGUAGE_CATALOG, language_spec, normalize_language
-
-        tag = normalize_language(language)  # raises on unsupported -> no-op below
-        if tag.split("-", 1)[0].lower() == "en":
-            return question
-        # Resolve the English name by MATCHING the normalized tag against catalog
-        # entries (keyed by ISO base, so a subtag split like "nb" would miss "no").
-        # This maps nb-NO -> "Norwegian" instead of leaking the raw tag.
-        name = next(
-            (eng for (cat_tag, eng) in LANGUAGE_CATALOG.values() if cat_tag == tag),
-            None,
-        ) or language_spec(tag).english_name
-    except Exception:  # noqa: BLE001 — never let localization break the query
-        return question
-    return f"{question}\n\nWrite your analysis and final report in {name}."
 
 
 class GenieAgentModeClient:
@@ -110,7 +86,6 @@ class GenieAgentModeClient:
         conversation_id: str | None = None,
         enable_viz: bool = False,
         read_timeout_s: float = 420.0,
-        language: str | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> AgentModeResult:
         """Send one question to Agent mode and consume the SSE stream to the end.
@@ -118,17 +93,23 @@ class GenieAgentModeClient:
         The target Agent (Genie space) is resolved by NAME: pass ``space_name`` to
         pick a specific domain's space (e.g. the card space) so the caller isn't
         pinned to any default; ``agent_id`` (a resolved id) still wins if given.
-        ``language`` (optional BCP-47 tag) asks the agent to write its narrative
-        REPORT in that language, so a non-English caller gets a localized "why"
-        on screen (the SQL/analysis itself is language-agnostic). ``on_event``
-        (optional) is called with a small normalized progress dict as each SSE
-        item finalizes, so a caller can surface live reasoning while the agent
-        works: {"kind": "started"|"reasoning"|"sql"|"report"|"error", ...}. Never
-        blocks on it and swallows callback errors (surfacing is best-effort).
+
+        The question is asked in ENGLISH and the report comes back in English by
+        design. Asking the agent to write its narrative in the caller's language
+        used to work for some languages and silently killed the run for others:
+        with "write your report in Hindi" appended, the agent planned, ran all its
+        SQL, emitted "now I'll prepare the final response in Hindi" — and then
+        closed the stream with no terminal event, three runs out of three, while
+        English, Spanish and Thai completed. English is also the fastest path
+        (~29s vs 43-54s). Localizing the report is therefore the caller's job, not
+        the agent's: see ``realtime_api.deep_dive``.
+
+        ``on_event`` (optional) is called with a small normalized progress dict as
+        each SSE item finalizes, so a caller can surface live reasoning while the
+        agent works: {"kind": "started"|"reasoning"|"sql"|"report"|"error", ...}.
+        Never blocks on it and swallows callback errors (surfacing is best-effort).
         """
         import requests
-
-        question = _with_language_directive(question, language)
 
         def _emit(ev: dict[str, Any]) -> None:
             if on_event is None:
@@ -173,8 +154,10 @@ class GenieAgentModeClient:
                 _emit({"kind": "error", "error": result.error, "status": result.status})
                 return result
 
+            seen: list[str] = []
             for event in _iter_sse(resp):
                 etype = event.get("type")
+                seen.append(str(etype))
                 if etype == "response.created":
                     result.conversation_id = (event.get("response") or {}).get("conversation_id")
                     _emit({"kind": "started", "conversation_id": result.conversation_id})
@@ -202,6 +185,24 @@ class GenieAgentModeClient:
                             "reasoning": result.reasoning,
                         })
                     break
+            else:
+                # The stream ended with no response.completed / response.failed.
+                # Previously this returned silently: the caller emitted a bare
+                # `done`, the UI said "ended without a result", and nothing
+                # anywhere recorded WHY — so the same failure was undiagnosable
+                # every time. Say what happened, and name the events we did see.
+                result.status = "incomplete"
+                result.error = {
+                    "message": (
+                        "Genie Agent Mode closed the stream without a terminal "
+                        "response event"
+                    ),
+                    "events_seen": seen[-8:],
+                }
+                logger.warning(
+                    "agent-mode stream ended with no terminal event; saw %s", seen or "nothing"
+                )
+                _emit({"kind": "error", "error": result.error, "status": result.status})
         return result
 
 

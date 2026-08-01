@@ -1,33 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { RealtimeVoiceSession, startRealtimeVoice } from "../lib/realtimeVoice";
-import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
+import { useEffect, useState } from "react";
+import { useAppLanguage } from "../lib/appLanguage";
 import { getMe } from "../lib/me";
-import {
-  DEFAULT_LANGUAGE,
-  DEFAULT_LANGUAGE_OPTIONS,
-  Lang,
-  fetchSupportedLanguages,
-} from "../lib/languages";
+import { DEFAULT_LANGUAGE_OPTIONS, Lang, fetchSupportedLanguages } from "../lib/languages";
 import { LanguageBar } from "./LanguageBar";
 import { BrandLockup } from "./BrandLockup";
 import { VoiceBackdrop } from "./VoiceBackdrop";
 import { VoiceOrb } from "./VoiceOrb";
-import { API_BASE_URL, WS_BASE_URL } from "../config";
 import "../styles/home.css";
 
 /**
  * Landing page for "Genie Assisted Voice" (a Databricks demo).
  *
- * A voice concierge (the "concierge" realtime profile) greets the signed-in user
- * by name, gives a short spoken overview, and asks which industry to open. The
- * user answers BY VOICE; the LLM calls `select_industry`, which arrives as
- * `tool.called` and drives hash navigation:
- *   telco -> #/telco (billing), fsi -> #/card, healthcare -> #/hls.
- *
- * Everything routes through the FRAMEWORK: the shared voice stack
- * (startRealtimeVoice + useHalfDuplexVoice), the shared config-driven language
- * bar (lib/languages + LanguageBar), and the shared greeting mechanism. The
- * Genie ontology + deep-reasoning panels are illustrative concept visuals.
+ * This is the ONE place a language is chosen. The picker writes the global app
+ * language (lib/appLanguage); every use-case surface then opens its voice session
+ * in that language from the first greeting and renders its own picker locked. The
+ * user picks a language here, then clicks an industry to enter — there is no voice
+ * concierge on this page, so short spoken cues can't be mis-detected and routing
+ * has nothing to get wrong.
  */
 
 type Industry = {
@@ -36,7 +25,6 @@ type Industry = {
   title: string;
   tag: string;
   blurb: string;
-  cues: string[];
 };
 
 const INDUSTRIES: Industry[] = [
@@ -46,7 +34,6 @@ const INDUSTRIES: Industry[] = [
     title: "Telco",
     tag: "Billing Support",
     blurb: "Resolve charges, waive fees, and set up payment plans on a live call.",
-    cues: ["“Telco”", "“billing”", "“my phone bill”"],
   },
   {
     id: "fsi",
@@ -54,7 +41,6 @@ const INDUSTRIES: Industry[] = [
     title: "Financial Services",
     tag: "Credit-Card Assistant",
     blurb: "Understand statements and rewards, with deep “why” reasoning on demand.",
-    cues: ["“Financial services”", "“credit card”", "“my statement”"],
   },
   {
     id: "healthcare",
@@ -62,7 +48,6 @@ const INDUSTRIES: Industry[] = [
     title: "Healthcare",
     tag: "Care & Claims",
     blurb: "Explain claims, coverage, and visit summaries in plain language.",
-    cues: ["“Healthcare”", "“my claim”", "“coverage”"],
   },
 ];
 
@@ -95,66 +80,11 @@ const REASONING_HOPS = [
 ];
 const REASONING_CONCLUSION =
   "$41 of the $47 increase is a one-time device fee — next cycle returns to normal.";
-// Last-resort route fallback if the confirmation TTS stream never reaches a
-// final audio chunk. Normal routing is driven by `onFinal` after audio drains.
-const ROUTE_FALLBACK_MS = 30_000;
-
-type AgentState = "idle" | "greeting" | "listening" | "thinking" | "speaking";
 
 export function HomePage() {
-  const [phase, setPhase] = useState<"idle" | "connecting" | "live">("idle");
-  const [agentState, setAgentState] = useState<AgentState>("idle");
   const [userName, setUserName] = useState<string>("");
   const [langOptions, setLangOptions] = useState<Lang[]>(DEFAULT_LANGUAGE_OPTIONS);
-  const [caption, setCaption] = useState<string>("");
-  const [chosen, setChosen] = useState<Industry["id"] | null>(null);
-  const [micLevel, setMicLevel] = useState(0);
-  const [speakLevel, setSpeakLevel] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-
-  const sessionRef = useRef<RealtimeVoiceSession | null>(null);
-  const callIdRef = useRef<string>("");
-  const callLanguageRef = useRef<string>(DEFAULT_LANGUAGE);
-  // Greeting cache keyed by language (one model call per language, like card).
-  const greetingRef = useRef<Map<string, string>>(new Map());
-  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Hash to route to once the agent's spoken confirmation finishes. Armed by the
-  // select_industry tool result; consumed on the confirmation's final audio.
-  const pendingNavRef = useRef<string | null>(null);
-  // Latest "response finished speaking" handler; kept in a ref so the hook's
-  // onFinal stays stable while always seeing fresh state (goTo/playbackRef).
-  const onFinalRef = useRef<() => void>(() => {});
-
-  const {
-    playbackRef,
-    resetPlayback,
-    gateMic,
-    ungateMicAfter,
-    handleResponseAudio,
-    interimText,
-    handleInterimTranscript,
-    teardownPlayback,
-  } = useHalfDuplexVoice({
-    sessionRef,
-    onMicResume: () => setAgentState("listening"),
-    onSpeaking: () => setAgentState("speaking"),
-    onFinal: () => onFinalRef.current(),
-  });
-
-  // Speaking-orb amplitude from the actual TTS playback.
-  useEffect(() => {
-    if (agentState !== "speaking") {
-      setSpeakLevel(0);
-      return;
-    }
-    let raf = 0;
-    const tick = () => {
-      setSpeakLevel(playbackRef.current?.getLevel() ?? 0);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [agentState, playbackRef]);
+  const [language, setLanguage] = useAppLanguage();
 
   // Prefetch the signed-in user + the config-driven supported language set.
   useEffect(() => {
@@ -171,176 +101,9 @@ export function HomePage() {
     };
   }, []);
 
-  const fetchGreeting = useCallback(
-    async (language: string): Promise<string> => {
-      const cached = greetingRef.current.get(language);
-      if (cached !== undefined) return cached;
-      try {
-        const r = await fetch(
-          `${API_BASE_URL}/concierge/greeting?language=${encodeURIComponent(language)}&name=${encodeURIComponent(userName)}`
-        );
-        const data = (await r.json()) as { text?: string };
-        const text = typeof data.text === "string" ? data.text : "";
-        greetingRef.current.set(language, text);
-        return text;
-      } catch {
-        return "";
-      }
-    },
-    [userName]
-  );
-
-  const speakViaTTS = useCallback(
-    (text: string) => {
-      const session = sessionRef.current;
-      if (!session || !text.trim()) return;
-      playbackRef.current?.flush();
-      gateMic();
-      setAgentState("speaking");
-      session.synthesize(text, callLanguageRef.current);
-    },
-    [gateMic, playbackRef]
-  );
-
-  const teardown = useCallback(() => {
-    if (navTimerRef.current) {
-      clearTimeout(navTimerRef.current);
-      navTimerRef.current = null;
-    }
-    pendingNavRef.current = null;
-    teardownPlayback();
-    sessionRef.current?.close();
-    sessionRef.current = null;
-  }, [teardownPlayback]);
-
-  useEffect(() => () => teardown(), [teardown]);
-
-  const goTo = useCallback(
-    (hash: string) => {
-      teardown();
-      window.location.hash = hash;
-    },
-    [teardown]
-  );
-
-  const navigateForIndustry = useCallback(
-    (industry: Industry["id"]) => {
-      const target = INDUSTRIES.find((i) => i.id === industry);
-      if (!target) return;
-      setChosen(industry);
-      // Confirm-then-route: arm the target and let the agent's spoken
-      // confirmation finish before the page swaps (handled in onFinal, below).
-      // The timer here is deliberately long: it is ONLY a last-resort escape if
-      // confirmation TTS stalls, never something that can race a normal TTS turn.
-      pendingNavRef.current = target.hash;
-      if (navTimerRef.current) clearTimeout(navTimerRef.current);
-      navTimerRef.current = setTimeout(() => goTo(target.hash), ROUTE_FALLBACK_MS);
-    },
-    [goTo]
-  );
-
-  // When a response finishes streaming: if a route is pending (the caller just
-  // picked an industry), navigate once the confirmation has actually drained
-  // from the speakers — so we never cut it off mid-sentence.
-  onFinalRef.current = () => {
-    const hash = pendingNavRef.current;
-    if (!hash) return;
-    pendingNavRef.current = null;
-    if (navTimerRef.current) clearTimeout(navTimerRef.current);
-    const wait = (playbackRef.current?.msUntilIdle() ?? 0) + 250;
-    navTimerRef.current = setTimeout(() => goTo(hash), wait);
+  const go = (hash: string) => {
+    window.location.hash = hash;
   };
-
-  const openSession = useCallback(
-    async (language: string) => {
-      const session = await startRealtimeVoice(
-        WS_BASE_URL,
-        callIdRef.current,
-        "guest",
-        {
-          onSessionReady: () => {
-            setPhase("live");
-            setAgentState("greeting");
-            void (async () => {
-              const greeting = await fetchGreeting(callLanguageRef.current);
-              if (greeting) {
-                setCaption(greeting);
-                speakViaTTS(greeting);
-              } else {
-                ungateMicAfter(0);
-                setAgentState("listening");
-              }
-            })();
-          },
-          onLevel: (level) => setMicLevel(level),
-          onInterimTranscript: (text) => handleInterimTranscript(text),
-          onSpeechStarted: () => setAgentState("listening"),
-          onTurnStarted: () => setAgentState((s) => (s === "speaking" ? s : "thinking")),
-          onTranscript: (text) => {
-            if (text.trim()) setCaption(text);
-          },
-          onResponseText: (text) => {
-            if (text.trim()) setCaption(text);
-          },
-          onResponseAudio: (pcmB64, sampleRate, final) => {
-            handleResponseAudio(pcmB64, sampleRate, final);
-          },
-          onToolCalled: (name, result) => {
-            const r = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
-            if (name === "select_industry" && typeof r.industry === "string") {
-              navigateForIndustry(r.industry as Industry["id"]);
-            }
-          },
-          onError: (code, message) => {
-            if (code === "ws_closed") {
-              setError(message);
-              teardown();
-              setPhase("idle");
-              setAgentState("idle");
-            } else {
-              setError(`${code}: ${message}`);
-            }
-          },
-        },
-        language,
-        // Home concierge is English-only (picker disabled). Pin STT to English
-        // so short replies ("Telco") can't be mis-detected as another language
-        // and dropped by the mismatch gate before the router runs.
-        { profile: "concierge", startMicPaused: true, sttLanguage: DEFAULT_LANGUAGE }
-      );
-      sessionRef.current = session;
-    },
-    [
-      fetchGreeting,
-      speakViaTTS,
-      ungateMicAfter,
-      handleInterimTranscript,
-      handleResponseAudio,
-      navigateForIndustry,
-      teardown,
-    ]
-  );
-
-  const startCall = useCallback(async () => {
-    if (phase !== "idle") return;
-    setError(null);
-    setChosen(null);
-    setPhase("connecting");
-    setAgentState("greeting");
-    callIdRef.current = `home-${Date.now()}`;
-    resetPlayback();
-    void fetchGreeting(callLanguageRef.current);
-    try {
-      await openSession(callLanguageRef.current);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Microphone access denied");
-      setPhase("idle");
-      setAgentState("idle");
-    }
-  }, [phase, resetPlayback, fetchGreeting, openSession]);
-
-  const orbLevel = agentState === "speaking" ? speakLevel : agentState === "listening" ? micLevel : 0;
-  const liveCaption = interimText.trim() || caption;
 
   return (
     <div className="home-root">
@@ -349,33 +112,25 @@ export function HomePage() {
       <header className="home-top">
         <BrandLockup product="Assisted Voice" />
         <div className="home-topright">
-          {/* Home concierge is English-only; language selection lives on the
-              use-case pages (billing / card / healthcare). Shown but disabled so
-              the capability is visible without being changeable here. */}
+          {/* The single language selector for the whole app. Every use-case page
+              inherits this choice and locks its own picker. */}
           <LanguageBar
-            value={DEFAULT_LANGUAGE}
+            value={language}
             options={langOptions}
-            onChange={() => {}}
-            label=""
-            disabled
+            onChange={setLanguage}
+            label="Language"
           />
           <nav className="home-topnav">
             <a href="#/voice-benchmarks">Benchmarks</a>
             <a href="#/traces">Traces</a>
+            <a href="#/guardrails">Guardrails</a>
           </nav>
         </div>
       </header>
 
       <main className="home-main">
         <section className="home-hero">
-          <VoiceOrb
-            state={agentState}
-            level={orbLevel}
-            size="clamp(74px, 11vh, 112px)"
-            onClick={phase === "idle" ? () => void startCall() : undefined}
-            disabled={phase !== "idle"}
-            ariaLabel={phase === "idle" ? "Talk to Genie" : "Genie"}
-          />
+          <VoiceOrb state="idle" level={0} size="clamp(74px, 11vh, 112px)" ariaLabel="Genie" disabled />
 
           <h1 className="home-title">
             {userName ? (
@@ -390,24 +145,9 @@ export function HomePage() {
             Databricks Genie ontology and deep reasoning.
           </p>
 
-          <div className="home-controls">
-            {phase === "idle" ? (
-              <button type="button" className="home-cta" onClick={() => void startCall()}>
-                Talk to Genie
-              </button>
-            ) : (
-              <div className={`home-status home-status-${agentState}`}>
-                {agentState === "greeting" && "Genie is connecting…"}
-                {agentState === "listening" && "Listening — say Telco, Financial Services, or Healthcare"}
-                {agentState === "thinking" && "Thinking…"}
-                {agentState === "speaking" && "Genie is speaking…"}
-                {agentState === "idle" && "Ready"}
-              </div>
-            )}
-          </div>
-
-          {liveCaption && phase !== "idle" && <p className="home-caption">{liveCaption}</p>}
-          {error && <p className="home-error">{error}</p>}
+          <p className="home-instruction">
+            Choose your language above, then open an experience below.
+          </p>
         </section>
 
         <section className="home-industries">
@@ -415,17 +155,12 @@ export function HomePage() {
             <button
               key={ind.id}
               type="button"
-              className={`home-card home-card-${ind.id}${chosen === ind.id ? " is-chosen" : ""}`}
-              onClick={() => goTo(ind.hash)}
+              className={`home-card home-card-${ind.id}`}
+              onClick={() => go(ind.hash)}
             >
               <div className="home-card-tag">{ind.tag}</div>
               <div className="home-card-title">{ind.title}</div>
               <div className="home-card-blurb">{ind.blurb}</div>
-              <div className="home-card-cues">
-                {ind.cues.map((c) => (
-                  <span key={c}>{c}</span>
-                ))}
-              </div>
               <div className="home-card-go">Open →</div>
             </button>
           ))}

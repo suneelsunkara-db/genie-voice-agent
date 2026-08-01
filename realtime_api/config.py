@@ -16,10 +16,62 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class IndustryRoute:
+    """One destination the voice concierge can route a caller to."""
+
+    key: str
+    # Spoken cues that select this destination. Multi-word cues match as
+    # substrings, single words on a word boundary.
+    cues: tuple[str, ...]
+    # Instruction (not a literal line) for the confirmation the agent speaks
+    # before the UI navigates, rendered in the caller's language.
+    confirm_label: str
+    # Display label echoed back in the tool result.
+    label: str
+
+
+@dataclass(frozen=True)
+class ConciergeRouterConfig:
+    """The deterministic pre-router's thresholds and cue tables.
+
+    These gate a *decision* — which industry a caller is sent to — so they belong
+    in config where a change is reviewable, not in literals inside the router.
+
+    ``languages`` declares the languages the cue table is authored for. It is
+    enforced at runtime, not just documented: the home page pins STT to English
+    today (short replies like "Telco" were being mis-detected as Hindi), and if
+    that pin is ever lifted the router must decline and defer to the model rather
+    than match English cues against a transcript in another language.
+    """
+
+    languages: tuple[str, ...]
+    max_selection_words: int
+    industries: tuple[IndustryRoute, ...]
+
+    def industry(self, key: str) -> IndustryRoute | None:
+        return next((i for i in self.industries if i.key == key), None)
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        return tuple(i.key for i in self.industries)
+
+
+@dataclass(frozen=True)
 class RealtimeSettings:
     stt_endpoint: str
     llm_endpoint: str
     tts_endpoint: str
+    # Endpoint for the OFFLINE UI-copy translator (scripts/i18n/translate_locales.py).
+    # Not on any call path, so it is free to be a slower, stronger model — the
+    # runtime model mistranslates one-word billing terms (it rendered "overdue" in
+    # Hindi as "most" and then "overlapping"). Empty falls back to llm_endpoint.
+    i18n_endpoint: str = ""
+    # Endpoint for RUNTIME text-to-text language conversion on the deep-dive lane:
+    # the spoken "why" summary and the on-screen report translation. Split from
+    # llm_endpoint because these are pure text->text turns (no tools) that want a
+    # small, fast, multilingual model — a measured ~2x faster than the 80B voice
+    # model at on-par quality. Empty falls back to llm_endpoint.
+    conversion_endpoint: str = ""
     sample_rate_hz: int = 16_000
     # Trailing silence required to treat the turn as finished (end-of-speech
     # endpointing). Set generously so the caller can speak their FULL sentence —
@@ -83,6 +135,11 @@ class RealtimeSettings:
     # tokens). Operator-tunable per the config policy (genie summarizer temp/tokens).
     deep_dive_summary_temperature: float = 0.3
     deep_dive_summary_max_tokens: int = 220
+    # Token ceiling for translating the on-screen report into the caller's
+    # language. It has to fit a WHOLE report (headings, tables, citations), so it
+    # is an order of magnitude larger than the spoken summary's cap; too small and
+    # the report is truncated mid-sentence.
+    deep_dive_localize_max_tokens: int = 1800
     # End-to-end supported languages (STT ∩ TTS) as BCP 47 primary subtags,
     # resolved from config. The UI reports these to the user.
     supported_languages: tuple[str, ...] = ()
@@ -118,6 +175,8 @@ class RealtimeSettings:
             stt_endpoint=stt,
             llm_endpoint=llm,
             tts_endpoint=tts,
+            i18n_endpoint=str(rv.get("i18n_endpoint") or d.i18n_endpoint),
+            conversion_endpoint=str(rv.get("conversion_endpoint") or d.conversion_endpoint),
             sample_rate_hz=int(tt.get("sample_rate_hz", d.sample_rate_hz)),
             vad_silence_ms=int(tt.get("vad_silence_ms", d.vad_silence_ms)),
             max_turn_seconds=int(tt.get("max_turn_seconds", d.max_turn_seconds)),
@@ -139,6 +198,9 @@ class RealtimeSettings:
             ),
             deep_dive_summary_max_tokens=int(
                 deep.get("summary_max_tokens", d.deep_dive_summary_max_tokens)
+            ),
+            deep_dive_localize_max_tokens=int(
+                deep.get("localize_max_tokens", d.deep_dive_localize_max_tokens)
             ),
             stt_languages=tuple(_first_supported(rv.get("stt_candidates"))),
             tts_languages=tuple(_first_supported(rv.get("tts_candidates"))),
@@ -184,6 +246,68 @@ def _load_realtime_voice(config_dir: str | Path | None) -> dict[str, Any]:
     if not block:
         raise RuntimeError("No 'realtime_voice' block found in config")
     return block
+
+
+def concierge_router_config(config_dir: str | Path | None = None) -> ConciergeRouterConfig:
+    """Load + validate ``realtime_voice.concierge_router``.
+
+    Fails fast and loudly: a missing or malformed block is a startup error, never
+    a silent default. Routing the wrong caller to the wrong assistant is a bug
+    that a fallback table would hide.
+    """
+    rv = _load_realtime_voice(config_dir or config_dir_from_env())
+    block = rv.get("concierge_router")
+    if not block:
+        raise RuntimeError("realtime_voice.concierge_router is not configured")
+
+    languages = tuple(str(x).strip().lower() for x in (block.get("languages") or ()) if str(x).strip())
+    if not languages:
+        raise RuntimeError("realtime_voice.concierge_router.languages must list at least one language")
+
+    try:
+        max_words = int(block.get("max_selection_words"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "realtime_voice.concierge_router.max_selection_words must be an integer"
+        ) from exc
+    if max_words < 1:
+        raise RuntimeError("realtime_voice.concierge_router.max_selection_words must be >= 1")
+
+    industries: list[IndustryRoute] = []
+    for key, spec in (block.get("industries") or {}).items():
+        cues = tuple(str(c).strip().lower() for c in (spec or {}).get("cues") or () if str(c).strip())
+        confirm_label = str((spec or {}).get("confirm_label") or "").strip()
+        label = str((spec or {}).get("label") or "").strip()
+        missing = [
+            name
+            for name, value in (("cues", cues), ("confirm_label", confirm_label), ("label", label))
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                f"realtime_voice.concierge_router.industries.{key} is missing: {', '.join(missing)}"
+            )
+        industries.append(
+            IndustryRoute(key=str(key).strip().lower(), cues=cues, confirm_label=confirm_label, label=label)
+        )
+    if not industries:
+        raise RuntimeError("realtime_voice.concierge_router.industries must define at least one industry")
+
+    # A cue matching two destinations can never route (the ambiguity gate declines
+    # it), so an overlap is a silent dead cue rather than a visible error.
+    seen: dict[str, str] = {}
+    for route in industries:
+        for cue in route.cues:
+            if cue in seen:
+                raise RuntimeError(
+                    f"realtime_voice.concierge_router: cue {cue!r} is claimed by both "
+                    f"{seen[cue]!r} and {route.key!r}; it could never route either"
+                )
+            seen[cue] = route.key
+
+    return ConciergeRouterConfig(
+        languages=languages, max_selection_words=max_words, industries=tuple(industries)
+    )
 
 
 def databricks_profile(config_dir: str | Path | None = None) -> str | None:

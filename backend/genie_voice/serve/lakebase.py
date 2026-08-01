@@ -44,6 +44,15 @@ _LOCK = threading.Lock()
 _TRACE_LATENCY_COLUMNS = (
     "ttft_ms", "answer_ttft_ms", "tts_first_ms", "server_ttfb_ms", "server_gen_ms",
 )
+# Everything promoted out of the trace JSON after the table first shipped, with the
+# type to add it as. Migrated by ``_trace_columns`` and dropped from writes on a
+# table where the column is still absent, so a non-owner keeps tracing.
+# guard_roster: the per-turn guardrail ledger, so the Guardrails view can filter and
+# count without opening every trace document.
+_TRACE_MIGRATED_COLUMNS: dict[str, str] = {
+    **{column: "DOUBLE PRECISION" for column in _TRACE_LATENCY_COLUMNS},
+    "guard_roster": "JSONB",
+}
 _ISSUES_CACHE: dict[str, Any] = {"ts": 0.0, "value": None}
 _ISSUES_TTL_S = 60.0
 
@@ -589,6 +598,7 @@ class LakebaseServing:
                 server_ttfb_ms              DOUBLE PRECISION,
                 server_gen_ms               DOUBLE PRECISION,
                 total_ms                    DOUBLE PRECISION,
+                guard_roster                JSONB,
                 trace                       JSONB,
                 created_at                  TIMESTAMPTZ DEFAULT now()
             )
@@ -605,7 +615,7 @@ class LakebaseServing:
         self._traces_table_ready = True
 
     def _trace_columns(self) -> set[str]:
-        """Latency columns present on ``voice_traces``, migrating them in if absent.
+        """Promoted columns present on ``voice_traces``, migrating them in if absent.
 
         Runs on its OWN connection, never the caller's, because ALTER TABLE needs
         ownership: voice_traces is typically owned by whichever principal created
@@ -627,21 +637,21 @@ class LakebaseServing:
                     (self.settings.lakebase.schema_name,),
                 )
                 present = {str(r[0]) for r in cur.fetchall()}
-                missing = [c for c in _TRACE_LATENCY_COLUMNS if c not in present]
+                missing = [c for c in _TRACE_MIGRATED_COLUMNS if c not in present]
                 if missing:
                     tbl = self._table("voice_traces")
                     for column in missing:
                         try:
                             cur.execute(
-                                f"ALTER TABLE {tbl} "
-                                f"ADD COLUMN IF NOT EXISTS {column} DOUBLE PRECISION"
+                                f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS "
+                                f"{column} {_TRACE_MIGRATED_COLUMNS[column]}"
                             )
                             present.add(column)
                             added.append(column)
                         except Exception:  # noqa: BLE001 - not the table owner
                             logger.warning(
                                 "voice_traces is missing %s and this role cannot add it; "
-                                "latency stays readable in the trace JSON only", column,
+                                "the value stays readable in the trace JSON only", column,
                             )
                             break
         except Exception:  # noqa: BLE001 - never let schema probing break a write
@@ -652,7 +662,7 @@ class LakebaseServing:
         return present
 
     def migrate_voice_traces(self) -> list[str]:
-        """Create ``voice_traces`` if absent, add missing latency columns.
+        """Create ``voice_traces`` if absent, add missing promoted columns.
 
         Returns the columns this call added. Only the table's owner can add them,
         so for any other principal this is an informative no-op.
@@ -666,13 +676,13 @@ class LakebaseServing:
         return list(getattr(self, "_trace_columns_added", []))
 
     def _trace_write_columns(self, values: dict[str, Any]) -> list[str]:
-        """Column names to write/read, dropping latency columns not (yet) migrated.
+        """Column names to write/read, dropping promoted columns not (yet) migrated.
 
         Names come from a literal dict here, never from caller input, so they are
         safe to interpolate into SQL.
         """
         present = self._trace_columns()
-        return [c for c in values if c not in _TRACE_LATENCY_COLUMNS or c in present]
+        return [c for c in values if c not in _TRACE_MIGRATED_COLUMNS or c in present]
 
     def _trace_file(self) -> str:
         """Durable local store for traces when Lakebase is disabled (dev/offline).
@@ -749,6 +759,7 @@ class LakebaseServing:
             "server_ttfb_ms": trace.get("server_ttfb_ms"),
             "server_gen_ms": trace.get("server_gen_ms"),
             "total_ms": trace.get("total_ms"),
+            "guard_roster": json.dumps(trace.get("guard_roster") or []),
             "trace": json.dumps(trace),
         }
         with self._conn() as conn, conn.cursor() as cur:
@@ -797,14 +808,24 @@ class LakebaseServing:
             "language", "detected_language", "status", "input_transcript", "output_text",
             "tool_names", "apply_billing_action_called", "lookup_account_count",
             "llm_iterations", "ttft_ms", "answer_ttft_ms", "tts_first_ms",
-            "server_ttfb_ms", "server_gen_ms", "total_ms", "created_at",
+            "server_ttfb_ms", "server_gen_ms", "total_ms", "guard_roster", "created_at",
         ]
         with self._conn() as conn, conn.cursor() as cur:
             self._ensure_traces_table(cur)
             columns = self._trace_write_columns({c: None for c in selected})
+            # The guardrail roster lives in two places: its own promoted column
+            # where the table's owner could add it, and always inside the trace
+            # document. Only the owner can ALTER, so a developer's own role reads a
+            # table without the column — extract it from the JSON there rather than
+            # returning nothing and making the Guardrails view look empty.
+            projected = (
+                list(columns)
+                if "guard_roster" in columns
+                else [*columns, "trace -> 'guard_roster' AS guard_roster"]
+            )
             cur.execute(
                 f"""
-                SELECT {", ".join(columns)}
+                SELECT {", ".join(projected)}
                 FROM {tbl}
                 {where}
                 ORDER BY created_at DESC
@@ -843,7 +864,7 @@ class LakebaseServing:
             "language", "detected_language", "status", "input_transcript", "output_text",
             "tool_names", "apply_billing_action_called", "lookup_account_count",
             "llm_iterations", "ttft_ms", "answer_ttft_ms", "tts_first_ms",
-            "server_ttfb_ms", "server_gen_ms", "total_ms", "started_at",
+            "server_ttfb_ms", "server_gen_ms", "total_ms", "guard_roster", "started_at",
         )
         return {k: trace.get(k) for k in keys}
 

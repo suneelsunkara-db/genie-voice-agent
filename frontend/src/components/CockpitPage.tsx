@@ -134,6 +134,7 @@ export function CockpitPage({
             options={languageOptions}
             value={interactionLanguage}
             onChange={onLanguageChange}
+            languageDisabled
           />
         </header>
 

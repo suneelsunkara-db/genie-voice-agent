@@ -3,7 +3,6 @@ import { RealtimeVoiceSession, startRealtimeVoice } from "../lib/realtimeVoice";
 import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
 import { getMe } from "../lib/me";
 import {
-  DEFAULT_LANGUAGE,
   DEFAULT_LANGUAGE_OPTIONS,
   Lang,
   fetchSupportedLanguages,
@@ -13,6 +12,7 @@ import { BrandLockup } from "./BrandLockup";
 import { VoiceBackdrop } from "./VoiceBackdrop";
 import { VoiceOrb } from "./VoiceOrb";
 import { API_BASE_URL, WS_BASE_URL } from "../config";
+import { getAppLanguage } from "../lib/appLanguage";
 import "../styles/hls.css";
 
 /**
@@ -60,7 +60,8 @@ export function HlsPage() {
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [langOptions, setLangOptions] = useState<Lang[]>(DEFAULT_LANGUAGE_OPTIONS);
-  const [callLanguage, setCallLanguage] = useState<string>(DEFAULT_LANGUAGE);
+  // Seeded from the home-page choice; the picker here is locked (chosen once, on #/).
+  const [callLanguage, setCallLanguage] = useState<string>(() => getAppLanguage());
   const [caption, setCaption] = useState("");
   const [micLevel, setMicLevel] = useState(0);
   const [speakLevel, setSpeakLevel] = useState(0);
@@ -69,7 +70,7 @@ export function HlsPage() {
 
   const sessionRef = useRef<RealtimeVoiceSession | null>(null);
   const callIdRef = useRef<string>("");
-  const callLanguageRef = useRef<string>(DEFAULT_LANGUAGE);
+  const callLanguageRef = useRef<string>(getAppLanguage());
   const greetingRef = useRef<Map<string, string>>(new Map());
 
   const {
@@ -80,11 +81,24 @@ export function HlsPage() {
     handleResponseAudio,
     interimText,
     handleInterimTranscript,
+    switchLanguage,
     teardownPlayback,
   } = useHalfDuplexVoice({
     sessionRef,
     onMicResume: () => setAgentState("listening"),
     onSpeaking: () => setAgentState("speaking"),
+    callLanguageRef,
+    isCallLive: () => phase !== "idle",
+    closeSession: () => {
+      sessionRef.current?.close();
+      sessionRef.current = null;
+      setAgentState("greeting");
+      setPhase("connecting");
+    },
+    reopenSession: (nextLanguage) => openSession(nextLanguage),
+    // This page shows one rolling caption rather than a transcript, so the stale
+    // line to drop is just that.
+    clearConversation: () => setCaption(""),
   });
 
   useEffect(() => {
@@ -247,22 +261,17 @@ export function HlsPage() {
     async (code: string) => {
       if (code === callLanguageRef.current) return;
       setCallLanguage(code);
-      callLanguageRef.current = code;
-      if (phase === "idle") return;
-      gateMic();
-      sessionRef.current?.close();
-      sessionRef.current = null;
-      setAgentState("greeting");
-      setPhase("connecting");
+      // Mic gating / teardown / reopen ordering lives in the shared voice hook, so
+      // every use case moves a live call to a new language identically.
       try {
-        await openSession(code);
+        await switchLanguage(code);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setPhase("idle");
         setAgentState("idle");
       }
     },
-    [phase, gateMic, openSession]
+    [switchLanguage]
   );
 
   const endCall = useCallback(() => {
@@ -306,6 +315,7 @@ export function HlsPage() {
               value={callLanguage}
               options={langOptions}
               onChange={(c) => void changeLanguage(c)}
+              disabled
             />
           </div>
           {phase === "idle" ? (

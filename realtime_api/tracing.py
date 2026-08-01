@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable
 
+from .guardrails import GuardLedger
+
 logger = logging.getLogger("realtime_voice")
 
 # Cap very large tool results / message payloads so a single trace row stays
@@ -147,6 +149,10 @@ class TurnTrace:
         self.server_gen_ms: float | None = None  # full synthesis time on the endpoint
         self._spans: list[Span] = []
         self._lock = threading.Lock()
+        # Every guardrail check on this turn, including the ones that found nothing
+        # and the ones we deliberately delegate to Qwen. Spans are only added for
+        # checks that FIRED, so the roster doesn't bloat the waterfall.
+        self.guards = GuardLedger()
 
     def _now_ms(self) -> float:
         return (time.perf_counter() - self._t0) * 1000.0
@@ -229,6 +235,8 @@ class TurnTrace:
             "server_ttfb_ms": self.server_ttfb_ms,
             "server_gen_ms": self.server_gen_ms,
             "total_ms": round(self._now_ms(), 2),
+            "guard_roster": self.guards.to_list(),
+            "guard_summary": self.guards.summary(),
             "spans": spans,
         }
 

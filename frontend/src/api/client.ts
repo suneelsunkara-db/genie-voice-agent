@@ -404,8 +404,64 @@ export interface TraceSummary {
   server_gen_ms?: number | null;
   /** Whole turn including how long the agent then spoke — not perceived latency. */
   total_ms?: number | null;
+  /** Every guardrail check on the turn, including the ones that found nothing. */
+  guard_roster?: GuardEntry[] | null;
   started_at?: string;
   created_at?: string;
+}
+
+/**
+ * One guardrail check on one turn.
+ *
+ * `passed` and `delegated` rows are the point, not filler: a view built only on
+ * incidents shows an empty list and can't tell a healthy turn from an unchecked
+ * one. `surface` is what the Guardrails view filters on — turn-integrity
+ * mechanics (empty transcript, stale turn) are `internal`, so a mechanic added
+ * later never has to be remembered in a frontend denylist.
+ */
+export interface GuardEntry {
+  guard_id: string;
+  /** execution = permits/modifies/blocks content; decision = chooses an action. */
+  seam?: "execution" | "decision";
+  stage?: "stt" | "input_transcript" | "routing" | "observer_async" | "pre_tts" | "turn";
+  surface?: "guardrail" | "internal";
+  /** "qwen" for checks the ASR model owns for us. */
+  owner?: "us" | "qwen";
+  outcome: "passed" | "fired" | "delegated" | "not_evaluated" | "disabled" | "error";
+  latency_ms?: number;
+  reason?: string | null;
+}
+
+export interface GuardRollupGuard {
+  guard_id: string;
+  seam?: string | null;
+  stage?: string | null;
+  owner?: string | null;
+  runs: number;
+  outcomes: Record<string, number>;
+  last_reason?: string | null;
+}
+
+export interface GuardFiredRow {
+  trace_id: string;
+  session_id?: string | null;
+  turn_id?: number | null;
+  language?: string | null;
+  created_at?: string | null;
+  guard_id: string;
+  stage?: string | null;
+  reason?: string | null;
+}
+
+export interface GuardRollup {
+  turns: number;
+  turns_with_roster: number;
+  checks: number;
+  checks_per_turn: number;
+  totals: Record<string, number>;
+  guards: GuardRollupGuard[];
+  by_language: Record<string, Record<string, number>>;
+  recent_fired: GuardFiredRow[];
 }
 
 export interface TraceDetail extends TraceSummary {
@@ -600,6 +656,7 @@ export const api = {
   voiceTraceSessions: (limit = 200) =>
     getJSON<{ sessions: TraceSessionRollup[]; count: number }>(`/traces/sessions?limit=${limit}`),
   voiceTrace: (traceId: string) => getJSON<TraceDetail>(`/traces/${encodeURIComponent(traceId)}`),
+  guardRollup: (limit = 200) => getJSON<GuardRollup>(`/traces/guardrails?limit=${limit}`),
   voiceBenchmarks: () => getJSON<VoiceBenchmarksResponse>("/realtime/v1/benchmarks"),
   zhAsrComparisons: (callId?: string, limit = 10) => {
     const params = new URLSearchParams();

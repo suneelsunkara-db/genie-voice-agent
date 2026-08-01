@@ -29,6 +29,7 @@ from genie_voice.assist.genie_facts import (
 from genie_voice.assist.resolution import (
     evaluate_resolution,
     finalize_resolution_after_billing,
+    note_text,
     resolution_event_for_transition,
 )
 from genie_voice.assist.reply_plan import (
@@ -248,7 +249,12 @@ def _account_context_snippet(
         f"issue_status: {summary.get('issue_status')}",
     ]
     if summary.get("resolution_note"):
-        lines.append(f"resolution_note: {summary.get('resolution_note')}")
+        # Notes are stored as canonical codes for the localized UI; the model gets
+        # the English prose so its context reads the same as before.
+        lines.append(
+            "resolution_note: "
+            + note_text(summary.get("resolution_note"), status=summary.get("issue_status"))
+        )
     if metrics_validation:
         lines.append(f"genie_facts_validated: {metrics_validation.get('genie_validated')}")
         mismatches = metrics_validation.get("mismatches") or []

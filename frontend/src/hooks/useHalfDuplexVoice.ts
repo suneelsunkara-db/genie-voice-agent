@@ -10,9 +10,12 @@ import {
  * Shared half-duplex voice plumbing for every voice page (billing cockpit + card
  * assistant). Encapsulates the ONE pattern both pages implemented independently:
  *
- *   - an {@link AudioPlaybackQueue} for gapless agent-audio playback, and
+ *   - an {@link AudioPlaybackQueue} for gapless agent-audio playback,
  *   - a single mic "gate" so the agent's own TTS from the speakers never loops
- *     back into the mic and gets re-transcribed as a phantom customer turn.
+ *     back into the mic and gets re-transcribed as a phantom customer turn, and
+ *   - mid-call language switching, which has to reopen the session: the language
+ *     rides the session.start payload, so changing a picker cannot move a call
+ *     that is already connected.
  *
  * The mic is closed while the agent speaks and re-opened once the queued audio
  * drains (plus a short tail so the speaker's decay doesn't leak into the first
@@ -35,6 +38,26 @@ export interface UseHalfDuplexVoiceOptions {
   onSpeaking?: () => void;
   /** Called once when the final chunk of a response arrives. */
   onFinal?: () => void;
+  /** Ref holding the language the LIVE session is running in. {@link HalfDuplexVoice.switchLanguage}
+   *  updates it before reopening, so page code (greeting fetch, synthesize calls)
+   *  always reads the language the session actually has rather than a stale prop. */
+  callLanguageRef?: MutableRefObject<string>;
+  /** True while a call is live. When idle, picking a language only records it —
+   *  there is no session to reopen. */
+  isCallLive?: () => boolean;
+  /** Close the live session AND clear the page's session refs/flags, so the
+   *  following {@link UseHalfDuplexVoiceOptions.reopenSession} isn't rejected by a
+   *  "already in a call" guard. */
+  closeSession?: () => void;
+  /** Open a fresh session in `language`; the page supplies its own callbacks. */
+  reopenSession?: (language: string) => Promise<void>;
+  /** Drop the on-screen conversation before reopening.
+   *
+   *  A language switch restarts the call and the agent re-greets in the new
+   *  language, so anything already on screen was spoken in the language the
+   *  caller just left. Leaving it there reads as a bug — an English opener
+   *  sitting above a Hindi greeting looks like the switch only half worked. */
+  clearConversation?: () => void;
 }
 
 export interface HalfDuplexVoice {
@@ -55,6 +78,9 @@ export interface HalfDuplexVoice {
   handleInterimTranscript: (text: string) => void;
   /** Barge-in: stop playback immediately and re-open the mic now. */
   interrupt: () => void;
+  /** Move a call to `language`. Pre-call this just records the choice; mid-call it
+   *  reopens the session, because the language is negotiated once at session.start. */
+  switchLanguage: (language: string) => Promise<void>;
   /** Clear timers, flush + close the playback queue (call on End/unmount). */
   teardownPlayback: () => void;
 }
@@ -128,6 +154,36 @@ export function useHalfDuplexVoice(options: UseHalfDuplexVoiceOptions): HalfDupl
     optsRef.current.onMicResume?.();
   }, [clearResumeTimer]);
 
+  // Serializes restarts: a caller clicking through three languages must not leave
+  // three sessions racing to open, with the last one to connect deciding the call.
+  const switchingRef = useRef(false);
+
+  const switchLanguage = useCallback(async (language: string) => {
+    const o = optsRef.current;
+    if (!language || language === o.callLanguageRef?.current) return;
+    if (o.callLanguageRef) o.callLanguageRef.current = language;
+    // Pre-call the picker only records a choice — the language is sent in the
+    // session.start payload, so there is nothing live to move yet.
+    if (!o.isCallLive?.()) return;
+    if (switchingRef.current) return;
+    switchingRef.current = true;
+    try {
+      // Silence the old session first: its queued audio is in the previous
+      // language, and an open mic during the swap would be transcribed against a
+      // session that is about to disappear.
+      gateMic();
+      playbackRef.current?.flush();
+      o.closeSession?.();
+      // Before the re-greet, not after: the new greeting must not land underneath
+      // turns from the old language, and clearing after it arrives would wipe it.
+      setInterimText("");
+      o.clearConversation?.();
+      await o.reopenSession?.(language);
+    } finally {
+      switchingRef.current = false;
+    }
+  }, [gateMic]);
+
   const teardownPlayback = useCallback(() => {
     clearResumeTimer();
     micGatedRef.current = false;
@@ -147,6 +203,7 @@ export function useHalfDuplexVoice(options: UseHalfDuplexVoiceOptions): HalfDupl
     interimText,
     handleInterimTranscript,
     interrupt,
+    switchLanguage,
     teardownPlayback,
   };
 }

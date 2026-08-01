@@ -21,7 +21,8 @@ import {
   WaterfallStep,
 } from "../lib/cardAnalytics";
 import { API_BASE_URL, WS_BASE_URL } from "../config";
-import { languageLabel } from "../i18n";
+import { getAppLanguage } from "../lib/appLanguage";
+import { languageLabel, uiCopy, useUiLocale, type UiCopy } from "../i18n";
 import "../styles/card.css";
 
 /**
@@ -52,6 +53,10 @@ const DEEP_AGENT_NAME = "Genie Deep Reasoning Agent";
 // it is set above the server default (420s) for the same reason.
 const DEEP_DIVE_FALLBACK_TIMEOUT_MS = 435_000;
 const DEEP_DIVE_WATCHDOG_BUFFER_MS = 15_000;
+// How long to hold the stream open after the report for the translated text. A
+// measured Hindi swap landed 20s after the spoken summary, so this is a leak guard
+// with margin, not a budget: if it never lands, the English report simply stays.
+const DEEP_DIVE_LOCALIZE_GRACE_MS = 90_000;
 const BRAND = "EveryCard";
 
 // The caller picks the call language. We pin it as the EXPECTED language (same
@@ -116,7 +121,12 @@ const USE_CASES: Record<string, { label: string; tagline: string; icon: string }
 };
 
 // The 4-stage deep-dive pipeline (mirrors how Genie Agent Mode actually works).
-const PIPELINE_STAGES = ["Plan", "Query", "Compute", "Explain"] as const;
+const pipelineStages = (copy: UiCopy): string[] => [
+  copy.deepStagePlan,
+  copy.deepStageQuery,
+  copy.deepStageCompute,
+  copy.deepStageExplain,
+];
 
 type CardProfile = {
   cardholder: Record<string, unknown> | null;
@@ -131,7 +141,10 @@ type GenieFact = { id: number; question: string | null; answer: string; rows?: u
 
 type Investigation = {
   id: string;
+  /** What Genie was asked (English, built by the LLM so the SQL planning is sound). */
   question: string;
+  /** What the CALLER said, in their own words — this is what the panel shows. */
+  spokenQuestion: string | null;
   useCase: string | null;
   status: "running" | "done" | "error";
   startedAt: number;
@@ -189,10 +202,16 @@ export function CardIssuerPage() {
   const [investigations, setInvestigations] = useState<Map<string, Investigation>>(new Map());
   const [langMismatch, setLangMismatch] = useState<{ expected: string; detected: string } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [callLanguage, setCallLanguage] = useState<string>(DEFAULT_LANGUAGE);
+  // Seeded from the home-page choice so the greeting opens in the right language;
+  // the picker here is locked (language is chosen once, on #/).
+  const [callLanguage, setCallLanguage] = useState<string>(() => getAppLanguage());
   // Full end-to-end supported set from the backend (config-driven, ~24), not a
   // hardcoded subset. Shows only the English baseline until the fetch resolves.
   const [langOptions, setLangOptions] = useState<Lang[]>(DEFAULT_LANGUAGE_OPTIONS);
+  // This page owns its own call language (App's cockpit language is separate), so
+  // it loads its own locale bundle; every uiCopy(callLanguage) below then renders
+  // translated chrome once it arrives.
+  useUiLocale(callLanguage);
 
   const sessionRef = useRef<RealtimeVoiceSession | null>(null);
   const turnKeyRef = useRef(0);
@@ -204,11 +223,14 @@ export function CardIssuerPage() {
   // Stable call id (so a mid-call language restart keeps the same traced call) and
   // the live call language, both read from inside session callbacks.
   const callIdRef = useRef<string | null>(null);
-  const callLanguageRef = useRef<string>(DEFAULT_LANGUAGE);
+  const callLanguageRef = useRef<string>(getAppLanguage());
   // Count of in-flight Agent-Mode deep dives. While > 0 the mic stays CLOSED for
   // the whole investigation window (tens of seconds) so speaker audio / ambient
   // noise can't create phantom turns that surface as "random" TTS afterward.
   const runningDeepDivesRef = useRef(0);
+  // The caller's most recent sentence, read from inside session callbacks so a deep
+  // dive can echo what they actually asked.
+  const lastCustomerTextRef = useRef<string>("");
   // Opening greeting text, generated in-language by the backend (no hardcoded
   // per-language table). Cached per base-language so a mid-call language restart
   // reuses it and the open is never blocked on a second round-trip.
@@ -227,12 +249,32 @@ export function CardIssuerPage() {
     interimText,
     handleInterimTranscript,
     interrupt,
+    switchLanguage,
     teardownPlayback,
   } = useHalfDuplexVoice({
     sessionRef,
     shouldStayGated: () => runningDeepDivesRef.current > 0,
     onMicResume: () => setAgentState("listening"),
     onSpeaking: () => setAgentState("speaking"),
+    callLanguageRef,
+    isCallLive: () => phase !== "idle",
+    closeSession: () => {
+      // Abandon in-flight Agent-Mode runs: their reports would arrive in the
+      // language we just left, and their cancels belong to the old session.
+      deepDiveCancelsRef.current.forEach((c) => c());
+      deepDiveCancelsRef.current.clear();
+      runningDeepDivesRef.current = 0;
+      sessionRef.current?.close();
+      sessionRef.current = null;
+      setSessionId(null);
+      setAgentState("greeting");
+      setPhase("connecting");
+    },
+    reopenSession: (nextLanguage) => openSession(nextLanguage),
+    // The transcript only. The 360 canvas is data with catalog-localized labels,
+    // so it re-renders in the new language on its own; investigations already
+    // completed are left alone rather than silently deleted.
+    clearConversation: () => setTurns([]),
   });
 
   useEffect(() => {
@@ -336,6 +378,10 @@ export function CardIssuerPage() {
       let stepKey = 0;
       const newInv: Investigation = {
         id, question, useCase,
+        // Echo the caller's own sentence rather than the English question the LLM
+        // wrote for Genie, which on a non-English call is the one line in the panel
+        // they didn't say and can't read.
+        spokenQuestion: lastCustomerTextRef.current || null,
         status: "running", startedAt: Date.now(), elapsed: 0, steps: [],
       };
       setInvestigations((prev) => new Map(prev).set(id, newInv));
@@ -350,12 +396,24 @@ export function CardIssuerPage() {
       let settled = false;
       let cancel = () => {};
       let watchdog = 0;
-      const settle = (spoken: string | null) => {
-        if (settled) return;
-        settled = true;
+      const closeStream = () => {
         window.clearTimeout(watchdog);
         cancel();
         deepDiveCancelsRef.current.delete(cancel);
+      };
+      // `keepStream` settles the VOICE while leaving the stream open for the
+      // translated report, which lands a few seconds after the spoken summary.
+      const settle = (spoken: string | null, keepStream = false) => {
+        if (settled) return;
+        settled = true;
+        if (keepStream) {
+          // Nothing else can rescue this dive now, so bound the extra wait rather
+          // than leaking an EventSource if the swap event never comes.
+          window.clearTimeout(watchdog);
+          watchdog = window.setTimeout(closeStream, DEEP_DIVE_LOCALIZE_GRACE_MS);
+        } else {
+          closeStream();
+        }
         runningDeepDivesRef.current = Math.max(0, runningDeepDivesRef.current - 1);
         // speakViaTTS re-opens the mic when it finishes (and only if no other deep
         // dive is still running); if there's nothing to speak, re-open directly.
@@ -410,7 +468,25 @@ export function CardIssuerPage() {
           // The spoken "why" is the backend LLM summary ONLY — it names the cause
           // in the caller's language. If it's unavailable we stay silent (the full
           // report is on screen) rather than speak an English-only heuristic.
-          settle(report.spokenSummary || null);
+          settle(report.spokenSummary || null, report.localizationPending);
+        },
+        // The report re-rendered in the caller's language: swap the text in place
+        // (the caller is already hearing the spoken summary by now).
+        onReportLocalized: (text) => {
+          if (text.trim()) {
+            setInvestigations((prev) => {
+              const m = new Map(prev);
+              const inv = m.get(id);
+              if (inv?.report) {
+                m.set(id, {
+                  ...inv,
+                  report: { ...inv.report, report: text, localizationPending: false },
+                });
+              }
+              return m;
+            });
+          }
+          closeStream();
         },
         onError: (message) => {
           if (settled) return;
@@ -494,7 +570,10 @@ export function CardIssuerPage() {
         onTranscript: (text, _language, turnId) => {
           // A valid (on-language) transcript arrived — clear any prior warning.
           setLangMismatch(null);
-          if (text.trim()) pushTurn("customer", text, turnId);
+          if (text.trim()) {
+            lastCustomerTextRef.current = text.trim();
+            pushTurn("customer", text, turnId);
+          }
         },
         onResponseText: (text, turnId) => {
           if (text.trim()) pushTurn("agent", text, turnId);
@@ -611,27 +690,16 @@ export function CardIssuerPage() {
   const changeLanguage = useCallback(async (code: string) => {
     if (code === callLanguageRef.current) return;
     setCallLanguage(code);
-    callLanguageRef.current = code;
     setLangMismatch(null);
-    if (phase === "idle") return;
-    // Close the mic + cancel any pending resume on the old session before we tear
-    // it down and reopen in the new language.
-    gateMic();
-    deepDiveCancelsRef.current.forEach((c) => c());
-    deepDiveCancelsRef.current.clear();
-    runningDeepDivesRef.current = 0;
-    sessionRef.current?.close();
-    sessionRef.current = null;
-    setSessionId(null);
-    setAgentState("greeting");
-    setPhase("connecting");
+    // The framework owns the mic gating, teardown and reopen ordering (shared with
+    // the billing cockpit) so both pages move a live call the same way.
     try {
-      await openSession(code);
+      await switchLanguage(code);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("idle");
     }
-  }, [phase, openSession, gateMic]);
+  }, [switchLanguage]);
 
   return (
     <div className="card-page">
@@ -674,12 +742,13 @@ export function CardIssuerPage() {
 
 /* Language picker — pre-call sets the language; in-call it restarts the session. */
 function LanguagePicker({
-  value, options, onChange, label,
+  value, options, onChange, label, disabled,
 }: {
   value: string;
   options: Lang[];
   onChange: (code: string) => void;
   label?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className="card-langpick">
@@ -691,6 +760,7 @@ function LanguagePicker({
       <select
         className="card-langpick-select"
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       >
         {options.map((l) => (
@@ -778,7 +848,7 @@ function LiveCall({
         </div>
 
         <div className="card-railtools">
-          <LanguagePicker value={callLanguage} options={langOptions} onChange={onLanguage} />
+          <LanguagePicker value={callLanguage} options={langOptions} onChange={onLanguage} disabled />
         </div>
 
         <div className="card-orbwrap">
@@ -895,6 +965,7 @@ function LiveCall({
           genieFacts={genieFacts}
           profile={profile}
           investigations={investigations}
+          language={callLanguage}
         />
       </main>
     </div>
@@ -905,7 +976,7 @@ function LiveCall({
 /* Analytics canvas                                                            */
 /* --------------------------------------------------------------------------- */
 function AnalyticsCanvas({
-  persona, selectedUseCase, facts, genieFacts, profile, investigations,
+  persona, selectedUseCase, facts, genieFacts, profile, investigations, language,
 }: {
   persona: Persona;
   selectedUseCase: string | null;
@@ -913,7 +984,9 @@ function AnalyticsCanvas({
   genieFacts: GenieFact[];
   profile: CardProfile | null;
   investigations: Map<string, Investigation>;
+  language: string;
 }) {
+  const copy = uiCopy(language);
   const summary = ((facts?.summary as Record<string, unknown>) ?? profile?.summary ?? {}) as Record<string, unknown>;
   const invItems = [...investigations.values()].sort((a, b) => b.startedAt - a.startedAt);
 
@@ -952,7 +1025,13 @@ function AnalyticsCanvas({
       {showSpike && spike && <SpikeWaterfall data={spike} />}
       {showRewards && rewards && <RewardsWaterfall data={rewards} pointsBalance={summary.points_balance} />}
 
-      {invItems.length > 0 && <DeepDivePipeline items={invItems} />}
+      {invItems.length > 0 && (
+        <DeepDivePipeline
+          items={invItems}
+          copy={copy}
+          showAgentProse={langBase(language) === "en"}
+        />
+      )}
 
       {genieFacts.length > 0 && <GenieFastTicker facts={genieFacts} />}
     </div>
@@ -1280,7 +1359,15 @@ function stageOf(inv: Investigation): number {
   return 0;
 }
 
-function DeepDivePipeline({ items }: { items: Investigation[] }) {
+function DeepDivePipeline({
+  items,
+  copy,
+  showAgentProse,
+}: {
+  items: Investigation[];
+  copy: UiCopy;
+  showAgentProse: boolean;
+}) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!items.some((i) => i.status === "running")) return;
@@ -1295,17 +1382,36 @@ function DeepDivePipeline({ items }: { items: Investigation[] }) {
         <span className="card-panel-badge is-deep">Genie · Agent Mode</span>
       </div>
       {items.map((inv) => (
-        <InvestigationCard key={inv.id} inv={inv} now={now} />
+        <InvestigationCard
+          key={inv.id}
+          inv={inv}
+          now={now}
+          copy={copy}
+          showAgentProse={showAgentProse}
+        />
       ))}
     </section>
   );
 }
 
-function InvestigationCard({ inv, now }: { inv: Investigation; now: number }) {
+function InvestigationCard({
+  inv,
+  now,
+  copy,
+  showAgentProse,
+}: {
+  inv: Investigation;
+  now: number;
+  copy: UiCopy;
+  showAgentProse: boolean;
+}) {
   const elapsed = inv.status === "running" ? now - inv.startedAt : inv.elapsed;
   const stage = stageOf(inv);
   // Show Genie's natural-language REASONING (business language), not raw SQL.
   // The SQL is provenance — it lives in the report's opt-in "Show the data" drawer.
+  // Genie reasons in English; on a non-English call its raw text would be the one
+  // thing in the panel the caller can't read, so we narrate the stage instead and
+  // let the pacing (one line per real step) carry the progress.
   const reasoningSteps = inv.steps.filter((s) => s.kind === "reasoning").slice(-4);
   const queryCount = inv.steps.filter((s) => s.kind === "sql").length;
   const lastIsQuery = inv.steps.length > 0 && inv.steps[inv.steps.length - 1].kind === "sql";
@@ -1314,12 +1420,14 @@ function InvestigationCard({ inv, now }: { inv: Investigation; now: number }) {
     <div className={`card-inv card-inv-${inv.status}`}>
       <div className="card-inv-header">
         <span className={`card-inv-dot card-inv-dot-${inv.status}`} />
-        <span className="card-inv-q">“{inv.question.replace(/^For cardholder [^:]+:\s*/i, "")}”</span>
+        <span className="card-inv-q">
+          “{inv.spokenQuestion ?? inv.question.replace(/^For cardholder [^:]+:\s*/i, "")}”
+        </span>
         <span className="card-inv-time">{Math.round(elapsed / 1000)}s</span>
       </div>
 
       <div className="card-pipeline">
-        {PIPELINE_STAGES.map((label, i) => {
+        {pipelineStages(copy).map((label, i) => {
           const state = inv.status === "error"
             ? (i <= stage ? "error" : "todo")
             : i < stage || inv.status === "done"
@@ -1343,52 +1451,55 @@ function InvestigationCard({ inv, now }: { inv: Investigation; now: number }) {
               {reasoningSteps.map((s) => (
                 <li key={s.key} className="card-step card-step-reasoning card-fade-in">
                   <span className="card-step-icon">✦</span>
-                  <span className="card-step-text">{s.text}</span>
+                  <span className="card-step-text">
+                    {showAgentProse ? s.text : copy.deepReasoningStep}
+                  </span>
                 </li>
               ))}
               {queryCount > 0 && (
                 <li className="card-step card-step-query">
                   <span className="card-step-icon">▤</span>
                   <span className="card-step-text">
-                    {lastIsQuery
-                      ? "Querying your accounts…"
-                      : `Pulled your data across ${queryCount} ${queryCount === 1 ? "query" : "queries"}`}
+                    {lastIsQuery ? copy.deepQuerying : copy.deepPulledQueries(String(queryCount))}
                   </span>
                 </li>
               )}
             </ol>
           ) : (
-            <div className="card-inv-hint">Deep analysis typically takes 30–60s…</div>
+            <div className="card-inv-hint">{copy.deepHint}</div>
           )}
           <div className="card-step card-step-live">
-            <span className="card-dots">{DEEP_AGENT_NAME} is working<i /><i /><i /></span>
+            <span className="card-dots">{copy.deepWorking(DEEP_AGENT_NAME)}<i /><i /><i /></span>
           </div>
         </div>
       )}
 
-      {inv.status === "done" && inv.report && <DeepDiveReportView report={inv.report} />}
+      {inv.status === "done" && inv.report && <DeepDiveReportView report={inv.report} copy={copy} />}
       {inv.status === "error" && (
-        <div className="card-inv-error">Couldn’t complete the deep dive: {inv.errorMessage}</div>
+        <div className="card-inv-error">{copy.deepFailed(inv.errorMessage ?? "")}</div>
       )}
     </div>
   );
 }
 
-function DeepDiveReportView({ report }: { report: DeepDiveReport }) {
+function DeepDiveReportView({ report, copy }: { report: DeepDiveReport; copy: UiCopy }) {
   const tables = useMemo(() => report.tables ?? [], [report.tables]);
   return (
     <div className="card-report card-fade-in">
       {report.report ? (
         <p className="card-report-text">{report.report}</p>
       ) : (
-        <p className="card-inv-hint">No summary returned (status: {report.status}).</p>
+        <p className="card-inv-hint">{copy.deepNoSummary(report.status)}</p>
       )}
+      {/* The text above is the agent's English until the translation lands, which
+          would otherwise look like the panel changing its mind. */}
+      {report.localizationPending && <p className="card-inv-hint">{copy.deepTranslating}</p>}
       {tables.map((tbl, i) => (
         <ReportTable key={i} table={tbl} />
       ))}
       {report.sql?.length > 0 && (
         <details className="card-report-sql">
-          <summary>Show the data ({report.sql.length} {report.sql.length === 1 ? "query" : "queries"})</summary>
+          <summary>{copy.deepShowData(String(report.sql.length))}</summary>
           {report.sql.map((q, i) => (
             <pre key={i}>{q}</pre>
           ))}

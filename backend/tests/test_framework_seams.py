@@ -35,6 +35,7 @@ def test_realtime_settings_honors_config_overrides(tmp_path):
         """
 realtime_voice:
   llm_endpoint: dummy_llm
+  conversion_endpoint: dummy_convert
   stt_candidates:
     a: { endpoint: dummy_stt, supported_languages: [en, es, fr] }
   tts_candidates:
@@ -67,6 +68,9 @@ realtime_voice:
     assert s.llm_turn_timeout_s == 44.0
     assert s.deep_dive_summary_temperature == 0.9
     assert s.deep_dive_summary_max_tokens == 42
+    # Runtime text->text conversion model is split from the voice-turn llm_endpoint.
+    assert s.conversion_endpoint == "dummy_convert"
+    assert s.llm_endpoint == "dummy_llm"
     # Supported languages = STT ∩ TTS (fr is STT-only, so excluded).
     assert set(s.supported_languages) == {"en", "es"}
 
