@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import queue
 from functools import lru_cache
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 # Capability label for the deep-dive trace (distinguishes it from voice turns).
 DEEPDIVE_CAPABILITY = "genie-agent-mode-deepdive"
@@ -116,13 +116,30 @@ def summarize_deepdive(question: str, report_text: str, language: str | None) ->
         "Output ONLY the spoken sentences."
     )
     user = f"Customer asked: {question}\n\nAnalysis to summarize:\n{text[:6000]}"
-    temperature, max_tokens, _ = _summary_knobs()
+    _, max_tokens, _ = _summary_knobs()
+    # Temperature is intentionally omitted: the conversion endpoint (e.g. gpt-5-5)
+    # accepts only its default and 400s on any explicit value; the model default is
+    # fine for a short spoken summary.
     return shared_serving().summarize(
         system=system,
         user=user,
-        temperature=temperature,
         max_tokens=max_tokens,
         endpoint=_conversion_endpoint(),
+    )
+
+
+def _localize_system(language: str | None) -> str:
+    """The translator system prompt, shared by the one-shot and streaming paths so
+    both produce an identically-constrained translation (only the delivery differs).
+    """
+    name = language_name(language)
+    return (
+        f"You are a professional financial translator. Translate the user's report into {name}. "
+        "Rules: keep the markdown structure exactly as-is (headings, bold, bullet lists, "
+        "tables); keep every number, currency amount, date, merchant name and citation "
+        "marker such as [[1]] unchanged; translate the surrounding prose and any table "
+        "headers. Do not summarize, do not add commentary, do not answer the report. "
+        f"Output ONLY the translated report in {name}."
     )
 
 
@@ -141,26 +158,67 @@ def localize_report(report_text: str, language: str | None) -> str:
         return ""
     from .serving_factory import shared_serving
 
-    name = language_name(language)
-    system = (
-        f"You are a professional financial translator. Translate the user's report into {name}. "
-        "Rules: keep the markdown structure exactly as-is (headings, bold, bullet lists, "
-        "tables); keep every number, currency amount, date, merchant name and citation "
-        "marker such as [[1]] unchanged; translate the surrounding prose and any table "
-        "headers. Do not summarize, do not add commentary, do not answer the report. "
-        f"Output ONLY the translated report in {name}."
-    )
-    temperature, _, max_tokens = _summary_knobs()
+    _, _, max_tokens = _summary_knobs()
     try:
         return shared_serving().summarize(
-            system=system,
+            system=_localize_system(language),
             user=text[:8000],
-            temperature=temperature,
             max_tokens=max_tokens,
             endpoint=_conversion_endpoint(),
         ).strip()
     except Exception:  # noqa: BLE001 — an English report beats a blank panel
         return ""
+
+
+def localize_report_stream(report_text: str, language: str | None) -> "Iterator[str]":
+    """Stream the report translation as text deltas so the on-screen "why" paints
+    progressively in the caller's language — never a flash of English, never a wait
+    for the whole thing.
+
+    Prefers the serving's streaming completion; if the conversion endpoint does not
+    support streaming (or the stream errors before any text), it falls back to the
+    one-shot :func:`localize_report` and yields the whole translation as a single
+    chunk. Yields nothing for English or when there is nothing to translate — the
+    caller then keeps the English report standing.
+    """
+    text = (report_text or "").strip()
+    if not text or is_english(language):
+        return
+    _, _, max_tokens = _summary_knobs()
+    system = _localize_system(language)
+
+    stream_fn = None
+    try:
+        from .serving_factory import shared_serving
+
+        stream_fn = getattr(shared_serving(), "summarize_stream", None)
+    except Exception:  # noqa: BLE001 — fall through to the one-shot below
+        stream_fn = None
+
+    if callable(stream_fn):
+        produced = False
+        try:
+            # Temperature omitted on purpose (see summarize_deepdive): the conversion
+            # endpoint only accepts its default.
+            for piece in stream_fn(
+                system=system,
+                user=text[:8000],
+                max_tokens=max_tokens,
+                endpoint=_conversion_endpoint(),
+            ):
+                if piece:
+                    produced = True
+                    yield piece
+        except Exception:  # noqa: BLE001 — a partial stream still beats a blank
+            if produced:
+                return
+        if produced:
+            return
+
+    # No streaming (or it yielded nothing): one-shot translate and emit as one chunk.
+    full = localize_report(text, language)
+    if full:
+        yield full
 
 
 def stream_report_renderings(
@@ -169,47 +227,63 @@ def stream_report_renderings(
     language: str | None,
     emit: Callable[[dict[str, Any]], None],
 ) -> None:
-    """Emit the finished report in two beats so the VOICE never waits on translation.
+    """Render the finished report for the caller: a spoken "why" plus the on-screen
+    report, in the caller's language, without a flash of English and without making
+    the customer wait.
 
-    The customer is already 30-60s into the investigation, so the moment the short
-    spoken "why" exists we hand it over — with the agent's English report, which is
-    what we have — and the caller starts hearing the answer. The translation runs
-    concurrently and arrives as a second ``report_localized`` event that replaces the
-    on-screen text in place. ``localization_pending`` tells the client a swap is
-    coming so it can say so instead of appearing to change its mind.
+    English (or empty) report: one ``report`` event carries the text as-is and the
+    spoken line — nothing to translate, no swap promised.
 
-    Both renderings are best-effort and independent: a failed translation leaves the
-    English report standing, a failed summary leaves the report without a spoken
-    line, and neither can block the other.
+    Non-English: the customer is already 30-60s in, so we release the short spoken
+    "why" immediately (they HEAR the answer now, in their language), and the report
+    panel opens EMPTY with ``localization_pending`` — never the English text. The
+    translation is then STREAMED into the panel as ``report_localized_delta`` events
+    so the caller reads their own language from the first token, and a terminal
+    ``report_localized`` carries the full text and clears the pending flag. If the
+    translation produces nothing (endpoint down / not granted), that terminal event
+    falls back to the English report so the panel is readable rather than blank or
+    stuck on "translating…".
     """
-    from concurrent.futures import Future, ThreadPoolExecutor
-
-    def _settled(f: "Future[str]") -> str:
-        try:
-            return f.result() or ""
-        except Exception:  # noqa: BLE001
-            return ""
-
     english = str(ev.get("report") or "")
     pending = bool(english) and not is_english(language)
-    # One worker: the translation runs in it while the summary runs on this thread.
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="deepdive-i18n") as pool:
-        localized: "Future[str] | None" = (
-            pool.submit(localize_report, english, language) if pending else None
-        )
-        try:
-            spoken = summarize_deepdive(question, english, language)
-        except Exception:  # noqa: BLE001 — the client falls back to reading nothing aloud
-            spoken = ""
 
-        first = {**ev, "report_language": "en", "localization_pending": pending}
+    # The spoken line is what keeps the conversation moving; compute it first so it
+    # ships on the very first event. Best-effort — silence beats a wrong language.
+    try:
+        spoken = summarize_deepdive(question, english, language)
+    except Exception:  # noqa: BLE001 — the client falls back to reading nothing aloud
+        spoken = ""
+
+    if not pending:
+        first = {**ev, "report_language": "en", "localization_pending": False}
         if spoken:
             first["spoken_summary"] = spoken
         emit(first)
+        return
 
-        text = _settled(localized) if localized is not None else ""
-        if text:
-            emit({"kind": "report_localized", "report": text, "report_language": language})
+    # Non-English: announce the report SHELL with an empty body (tables/SQL/reasoning
+    # still ride along) so the client shows a localizing panel — not English.
+    shell = {**ev, "report": "", "report_language": language, "localization_pending": True}
+    if spoken:
+        shell["spoken_summary"] = spoken
+    emit(shell)
+
+    chunks: list[str] = []
+    for delta in localize_report_stream(english, language):
+        if delta:
+            chunks.append(delta)
+            emit({"kind": "report_localized_delta", "delta": delta, "report_language": language})
+
+    full = "".join(chunks).strip()
+    # Terminal event: the full translation, or the English original as a fallback so
+    # the pending flag always resolves and the panel is never left blank.
+    emit(
+        {
+            "kind": "report_localized",
+            "report": full or english,
+            "report_language": language if full else "en",
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #

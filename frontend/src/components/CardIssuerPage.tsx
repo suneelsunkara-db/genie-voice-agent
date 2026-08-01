@@ -470,8 +470,27 @@ export function CardIssuerPage() {
           // report is on screen) rather than speak an English-only heuristic.
           settle(report.spokenSummary || null, report.localizationPending);
         },
-        // The report re-rendered in the caller's language: swap the text in place
-        // (the caller is already hearing the spoken summary by now).
+        // Streamed translation chunks: append in order so the localized report
+        // paints progressively in the panel (which opened empty — no English
+        // flash). Each chunk is activity, so push back the grace watchdog.
+        onReportLocalizedDelta: (delta) => {
+          if (!delta) return;
+          window.clearTimeout(watchdog);
+          watchdog = window.setTimeout(closeStream, DEEP_DIVE_LOCALIZE_GRACE_MS);
+          setInvestigations((prev) => {
+            const m = new Map(prev);
+            const inv = m.get(id);
+            if (inv?.report) {
+              m.set(id, {
+                ...inv,
+                report: { ...inv.report, report: inv.report.report + delta },
+              });
+            }
+            return m;
+          });
+        },
+        // The authoritative full text in the caller's language: replace whatever
+        // the deltas built (correcting any loss) and clear the pending flag.
         onReportLocalized: (text) => {
           if (text.trim()) {
             setInvestigations((prev) => {
@@ -1489,11 +1508,17 @@ function DeepDiveReportView({ report, copy }: { report: DeepDiveReport; copy: Ui
       {report.report ? (
         <p className="card-report-text">{report.report}</p>
       ) : (
-        <p className="card-inv-hint">{copy.deepNoSummary(report.status)}</p>
+        // Non-English reports open EMPTY and stream in the caller's language, so an
+        // empty body while pending means "translation on its way", not "no summary".
+        <p className="card-inv-hint">
+          {report.localizationPending ? copy.deepTranslating : copy.deepNoSummary(report.status)}
+        </p>
       )}
-      {/* The text above is the agent's English until the translation lands, which
-          would otherwise look like the panel changing its mind. */}
-      {report.localizationPending && <p className="card-inv-hint">{copy.deepTranslating}</p>}
+      {/* While chunks are still arriving, keep the hint under the growing text so
+          the caller knows the localized report isn't complete yet. */}
+      {report.report && report.localizationPending && (
+        <p className="card-inv-hint">{copy.deepTranslating}</p>
+      )}
       {tables.map((tbl, i) => (
         <ReportTable key={i} table={tbl} />
       ))}

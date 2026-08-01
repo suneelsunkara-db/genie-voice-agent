@@ -590,9 +590,16 @@ export interface DeepDiveHandlers {
   onStep?: (step: "reasoning" | "sql", text: string) => void;
   onReport?: (report: DeepDiveReport) => void;
   /**
-   * The report text translated into the caller's language, arriving AFTER the
-   * report so the voice never waits on the translator. Only sent when the report
-   * announced `localizationPending`; replace the on-screen text in place.
+   * A chunk of the translated report, streamed into the (initially empty) panel
+   * while `localizationPending` so the caller reads their own language from the
+   * first token — never a flash of English. Append each delta in order.
+   */
+  onReportLocalizedDelta?: (delta: string, language: string) => void;
+  /**
+   * The FULL report text in the caller's language, arriving after the streamed
+   * deltas (or as the sole payload if the endpoint can't stream). Only sent when
+   * the report announced `localizationPending`; use it as the authoritative final
+   * text and clear the pending flag.
    */
   onReportLocalized?: (report: string, language: string) => void;
   onError?: (message: string) => void;
@@ -661,6 +668,12 @@ export function streamDeepDive(
           error: null,
           localizationPending: ev.localization_pending === true,
         });
+        break;
+      case "report_localized_delta":
+        handlers.onReportLocalizedDelta?.(
+          String(ev.delta ?? ""),
+          String(ev.report_language ?? "")
+        );
         break;
       case "report_localized":
         handlers.onReportLocalized?.(

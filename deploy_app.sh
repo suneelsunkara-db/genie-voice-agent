@@ -143,6 +143,12 @@ rv = cfg.get("realtime_voice") or {}
 endpoints = []
 if rv.get("llm_endpoint"):
     endpoints.append(rv["llm_endpoint"])
+# Runtime text->text conversion lane (Agent-Mode deep-dive spoken "why" summary +
+# on-screen report translation). A DISTINCT endpoint (e.g. gpt-5-5) the app SP must
+# be able to CAN_QUERY -- without this grant deep dives can neither localize the
+# report nor speak the summary (both silently fail on the deployed app).
+if rv.get("conversion_endpoint"):
+    endpoints.append(rv["conversion_endpoint"])
 for group in ("stt_candidates", "tts_candidates"):
     for cand in (rv.get(group) or {}).values():
         if isinstance(cand, dict) and cand.get("endpoint"):

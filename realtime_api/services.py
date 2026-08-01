@@ -125,6 +125,10 @@ class _SdkDeployClient:
             timeout=self._stream_timeout_s,
         ) as resp:
             resp.raise_for_status()
+            # requests defaults text/event-stream to ISO-8859-1, which mangles UTF-8
+            # (Hindi, em-dashes, …) into mojibake. The serving SSE body is UTF-8, so
+            # pin it before decoding or the streamed translation comes back garbled.
+            resp.encoding = "utf-8"
             for line in resp.iter_lines(decode_unicode=True):
                 if line and line.startswith("data:"):
                     payload = line[len("data:"):].strip()
@@ -424,14 +428,69 @@ class DatabricksServing:
         defaults; ``endpoint`` routes this one call to a different model (the
         text-to-text conversion model) while the voice turns keep ``llm_endpoint``.
         """
-        message = self._chat(
-            [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            tools=None,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            endpoint=endpoint,
-        )
+        inputs: dict[str, Any] = {
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": self.llm_max_tokens if max_tokens is None else max_tokens,
+        }
+        # Only send ``temperature`` when the caller asks for one. Some conversion
+        # endpoints (e.g. gpt-5-5) accept ONLY their default and 400 on any explicit
+        # temperature — a bounded translation/summary is fine on the model default,
+        # so omitting keeps this path portable across models. The voice turns keep
+        # their sampling via ``_chat`` (this method is off that hot path).
+        if temperature is not None:
+            inputs["temperature"] = temperature
+        response = self.client.predict(endpoint=endpoint or self.llm_endpoint, inputs=inputs)
+        payload = response if isinstance(response, dict) else dict(response)
+        choices = payload.get("choices") or []
+        message = choices[0].get("message") or {} if choices and isinstance(choices[0], dict) else {}
         return _message_text(message).strip()
+
+    def summarize_stream(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        endpoint: str | None = None,
+    ) -> Iterator[str]:
+        """Streaming twin of :meth:`summarize`: yields assistant text as it is
+        produced instead of one final blob.
+
+        Lets a long, tool-free text->text conversion (the deep-dive report
+        translation) paint progressively in the caller's language rather than
+        appearing all at once after a wait. Same routing as ``summarize`` —
+        ``endpoint`` sends this one call to the conversion model while voice turns
+        keep ``llm_endpoint``. Yields the incremental ``delta.content`` only; the
+        caller joins the pieces (and can fall back to ``summarize`` if the endpoint
+        does not support streaming).
+        """
+        inputs: dict[str, Any] = {
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": self.llm_max_tokens if max_tokens is None else max_tokens,
+        }
+        # See summarize(): omit temperature unless explicitly requested — gpt-5-5 and
+        # peers 400 on any non-default temperature (streaming included).
+        if temperature is not None:
+            inputs["temperature"] = temperature
+        for chunk in self.client.predict_stream(
+            endpoint=endpoint or self.llm_endpoint, inputs=inputs
+        ):
+            if not isinstance(chunk, dict):
+                continue
+            choices = chunk.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                continue
+            delta = choices[0].get("delta")
+            piece = delta.get("content") if isinstance(delta, dict) else None
+            if piece:
+                yield str(piece)
 
     def _chat(
         self,

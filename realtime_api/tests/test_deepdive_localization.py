@@ -20,16 +20,28 @@ from realtime_api import deep_dive as dd
 
 
 class _Serving:
-    """Records summarize() calls; optionally fails or sleeps."""
+    """Records summarize()/summarize_stream() calls; optionally fails or sleeps.
 
-    def __init__(self, reply: str = "translated", fail: bool = False, delay: float = 0.0) -> None:
+    ``stream_chunks`` drives the streaming path: when set, ``summarize_stream``
+    yields those pieces; when None it yields nothing so the caller falls back to the
+    one-shot ``summarize`` (which is how the deep-dive streamer degrades on an
+    endpoint that can't stream)."""
+
+    def __init__(
+        self,
+        reply: str = "translated",
+        fail: bool = False,
+        delay: float = 0.0,
+        stream_chunks: list[str] | None = None,
+    ) -> None:
         self.reply = reply
         self.fail = fail
         self.delay = delay
+        self.stream_chunks = stream_chunks
         self.calls: list[dict] = []
 
     def summarize(
-        self, *, system: str, user: str, temperature: float, max_tokens: int, endpoint=None
+        self, *, system: str, user: str, temperature: float | None = None, max_tokens: int, endpoint=None
     ) -> str:
         self.calls.append(
             {
@@ -45,6 +57,26 @@ class _Serving:
         if self.fail:
             raise RuntimeError("endpoint unavailable")
         return self.reply
+
+    def summarize_stream(
+        self, *, system: str, user: str, temperature: float | None = None, max_tokens: int, endpoint=None
+    ):
+        self.calls.append(
+            {
+                "system": system,
+                "user": user,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "endpoint": endpoint,
+                "stream": True,
+            }
+        )
+        if self.fail:
+            raise RuntimeError("endpoint unavailable")
+        for piece in self.stream_chunks or []:
+            if self.delay:
+                time.sleep(self.delay)
+            yield piece
 
 
 @pytest.fixture()
@@ -125,23 +157,43 @@ def _stream(monkeypatch, language: str | None) -> list[dict]:
     return out
 
 
-def test_the_speakable_report_is_emitted_before_the_translation(serving, monkeypatch):
-    """The voice must not wait on the translation: the customer is already ~40s in."""
-    serving(reply="localized report", delay=0.25)
+def test_the_spoken_line_ships_first_and_the_panel_opens_empty(serving, monkeypatch):
+    """The voice must not wait on the translation, and the panel must never flash
+    English: beat 1 carries the spoken "why" with an EMPTY body + pending, then the
+    translation streams in."""
+    serving(reply="localized report", delay=0.05)
     monkeypatch.setattr(dd, "summarize_deepdive", lambda q, r, lang: f"spoken in {lang}")
     events = _stream(monkeypatch, "hi-IN")
 
-    assert [e["kind"] for e in events] == ["report", "report_localized"]
-    first, patch = events
-    # Beat 1 carries the spoken line and the English text we already have, and warns
-    # the client that the on-screen text is about to be replaced.
+    kinds = [e["kind"] for e in events]
+    assert kinds[0] == "report"
+    assert kinds[-1] == "report_localized"
+    assert "report_localized_delta" in kinds
+    first = events[0]
     assert first["spoken_summary"] == "spoken in hi-IN"
-    assert first["report"] == "Expenses rose $2,450."
-    assert first["report_language"] == "en"
+    # No English on screen — the body is empty and the panel is told to localize.
+    assert first["report"] == ""
+    assert first["report_language"] == "hi-IN"
     assert first["localization_pending"] is True
-    # Beat 2 is the swap.
-    assert patch["report"] == "localized report"
-    assert patch["report_language"] == "hi-IN"
+    # The terminal event carries the full localized text.
+    assert events[-1]["report"] == "localized report"
+    assert events[-1]["report_language"] == "hi-IN"
+
+
+def test_the_translation_streams_in_as_deltas(serving, monkeypatch):
+    """A streaming conversion endpoint paints the report progressively: each chunk
+    is its own ``report_localized_delta`` in order, and the terminal event carries
+    the joined whole."""
+    serving(stream_chunks=["अनु", "वादित ", "रिपोर्ट"])
+    monkeypatch.setattr(dd, "summarize_deepdive", lambda q, r, lang: "spoken")
+    events = _stream(monkeypatch, "hi-IN")
+
+    assert events[0]["kind"] == "report" and events[0]["report"] == ""
+    deltas = [e["delta"] for e in events if e["kind"] == "report_localized_delta"]
+    assert deltas == ["अनु", "वादित ", "रिपोर्ट"]
+    assert events[-1]["kind"] == "report_localized"
+    assert events[-1]["report"] == "अनुवादित रिपोर्ट"
+    assert events[-1]["report_language"] == "hi-IN"
 
 
 def test_english_emits_one_event_and_promises_no_swap(serving, monkeypatch):
@@ -162,28 +214,44 @@ def test_the_report_still_ships_when_the_summary_fails(serving, monkeypatch):
 
     monkeypatch.setattr(dd, "summarize_deepdive", _boom)
     events = _stream(monkeypatch, "hi-IN")
-    assert [e["kind"] for e in events] == ["report", "report_localized"]
+    kinds = [e["kind"] for e in events]
+    assert kinds[0] == "report" and kinds[-1] == "report_localized"
     assert "spoken_summary" not in events[0]
+    assert events[-1]["report"] == "localized report"
 
 
-def test_a_failing_translation_leaves_the_english_report_standing(serving, monkeypatch):
+def test_a_failing_translation_resolves_pending_with_the_english_report(serving, monkeypatch):
+    """A failed translation must NOT hang the UI on the "translating…" hint.
+
+    Beat 1 announced ``localization_pending`` so the client is waiting for a swap;
+    if the translation fails (endpoint down / SP lacks CAN_QUERY) we must still
+    close that loop. Beat 2 arrives carrying the English report we already have and
+    ``report_language: "en"``, which clears the pending state and leaves a readable
+    English panel — and the caller still hears the spoken answer.
+    """
     serving(fail=True)
     monkeypatch.setattr(dd, "summarize_deepdive", lambda q, r, lang: "spoken anyway")
     events = _stream(monkeypatch, "hi-IN")
-    # No swap event: the caller keeps the English report and still hears the answer.
-    assert [e["kind"] for e in events] == ["report"]
-    assert events[0]["spoken_summary"] == "spoken anyway"
-
-
-def test_the_two_renderings_overlap(serving, monkeypatch):
-    """Run serially and the customer's total wait is both calls, not the longer one."""
-    serving(reply="localized", delay=0.30)
-    monkeypatch.setattr(dd, "summarize_deepdive", lambda q, r, lang: time.sleep(0.30) or "spoken")
-    t0 = time.perf_counter()
-    events = _stream(monkeypatch, "hi-IN")
-    elapsed = time.perf_counter() - t0
     assert [e["kind"] for e in events] == ["report", "report_localized"]
-    assert elapsed < 0.55, f"expected ~0.30s (overlapped), took {elapsed:.2f}s (serial?)"
+    # The panel opened empty (no English flash) and the spoken line still played.
+    assert events[0]["report"] == ""
+    assert events[0]["spoken_summary"] == "spoken anyway"
+    # With no deltas, the terminal event falls back to the English report + "en".
+    fallback = events[1]
+    assert fallback["report"] == "Expenses rose $2,450."
+    assert fallback["report_language"] == "en"
+
+
+def test_the_spoken_line_is_emitted_before_any_translation_delta(serving, monkeypatch):
+    """The customer HEARS the answer before the on-screen translation starts: the
+    report shell (with the spoken line) must precede the first streamed delta."""
+    serving(stream_chunks=["local", "ized"])
+    monkeypatch.setattr(dd, "summarize_deepdive", lambda q, r, lang: "spoken")
+    events = _stream(monkeypatch, "hi-IN")
+    first_delta = next(i for i, e in enumerate(events) if e["kind"] == "report_localized_delta")
+    assert events[0]["kind"] == "report"
+    assert events[0]["spoken_summary"] == "spoken"
+    assert first_delta > 0, "the spoken shell must be emitted before any translation delta"
 
 
 def test_an_empty_report_is_never_promised_a_translation(serving, monkeypatch):
