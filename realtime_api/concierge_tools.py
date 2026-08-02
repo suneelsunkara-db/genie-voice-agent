@@ -221,11 +221,13 @@ CONCIERGE_SYSTEM_PROMPT = (
 def _greeting_intent(first_name: str) -> str:
     who = f" the user by name ({first_name})" if first_name else " the user"
     return (
-        f"Warmly welcome{who} to Databricks Genie Assisted Voice. In two short sentences, say that "
-        "Genie-assisted voice agents work across Telco billing support, a Financial "
-        "Services credit-card assistant, and Healthcare, in more than twenty languages, "
-        "powered by the Genie ontology and deep reasoning. Then ask which they would like "
-        "to explore — Telco, Financial Services, or Healthcare."
+        f"Warmly welcome{who} to Databricks Genie Assisted Voice. First, invite them to "
+        "pick their preferred language from the language menu at the top of the screen. "
+        "Then, in one short sentence, say that Genie-assisted voice agents work across "
+        "Telco billing support, a Financial Services credit-card assistant, and Healthcare, "
+        "powered by the Genie ontology and deep reasoning. Finally ask which they would "
+        "like to explore — Telco, Financial Services, or Healthcare — and mention they can "
+        "just say it."
     )
 
 
