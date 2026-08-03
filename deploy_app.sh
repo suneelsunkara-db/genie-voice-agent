@@ -10,7 +10,9 @@
 #   1. build the frontend for same-origin (VITE_API_BASE_URL="") -> api/app/static
 #   2. push vendor API keys into a Databricks secret scope
 #   3. attach app resources (warehouse + secrets + serving endpoints) so the app
-#      service principal is auto-granted access on deploy
+#      service principal is auto-granted access on deploy, then re-assert CAN_USE
+#      for external callers (see APP_EXTERNAL_* below) so cross-workspace access
+#      survives every redeploy
 #   4. sync source to a workspace folder (respects .gitignore)
 #   5. create the app (first run) and deploy it
 #
@@ -34,6 +36,14 @@ WORKSPACE_DIR="${WORKSPACE_DIR:-}"                    # empty -> /Workspace/User
 # Optional comma-separated override. By default this is derived from the
 # configured Databricks STT endpoint + per-language routes.
 ASR_ENDPOINTS="${ASR_ENDPOINTS:-}"
+
+# External principals (re-)granted CAN_USE on the app every deploy so external /
+# cross-workspace API callers keep access across redeploys. Comma-separated;
+# leave empty to skip. Grants are ADDITIVE (owner/admins/account-users untouched).
+#   APP_EXTERNAL_USERS -> user_name (email) of an account user
+#   APP_EXTERNAL_SPS   -> service_principal_name (OAuth client / application id)
+APP_EXTERNAL_USERS="${APP_EXTERNAL_USERS:-j.wang@databricks.com}"
+APP_EXTERNAL_SPS="${APP_EXTERNAL_SPS:-705947df-7bea-415f-af6a-4642a43ba1be}"
 
 log()  { printf "\033[36m[app-deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[33m[app-deploy]\033[0m %s\n" "$*"; }
@@ -256,6 +266,32 @@ else
   warn "could not resolve app service principal id; after deploy run:"
   warn "  PYTHONPATH=backend python3 infra/apps/grant_app_sp.py --sp-client-id <id>"
 fi
+
+# ---- 3c. re-assert external caller access (survives redeploys) --------------
+# App permissions are stored separately from `apps update`/`deploy`, so a normal
+# redeploy does NOT drop them. We still re-assert them here so external access is
+# declared in this script and self-heals if an ACL edit ever removes it. We use
+# `update-permissions` (an ADDITIVE PATCH) on purpose: `set-permissions` REPLACES
+# the whole ACL and would wipe owner/admins/account-users.
+grant_app_can_use() {  # $1 = ACL key (user_name|service_principal_name), $2 = value
+  local acl
+  acl="$(printf '{"access_control_list":[{"%s":"%s","permission_level":"CAN_USE"}]}' "$1" "$2")"
+  if dbx apps update-permissions "$APP_NAME" --json "$acl" >/dev/null 2>&1; then
+    log "granted CAN_USE on app: $2"
+  else
+    warn "could not grant CAN_USE to $2 (need CAN_MANAGE on the app; skipping)."
+  fi
+}
+IFS=',' read -ra _EXT_USERS <<< "$APP_EXTERNAL_USERS"
+for _u in "${_EXT_USERS[@]}"; do
+  _u="$(printf '%s' "$_u" | xargs)"
+  [[ -n "$_u" ]] && grant_app_can_use user_name "$_u"
+done
+IFS=',' read -ra _EXT_SPS <<< "$APP_EXTERNAL_SPS"
+for _sp in "${_EXT_SPS[@]}"; do
+  _sp="$(printf '%s' "$_sp" | xargs)"
+  [[ -n "$_sp" ]] && grant_app_can_use service_principal_name "$_sp"
+done
 
 # ---- 4. sync source to the workspace ---------------------------------------
 log "syncing source -> $WORKSPACE_DIR (respects .gitignore, includes built SPA)"
