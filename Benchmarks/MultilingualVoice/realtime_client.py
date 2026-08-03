@@ -272,11 +272,12 @@ class WebSocketRealtimeClient:
         return requested
 
     def run_turn(self, pcm_s16le, *, sample_rate_hz, language=None, capability=None,
-                 context=None, max_turn_seconds=None, vad_silence_ms=None):
+                 context=None, max_turn_seconds=None, vad_silence_ms=None, endpointing=None):
         cap = self._effective(capability)
         return _run_async(self._run_audio_turn(
             pcm_s16le, sample_rate_hz, language or self.language, cap,
             context=context, max_turn_seconds=max_turn_seconds, vad_silence_ms=vad_silence_ms,
+            endpointing=endpointing,
         ))
 
     def synthesize(self, text, *, language=None, capability=None):
@@ -290,11 +291,12 @@ class WebSocketRealtimeClient:
         pcm, rate = _to_session_rate(result.tts_audio, result.tts_sample_rate or 24_000)
         # Re-transcribe in BATCH mode (no real-time pacing): this leg only scores
         # intelligibility of the synthesized audio, so streaming it at wall-clock
-        # speed would just double the per-sample time. audio.end finalizes the turn;
-        # the high VAD ceiling keeps it from cutting the reheard audio early.
+        # speed would just double the per-sample time. endpointing:false makes
+        # audio.end the sole turn boundary so the reheard clip isn't cut early;
+        # max_turn_seconds is just a safety ceiling.
         heard = self.run_turn(
             pcm, sample_rate_hz=rate, language=language or self.language,
-            capability="speech-to-text", max_turn_seconds=120.0, vad_silence_ms=5000,
+            capability="speech-to-text", endpointing=False, max_turn_seconds=120.0,
         )
         result.roundtrip = {
             "spoken_text": spoken_text,
@@ -305,7 +307,8 @@ class WebSocketRealtimeClient:
         return result
 
     async def _run_audio_turn(self, pcm_s16le, sample_rate_hz, language, capability,
-                              *, context=None, max_turn_seconds=None, vad_silence_ms=None):
+                              *, context=None, max_turn_seconds=None, vad_silence_ms=None,
+                              endpointing=None):
         import websockets
 
         url = self._url(capability)
@@ -314,10 +317,12 @@ class WebSocketRealtimeClient:
         if token:
             headers["Authorization"] = "Bearer " + str(token)
         result = TurnResult()
-        # Batch mode: when the caller sets turn-endpointing overrides it manages
-        # the boundary via audio.end, so stream without real-time pacing (VAD is
-        # effectively disabled server-side) for a much faster benchmark.
-        batch = max_turn_seconds is not None or vad_silence_ms is not None
+        # Batch mode: the caller already holds the whole utterance and manages the
+        # boundary via audio.end. With endpointing:false the server does no
+        # automatic finalization, so the clip is transcribed as one turn and can't
+        # be truncated by a mid-utterance pause. Stream without real-time pacing
+        # for a much faster benchmark.
+        batch = endpointing is False or max_turn_seconds is not None or vad_silence_ms is not None
         try:
             async with websockets.connect(url, **_ws_connect_kwargs(headers, self.timeout_s)) as ws:
                 start = {
@@ -328,6 +333,8 @@ class WebSocketRealtimeClient:
                 }
                 if context:
                     start["context"] = context
+                if endpointing is not None:
+                    start["endpointing"] = endpointing
                 if max_turn_seconds is not None:
                     start["max_turn_seconds"] = max_turn_seconds
                 if vad_silence_ms is not None:
@@ -448,7 +455,7 @@ class InProcessRealtimeClient:
         return CAPABILITY_PATHS[capability]
 
     def run_turn(self, pcm_s16le, *, sample_rate_hz, language=None, capability=None,
-                 context=None, max_turn_seconds=None, vad_silence_ms=None):
+                 context=None, max_turn_seconds=None, vad_silence_ms=None, endpointing=None):
         cap = capability or DATASET_CAPABILITIES.get("ccfqa", "speech-llm-toolassist-speech")
         result = TurnResult()
         lang = language or self.language
@@ -460,6 +467,8 @@ class InProcessRealtimeClient:
                 }
                 if context:
                     start["context"] = context
+                if endpointing is not None:
+                    start["endpointing"] = endpointing
                 if max_turn_seconds is not None:
                     start["max_turn_seconds"] = max_turn_seconds
                 if vad_silence_ms is not None:
@@ -498,11 +507,12 @@ class InProcessRealtimeClient:
         pcm, rate = _to_session_rate(result.tts_audio, result.tts_sample_rate or 24_000)
         # Re-transcribe in BATCH mode (no real-time pacing): this leg only scores
         # intelligibility of the synthesized audio, so streaming it at wall-clock
-        # speed would just double the per-sample time. audio.end finalizes the turn;
-        # the high VAD ceiling keeps it from cutting the reheard audio early.
+        # speed would just double the per-sample time. endpointing:false makes
+        # audio.end the sole turn boundary so the reheard clip isn't cut early;
+        # max_turn_seconds is just a safety ceiling.
         heard = self.run_turn(
             pcm, sample_rate_hz=rate, language=language or self.language,
-            capability="speech-to-text", max_turn_seconds=120.0, vad_silence_ms=5000,
+            capability="speech-to-text", endpointing=False, max_turn_seconds=120.0,
         )
         result.roundtrip = {
             "spoken_text": spoken_text, "reheard_text": heard.transcript,

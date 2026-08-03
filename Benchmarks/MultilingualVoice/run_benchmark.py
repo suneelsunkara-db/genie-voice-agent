@@ -53,26 +53,26 @@ _RESULTS = _BENCHMARK_DIR / "results"
 
 DATASET_EVALUATOR = {"fleurs": "asr", "belebele": "mcq", "ccfqa": "qa"}
 
-# Belebele sends a full spoken passage (mean ~71 s, max ~98 s) as one turn and
-# marks the end with audio.end. These overrides stop server-side VAD from
-# finalizing the turn mid-passage: max_turn_seconds is an audio-duration ceiling
-# above the longest passage, and vad_silence_ms is set high so inter-sentence
-# pauses in the concatenated FLEURS audio don't end the turn early.
+# Offline audio datasets already hold a whole utterance/passage, so every turn
+# runs the session with endpointing:false — the server does NO automatic
+# finalization and ends the turn only on audio.end. This is the fix for the
+# truncation artifact: server-side turn detection (Silero + smart-turn) used to
+# cut long clips at a natural mid-utterance pause, and the benchmark recorded
+# only the first fragment, inflating WER. endpointing:false makes the client the
+# sole owner of the boundary, so the entire clip is transcribed as one turn.
+# max_turn_seconds stays only as a safety ceiling (an audio-duration cap, not a
+# turn detector) above the longest clip in each dataset. It also puts the client
+# in BATCH mode (no wall-clock pacing), which is ~10-20x faster per turn with no
+# effect on accuracy (same audio + STT model).
+#
+# Belebele sends a full spoken passage (mean ~71 s, max ~98 s) as one turn.
 BELEBELE_MAX_TURN_SECONDS = 150
-BELEBELE_VAD_SILENCE_MS = 600_000
 # STT of a ~100 s passage plus LLM + TTS needs a longer per-message wait than the
 # short FLEURS/CCFQA turns.
 BELEBELE_TIMEOUT_S = 300.0
 
-# FLEURS clips are single read-speech utterances (mostly <30 s). Setting these
-# overrides puts the client in BATCH mode: it streams the audio as fast as the
-# socket allows instead of pacing it at wall-clock speed, which is ~10-20x faster
-# per turn. audio.end still marks the boundary and the high VAD ceiling keeps a
-# brief pause from finalizing the turn early, so the whole clip is transcribed.
-# Accuracy is unchanged (same audio + STT model) — only the artificial real-time
-# delay is removed. This is what made full FLEURS sweeps take 20-40 min.
+# FLEURS/CCFQA clips are single read-speech utterances (mostly <30 s).
 FLEURS_MAX_TURN_SECONDS = 150
-FLEURS_VAD_SILENCE_MS = 30_000
 
 
 def _percentiles(values: list[int]) -> dict[str, int]:
@@ -202,20 +202,16 @@ def run_one(
     sample_count = 0
     stt_capability = DATASET_CAPABILITIES.get(dataset, "speech-llm-toolassist-speech")
 
-    turn_overrides: dict = {}
+    # Client owns the turn boundary for every offline audio dataset (see the
+    # *_MAX_TURN_SECONDS constants above). endpointing:false disables server-side
+    # finalization so a mid-utterance pause can't truncate the clip; the max_turn
+    # cap is only a safety ceiling above the longest clip.
     if dataset == "belebele":
-        # Full passage as audio; question + options handed to the LLM as text
-        # context; VAD held off so the long turn ends only on audio.end.
-        turn_overrides = {
-            "max_turn_seconds": BELEBELE_MAX_TURN_SECONDS,
-            "vad_silence_ms": BELEBELE_VAD_SILENCE_MS,
-        }
-    elif dataset == "fleurs":
-        # Batch mode (no real-time pacing) — see FLEURS_* constants above.
-        turn_overrides = {
-            "max_turn_seconds": FLEURS_MAX_TURN_SECONDS,
-            "vad_silence_ms": FLEURS_VAD_SILENCE_MS,
-        }
+        # Full passage as audio; question + options handed to the LLM as context.
+        turn_overrides: dict = {"endpointing": False, "max_turn_seconds": BELEBELE_MAX_TURN_SECONDS}
+    else:
+        # fleurs / ccfqa — short single utterances.
+        turn_overrides = {"endpointing": False, "max_turn_seconds": FLEURS_MAX_TURN_SECONDS}
 
     for i, sample in enumerate(load_staged(dataset, lang, args.limit, out_dir=staged_dir)):
         sample_count += 1

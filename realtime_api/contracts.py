@@ -81,6 +81,15 @@ class SessionStart:
     encoding: Literal["pcm_s16le"] = "pcm_s16le"
     max_turn_seconds: int | None = None
     vad_silence_ms: int | None = None
+    # Who owns the end-of-turn boundary. None (default) inherits the server's
+    # ``endpointing.enabled`` setting — the live voice loop keeps server-side
+    # turn detection (Silero + smart-turn). Explicit ``False`` puts the SESSION in
+    # client-managed ("manual") turn mode: the server does no automatic
+    # finalization and ends the turn only when the client sends ``audio.end`` (or
+    # the ``max_turn_seconds`` safety cap). This is for offline/batch callers that
+    # already hold a whole utterance (e.g. the benchmark), so a natural mid-clip
+    # pause can't split the utterance into truncated turns.
+    endpointing: bool | None = None
     context: str | None = None
     call_id: str | None = None
     customer_id: str | None = None
@@ -124,6 +133,7 @@ class SessionStart:
             encoding=encoding,
             max_turn_seconds=_optional_positive_int(payload.get("max_turn_seconds"), "max_turn_seconds"),
             vad_silence_ms=_optional_positive_int(payload.get("vad_silence_ms"), "vad_silence_ms"),
+            endpointing=_optional_bool(payload.get("endpointing"), "endpointing"),
             context=_optional_context(payload.get("context")),
             call_id=_optional_str(payload.get("call_id")),
             customer_id=_optional_str(payload.get("customer_id")),
@@ -142,6 +152,14 @@ def _optional_positive_int(value: object, field: str) -> int | None:
     if parsed <= 0:
         raise ValueError(f"{field} must be a positive integer")
     return parsed
+
+
+def _optional_bool(value: object, field: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"{field} must be a boolean")
 
 
 def _optional_context(value: object) -> str | None:

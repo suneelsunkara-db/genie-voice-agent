@@ -389,6 +389,42 @@ def test_respond_runs_tool_calling_loop_with_temperature() -> None:
     assert any(m.get("role") == "tool" for m in client.calls[1]["messages"])
 
 
+def test_bare_tool_call_json_is_routed_not_spoken() -> None:
+    """Regression: on a non-English turn the model sometimes prints a tool call as
+    bare JSON content ({"use_case": ...}) instead of a structured tool_call. It must
+    be EXECUTED (state recorded) and must never leak into the spoken/on-screen reply.
+    """
+    from realtime_api import card_tools
+    from realtime_api.services import DatabricksServing
+    from realtime_api.tool_registry import ToolContext, run_tool
+
+    thai_reply = "กำลังดึงข้อมูลเชิงลึกจากใบแจ้งยอดให้นะคะ"
+    client = FakeDeployClient(
+        [
+            # The model picked the topic but rendered the tool call as content.
+            {"choices": [{"message": {"role": "assistant", "content": '{"use_case": "statement_insights"}'}}]},
+            # After the tool runs it speaks a normal Thai confirmation.
+            {"choices": [{"message": {"role": "assistant", "content": thai_reply}}]},
+        ]
+    )
+    serving = DatabricksServing(client=client, stt_endpoint="s", llm_endpoint="llm", tts_endpoint="t")
+    ctx = ToolContext(customer_id="CH-1", call_id="c1", profile_state={})
+
+    text, invocations = serving.respond_with_tools(
+        "ข้อมูลเชิงลึกจากใบแจ้งยอด",
+        language="th-TH",
+        tool_ctx=ctx,
+        system_prompt="{language}",
+        tools_override=card_tools._card_tools_spec(),
+        tool_runner=lambda n, a, c: run_tool(n, a, c, profile="card"),
+    )
+
+    assert text == thai_reply
+    assert "{" not in text  # no raw JSON leaked into the spoken reply
+    assert [i["name"] for i in invocations] == ["select_use_case"]
+    assert ctx.profile_state["use_case"] == "statement_insights"
+
+
 def test_respond_without_tools_returns_direct_text() -> None:
     from realtime_api.services import DatabricksServing
 

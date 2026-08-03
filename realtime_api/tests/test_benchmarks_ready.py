@@ -1,8 +1,10 @@
-"""Unit tests for the benchmark readiness gate (select_ready_runs).
+"""Unit tests for the benchmark run selector (select_ready_runs).
 
-A benchmark run is only promoted to the default UI view once a single run_id has
-swept the full language breadth AND carries accuracy + TTFT on every unit that
-produced results. A partial/in-flight run must not replace the last full run.
+The default UI view shows the freshest complete measurement per language: the
+newest complete run is the primary, and older complete runs backfill only the
+languages it did not cover. A newer run that deliberately skips a language must
+still be promoted (with the skipped language backfilled), rather than pinning
+the page to an older, wider-but-staler run.
 """
 from __future__ import annotations
 
@@ -38,17 +40,20 @@ def test_full_run_beats_older_full_run() -> None:
     assert {r["run_id"] for r in selected} == {"r2"}
 
 
-def test_partial_newer_run_does_not_replace_full_run() -> None:
+def test_newer_run_supersedes_and_backfills_skipped_language() -> None:
     rows = [
         _run("full", "en", ts="2026-01-01T00:00:00Z"),
         _run("full", "hi", ts="2026-01-01T00:00:00Z"),
-        # Newer, but only one language — a subset sweep must not be promoted.
-        _run("partial", "en", ts="2026-03-01T00:00:00Z"),
+        # Newer run deliberately skipped "hi" (e.g. a broken locale). Its "en" is
+        # the freshest measurement and must win; "hi" backfills from the old run.
+        _run("fresh", "en", ts="2026-03-01T00:00:00Z"),
     ]
     selected, meta = select_ready_runs(rows)
     assert meta["fleurs"]["ready"] is True
-    assert meta["fleurs"]["run_id"] == "full"
-    assert {r["run_id"] for r in selected} == {"full"}
+    assert meta["fleurs"]["run_id"] == "fresh"
+    assert meta["fleurs"]["backfilled_from"] == ["full"]
+    by_lang = {r["language"]: r["run_id"] for r in selected}
+    assert by_lang == {"en": "fresh", "hi": "full"}
 
 
 def test_missing_ttft_blocks_readiness_and_falls_back() -> None:

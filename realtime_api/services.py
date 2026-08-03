@@ -342,6 +342,13 @@ class DatabricksServing:
             # spoken/on-screen transcript.
             if not tool_calls:
                 inline, cleaned = _extract_inline_tool_calls(assistant_content)
+                # Also recover a tool call the model printed as a bare JSON object
+                # (no <tool_call> marker) — common on non-English turns, where an
+                # un-recovered {"use_case": ...} would be spoken/shown verbatim.
+                if not inline:
+                    inline = _recover_bare_tool_call(assistant_content, tools)
+                    if inline:
+                        cleaned = ""
                 if inline:
                     tool_calls = [
                         {
@@ -789,6 +796,62 @@ def _strip_tool_markup(text: str) -> str:
     """Defense-in-depth: remove any stray inline tool-call markup from spoken text."""
     _, cleaned = _extract_inline_tool_calls(text)
     return cleaned if cleaned else text if "tool_call" not in (text or "").lower() else ""
+
+
+def _recover_bare_tool_call(
+    content: str, tool_specs: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """Recover a tool call the model emitted as a bare JSON object in ``content``.
+
+    Some models — most often when replying in a non-English language — pick a tool
+    correctly but print its invocation as message CONTENT instead of a structured
+    ``tool_calls`` entry, e.g. the caller chose a topic and the model answered with
+    the literal ``{"use_case": "statement_insights"}``. Left unhandled that JSON is
+    spoken and shown verbatim (and the tool never runs). Unlike
+    ``_extract_inline_tool_calls`` this needs no ``<tool_call>`` marker, so it is
+    deliberately strict to avoid misreading prose:
+
+      * the ENTIRE message must be exactly one JSON object, and
+      * that object must map to exactly one known tool — either by ``{"name",
+        "arguments"}`` shape, or as a bare arguments object whose keys satisfy a
+        single tool's parameter schema (every required arg present, no unknown key).
+
+    Returns ``[{"name", "arguments"}]`` (0 or 1 call). When empty, the content was
+    ordinary text and must be left untouched.
+    """
+    if not content or not tool_specs:
+        return []
+    stripped = content.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return []
+    try:
+        obj = json.loads(stripped)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(obj, dict) or not obj:
+        return []
+    functions = {
+        t["function"]["name"]: t["function"]
+        for t in tool_specs
+        if isinstance(t, dict) and isinstance(t.get("function"), dict) and t["function"].get("name")
+    }
+    # Case 1: explicit {"name": <tool>, "arguments": {...}} rendered as content.
+    name = obj.get("name")
+    if isinstance(name, str) and name in functions and set(obj.keys()) <= {"name", "arguments"}:
+        args = obj.get("arguments")
+        return [{"name": name, "arguments": args if isinstance(args, dict) else {}}]
+    # Case 2: a bare arguments object. Accept only if its keys pin exactly one tool.
+    keys = set(obj.keys())
+    matches = [
+        fname
+        for fname, fn in functions.items()
+        if (params := (fn.get("parameters") or {}).get("properties") or {})
+        and keys <= set(params)
+        and set((fn.get("parameters") or {}).get("required") or []) <= keys
+    ]
+    if len(matches) == 1:
+        return [{"name": matches[0], "arguments": obj}]
+    return []
 
 
 def _as_float(value: Any) -> float | None:

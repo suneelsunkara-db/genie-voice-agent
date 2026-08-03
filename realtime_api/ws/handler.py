@@ -145,6 +145,17 @@ async def handle_voice_ws(
                 if began:
                     log_event("speech.started", session_id=session_id, turn_id=session.turn_id + 1)
                     await websocket.send_json({"type": "speech.started", "turn_id": session.turn_id + 1})
+                # Manual turn mode: the client owns the boundary, so buffer the whole
+                # utterance and finalize only on audio.end. The max_turn_seconds cap
+                # still applies as a safety bound against unbounded buffering — it is
+                # not a turn detector, just a ceiling.
+                if session.manual_turns:
+                    max_turn = session.config.max_turn_seconds or settings.max_turn_seconds
+                    if session.turn_audio_ms >= max_turn * 1000:
+                        task = await _start_audio_turn(
+                            websocket, bundle, session, task, session_id, spec, settings, on_turn_audio
+                        )
+                    continue
                 # Whole-utterance capture: no interim streaming. The turn is buffered
                 # until end-of-speech and transcribed once. End-of-speech is decided
                 # by the semantic endpointer (Silero + smart-turn) when available,
@@ -200,7 +211,16 @@ async def handle_voice_ws(
                     continue
                 session = VoiceSession(start)
                 session.session_id = session_id
-                if settings.endpointing_enabled and spec.accepts_audio:
+                # Manual turn mode: the client explicitly took ownership of the
+                # end-of-turn boundary (``endpointing: false``), so the server does
+                # no automatic finalization and waits for ``audio.end``. Anything
+                # else inherits the server's endpointing.enabled default, keeping
+                # the live voice loop's server-side turn detection unchanged.
+                session.manual_turns = start.endpointing is False
+                use_endpointing = (
+                    start.endpointing if start.endpointing is not None else settings.endpointing_enabled
+                )
+                if use_endpointing and spec.accepts_audio:
                     session.endpointer = endpointer_for(
                         endpoint_models,
                         sample_rate_hz=start.sample_rate_hz,

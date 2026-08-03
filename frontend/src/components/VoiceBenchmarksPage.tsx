@@ -45,26 +45,22 @@ const DATASET_META: Record<
     asks: "Transcribe the spoken sentence and score against the reference.",
     kind: "error",
   },
-  belebele: {
-    title: "Belebele",
-    blurb: "How accurately the agent answers spoken multiple-choice reading-comprehension questions.",
-    asks: "Listen to the passage + question, then pick the correct choice (full STT → reasoning → spoken answer turn).",
-    kind: "accuracy",
-  },
-  ccfqa: {
-    title: "CCFQA",
-    blurb: "How accurately the agent answers open-ended spoken factual questions.",
-    asks: "Listen to a spoken question and answer it out loud (full STT → reasoning → spoken answer turn).",
-    kind: "accuracy",
-  },
 };
 
-const DATASET_ORDER = ["fleurs", "belebele", "ccfqa"];
+const DATASET_ORDER = ["fleurs"];
 
-// Vendor datasets are kept out of the Genie-facing per-language tables/highlights
-// (those describe our own stack), but the STT vendors below ARE surfaced as
-// measured competitors in the comparison charts.
-const HIDDEN_DATASETS = new Set(["fleurs_deepgram_stt", "fleurs_elevenlabs_tts"]);
+// Datasets never shown in the Genie-facing view:
+//   * vendor STT/TTS runs describe competitors, not our stack (the STT vendors are
+//     still surfaced as measured competitors in the comparison charts below);
+//   * belebele/ccfqa are retired conversational sets — they blend STT with LLM
+//     reasoning (so they're poor STT diagnostics) and cover fewer languages, so
+//     FLEURS is the single headline STT metric.
+const HIDDEN_DATASETS = new Set([
+  "fleurs_deepgram_stt",
+  "fleurs_elevenlabs_tts",
+  "belebele",
+  "ccfqa",
+]);
 
 // Vendor STT systems we measure on the SAME staged FLEURS audio (apples-to-apples,
 // unlike the published paper references). Keyed by their Delta dataset id.
@@ -241,8 +237,7 @@ function DatasetSection({
               <th>Reliability</th>
               <th className="num" title="Median time-to-first-audio of the text-to-speech engine itself — the voice engine's own speed">Voice engine p50</th>
               <th className="num" title="Median speech-to-text time">STT p50</th>
-              <th className="num" title="Median LLM reasoning time — only conversational (comprehension / QA) turns; blank for transcription-only">LLM p50</th>
-              <th className="num" title="Median time-to-first-token: end-to-end time until the caller heard the first audio (STT + LLM + TTS)">
+              <th className="num" title="Median time-to-first-audio the caller experiences on a FLEURS TTS round-trip — the engine's own speed plus network and any endpoint queue wait">
                 TTFT p50
               </th>
               <th className="num" title="Median full-turn time until the complete spoken reply finished">Total p50</th>
@@ -313,7 +308,6 @@ function DatasetSection({
                   </td>
                   <td className="num vb-strong">{fmtMs(lat(run, "tts_first_ms"))}</td>
                   <td className="num">{fmtMs(lat(run, "stt_ms"))}</td>
-                  <td className="num">{fmtMs(lat(run, "llm_ms"))}</td>
                   <td className="num">{fmtMs(lat(run, "client_ttfa_ms"))}</td>
                   <td className="num">{fmtMs(lat(run, "total_ms"))}</td>
                 </tr>
@@ -570,23 +564,13 @@ function buildHighlights(
     });
   }
 
-  // 6. LLM reasoning speed (conversational turns only — no LLM on transcription).
-  const medLlm = avg(runs.filter((r) => r.evaluator !== "asr").map((r) => lat(r, "llm_ms")));
-  if (medLlm != null) {
-    out.push({
-      icon: "🧠",
-      title: `Reasoning in ${fmtMs(medLlm)}`,
-      body: "Median LLM reasoning time on conversational (comprehension & QA) turns.",
-    });
-  }
-
-  // 7. Time-to-first-token (end-to-end first audio the caller hears).
+  // 6. Time-to-first-token (first audio the caller hears on a TTS round-trip).
   const medTtft = avg(runs.map((r) => lat(r, "client_ttfa_ms")));
   if (medTtft != null) {
     out.push({
       icon: "🗣️",
       title: `First reply audio in ${fmtMs(medTtft)}`,
-      body: "Median time-to-first-token (TTFT): end-to-end time until the caller heard the agent's first spoken audio.",
+      body: "Median time-to-first-token (TTFT): the client-side latency until the first audio chunk arrives on a FLEURS TTS round-trip — engine speed plus network and any endpoint queue.",
     });
   }
 
@@ -667,9 +651,8 @@ export function VoiceBenchmarksPage() {
           <h1>How well does the voice API hear, think, and speak?</h1>
           <p>
             These are <b>real, measured results</b> from the Genie realtime voice API across the supported languages:
-            speech transcription accuracy (<b>FLEURS</b>), spoken reading-comprehension and open-ended question answering
-            (<b>Belebele</b>, <b>CCFQA</b>), and a full latency breakdown — <b>voice engine</b>, speech-to-text,
-            reasoning, and time-to-first-audio. Published model rows are references from papers or leaderboards, not
+            speech transcription accuracy (<b>FLEURS</b>), plus a full latency breakdown — <b>voice engine</b>,
+            speech-to-text, and time-to-first-audio. Published model rows are references from papers or leaderboards, not
             re-measured competitor runs.
           </p>
           {data?.available && (
@@ -683,9 +666,6 @@ export function VoiceBenchmarksPage() {
               <span>{generatedAt || "—"}</span>
               <span>
                 <b>{(data.languages || []).length}</b> languages
-              </span>
-              <span>
-                <b>{datasetOrder.length}</b> benchmarks
               </span>
               {data.all_metrics_ready === false && (
                 <span className="vb-prelim" title="A newer run is still in flight or missing metrics; showing the last fully-complete run per language.">
@@ -732,12 +712,6 @@ export function VoiceBenchmarksPage() {
                   </div>
                 </div>
                 <div className="vb-legend-item">
-                  <div className="vb-legend-k">Accuracy</div>
-                  <div className="vb-legend-v">
-                    Share of questions answered correctly after listening. <b>Higher is better ↑.</b>
-                  </div>
-                </div>
-                <div className="vb-legend-item">
                   <div className="vb-legend-k">Reliability</div>
                   <div className="vb-legend-v">
                     How many evaluated turns completed without a service error. Errored turns count as wrong, so low
@@ -758,24 +732,16 @@ export function VoiceBenchmarksPage() {
                   </div>
                 </div>
                 <div className="vb-legend-item">
-                  <div className="vb-legend-k">LLM p50</div>
-                  <div className="vb-legend-v">
-                    Median reasoning time on conversational turns (comprehension / QA). Blank for transcription-only
-                    FLEURS rows, which don't invoke the LLM.
-                  </div>
-                </div>
-                <div className="vb-legend-item">
                   <div className="vb-legend-k">TTFT p50</div>
                   <div className="vb-legend-v">
-                    Median <b>time-to-first-token</b>: end-to-end time from the end of speech until the caller heard the
-                    agent's <b>first audio</b> (speech-to-text + reasoning + text-to-speech). <b>Lower is better ↓.</b>
+                    Median <b>time-to-first-audio the caller experiences</b> on a FLEURS <b>TTS round-trip</b> — the
+                    engine's own speed plus network and any endpoint queue wait. <b>Lower is better ↓.</b>
                   </div>
                 </div>
                 <div className="vb-legend-item">
                   <div className="vb-legend-k">Total p50</div>
                   <div className="vb-legend-v">
-                    Median <b>full-turn</b> time until the complete spoken reply finished. Open-ended answers (CCFQA)
-                    run longer because the spoken response is longer.
+                    Median <b>full-turn</b> time until the complete spoken reply finished.
                   </div>
                 </div>
                 <div className="vb-legend-swatches">
@@ -804,10 +770,9 @@ export function VoiceBenchmarksPage() {
             </section>
 
             <footer className="vb-footnote">
-              FLEURS (transcription), Belebele (spoken multiple-choice comprehension), and CCFQA (open-ended spoken QA)
-              are public multilingual benchmarks. Published model references may use different language subsets and
-              decoding settings, so treat cross-system gaps as directional. Genie and vendor rows are measured by jobs
-              that write to Delta.
+              FLEURS is a public multilingual speech-transcription benchmark. Published model references may use
+              different language subsets and decoding settings, so treat cross-system gaps as directional. Genie and
+              vendor rows are measured by jobs that write to Delta.
             </footer>
           </>
         )}

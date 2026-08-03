@@ -69,6 +69,11 @@ class VoiceSession:
     # keeps the legacy energy VAD (also the graceful fallback when models can't
     # load). Injected by the handler at session.start.
     endpointer: TurnEndpointer | None = None
+    # Client-managed turn mode (session started with ``endpointing: false``). The
+    # handler does no automatic finalization in this mode and ends the turn only
+    # on an explicit ``audio.end`` (plus the max_turn safety cap). Off by default,
+    # so the live voice loop keeps server-side turn detection.
+    manual_turns: bool = False
     # Small, opaque state a selected assistant profile persists across turns (via
     # its after_turn hook). Empty and unused by the default telco path; the engine
     # never inspects its contents, so it stays domain-agnostic.

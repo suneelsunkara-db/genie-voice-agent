@@ -96,17 +96,20 @@ def _run_ts(runs: list[dict[str, Any]]) -> str:
 
 
 def select_ready_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Pick, per dataset, the newest *fully ready* benchmark run.
+    """Pick, per dataset, the freshest complete measurement for every language.
 
-    "Fully ready" means a single ``run_id`` that (a) swept the full language
-    breadth ever measured for that dataset and (b) has accuracy + TTFT on every
-    unit that produced results. A partial or in-flight run (fewer languages, or
-    a language still missing its TTFT) is NOT promoted — the previous fully
-    ready run keeps showing. If no run is fully ready yet, we fall back to the
-    latest row per language so the page is never blank.
+    The newest *complete* run (one whose every covered unit reported accuracy +
+    TTFT, or finished fully-errored) is the primary; any language it did not
+    cover is backfilled from older complete runs, newest first. This keeps the
+    page on the latest numbers even when a run deliberately skips a language
+    (e.g. a broken locale) — a single skipped language must not pin the whole
+    page to an older, slower run that happens to have wider coverage.
+
+    If no run is complete yet, we fall back to the latest row per language so the
+    page is never blank.
 
     Returns ``(selected_runs, meta)`` where ``meta`` records, per dataset, the
-    chosen ``run_id`` and whether it was fully ready.
+    primary ``run_id``, whether the view is complete, and any backfill sources.
     """
     by_dataset: dict[str, list[dict[str, Any]]] = {}
     for run in runs:
@@ -126,19 +129,26 @@ def select_ready_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             rid: rs for rid, rs in by_run.items() if all(_unit_metrics_ready(r) for r in rs)
         }
         if complete:
-            widest = max(len({r.get("language") for r in rs}) for rs in complete.values())
-            ready = {
-                rid: rs
-                for rid, rs in complete.items()
-                if len({r.get("language") for r in rs}) >= widest
-            }
-            best_rid = max(ready, key=lambda rid: (_run_ts(ready[rid]), rid))
-            chosen = ready[best_rid]
-            selected.extend(chosen)
+            # Newest complete run is the primary; walk older complete runs
+            # (newest first) only to backfill languages it never covered.
+            order = sorted(complete, key=lambda rid: (_run_ts(complete[rid]), rid), reverse=True)
+            primary_rid = order[0]
+            chosen: dict[str, dict[str, Any]] = {}
+            backfilled_from: list[str] = []
+            for rid in order:
+                for run in complete[rid]:
+                    lang = run.get("language")
+                    if not lang or lang in chosen:
+                        continue
+                    chosen[lang] = run
+                    if rid != primary_rid and rid not in backfilled_from:
+                        backfilled_from.append(rid)
+            selected.extend(chosen.values())
             meta[dataset] = {
-                "run_id": best_rid,
+                "run_id": primary_rid,
                 "ready": True,
-                "languages": sorted({r.get("language") for r in chosen if r.get("language")}),
+                "languages": sorted(chosen),
+                "backfilled_from": backfilled_from,
             }
             continue
 
