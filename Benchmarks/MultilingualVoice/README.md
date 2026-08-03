@@ -12,10 +12,22 @@ against the reference — this sweep focuses on **speech-to-text accuracy**.
 | **FLEURS** | `google/fleurs` | STT accuracy on read speech | 24 (all supported) | WER / CER (↓) |
 
 FLEURS is a **read-speech ASR corpus**, so it is used to score **speech-to-text
-only**. TTS is intentionally **not** scored here: round-tripping ASR audio
-through TTS and re-transcribing it conflates STT and TTS error (the round-trip
-number is bounded by the STT judge, not the TTS quality). TTS quality needs its
-own benchmark and is out of scope for this sweep.
+only**. TTS *quality* is intentionally **not** scored here: round-tripping ASR
+audio through TTS and re-transcribing it conflates STT and TTS error (the
+round-trip number is bounded by the STT judge, not the TTS quality). TTS quality
+needs its own benchmark and is out of scope for this sweep.
+
+**Latency (TTFT).** FLEURS accuracy uses the STT-only route (the LLM is never in
+the loop), so the accuracy turn has no spoken reply to time. To get a meaningful
+**TTFT** we run a **TTS round-trip** (`--tts-roundtrip`, on by default): the
+reference text is synthesized through the text-to-speech route and we record the
+TTS engine's **time-to-first-audio** (`client_ttfa_ms`) — a model-level "how fast
+the voice starts speaking" number. (Routing FLEURS through the full agent
+capability instead would time the tool-assisted LLM — tens of seconds on
+read-speech — which measures the app, not the voice stack.) TTFT is the headline
+latency in the UI, with the STT stage time shown alongside it. The UI only
+promotes a new run once it has swept the full language set with accuracy **and**
+TTFT on every unit — a partial/in-flight run keeps showing the last full run.
 
 > **Deprecated:** the earlier LLM-QA datasets (**2M-Belebele**, **CCFQA**) are no
 > longer part of the comparison. They exercised the contact-center billing-agent
@@ -69,10 +81,15 @@ cd Benchmarks/MultilingualVoice
 ./eval.sh --local --languages en --limit 5
 ```
 
-Live results and logs are written to the UC Volume at
-``volume.multilingual_voice_benchmark_path`` (see `config/config.yaml`):
+Scores are the source of truth in the Delta tables
+``{catalog}.{schema}.benchmark_runs`` (one row per run_id×dataset×language) and
+``benchmark_samples`` — this is what ``GET /v1/benchmarks`` reads. Serverless job
+tasks write straight to Delta; ``summary.json`` is written only for offline
+inspection in ``--fixture`` / ``--local`` modes and is **not** read by the API.
 
-- ``summary.json`` — latest scores (read by ``GET /v1/benchmarks``)
+Logs still land on the UC Volume at ``volume.multilingual_voice_benchmark_path``
+(see `config/config.yaml`):
+
 - ``logs/run_<timestamp>.log`` — full run log mirrored from stdout
 - ``logs/issues.jsonl`` — structured per-turn issues
 

@@ -2,17 +2,21 @@
 #
 # Submit (default) or run locally the multilingual voice benchmark.
 #
-# FLEURS is an STT benchmark, so this only measures speech-to-text (WER/CER) —
-# TTS is intentionally NOT scored here (round-tripping ASR audio through TTS
-# conflates STT and TTS error; TTS quality needs its own benchmark).
+# FLEURS scores speech-to-text accuracy (WER/CER) on the STT transcript (STT-only
+# route — the LLM is never in the loop). It ALSO runs a TTS round-trip: the
+# reference text is synthesized through the text-to-speech route, which records
+# the TTS engine's time-to-first-audio as TTFT (a model-level "how fast the voice
+# starts speaking" number, not the agent's tool-assisted latency), then re-STTs the
+# audio for intelligibility. Pass --no-roundtrip to skip it (WER/CER only).
 #
-# Default: serverless Databricks job -> realtime app WebSocket APIs -> UC Volume,
+# Default: serverless Databricks job -> realtime app WebSocket APIs -> Delta,
 # then a vendor STT comparison job (Deepgram) that reuses the SAME staged FLEURS
 # audio. The vendor job runs AFTER the main job so the staged data exists, so
 # `eval.sh` waits on the main job when vendors are enabled.
-# Results: volume.multilingual_voice_benchmark_path/summary.json
+# Results: Delta tables {catalog}.{schema}.benchmark_runs + benchmark_samples
+#          (read by GET /realtime/v1/benchmarks in the Databricks app; summary.json
+#           is written only in --fixture/--local mode and is NOT read by the API)
 # Logs:    volume.multilingual_voice_benchmark_path/logs/run_<timestamp>.log
-#          (read by GET /realtime/v1/benchmarks in the Databricks app)
 #
 # Usage:
 #   ./eval.sh                                    # main + vendor STT jobs in sequence
@@ -30,7 +34,9 @@ cd "$HERE"
 
 DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-fe-vm-vdm-classic-rcn6ip}"
 LANGUAGES="${MLV_LANGUAGES:-}"
-DATASET="${MLV_DATASET:-all}"
+# FLEURS-STT is the documented default sweep (the UI + references are FLEURS-only;
+# belebele/ccfqa are deprecated). Pass --dataset all to also run the deprecated sets.
+DATASET="${MLV_DATASET:-fleurs}"
 LIMIT="${MLV_LIMIT:-20}"
 VENDORS="${MLV_VENDORS:-deepgram}"
 VENDORS_ENABLED=1

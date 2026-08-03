@@ -64,6 +64,16 @@ BELEBELE_VAD_SILENCE_MS = 600_000
 # short FLEURS/CCFQA turns.
 BELEBELE_TIMEOUT_S = 300.0
 
+# FLEURS clips are single read-speech utterances (mostly <30 s). Setting these
+# overrides puts the client in BATCH mode: it streams the audio as fast as the
+# socket allows instead of pacing it at wall-clock speed, which is ~10-20x faster
+# per turn. audio.end still marks the boundary and the high VAD ceiling keeps a
+# brief pause from finalizing the turn early, so the whole clip is transcribed.
+# Accuracy is unchanged (same audio + STT model) — only the artificial real-time
+# delay is removed. This is what made full FLEURS sweeps take 20-40 min.
+FLEURS_MAX_TURN_SECONDS = 150
+FLEURS_VAD_SILENCE_MS = 30_000
+
 
 def _percentiles(values: list[int]) -> dict[str, int]:
     if not values:
@@ -199,6 +209,12 @@ def run_one(
         turn_overrides = {
             "max_turn_seconds": BELEBELE_MAX_TURN_SECONDS,
             "vad_silence_ms": BELEBELE_VAD_SILENCE_MS,
+        }
+    elif dataset == "fleurs":
+        # Batch mode (no real-time pacing) — see FLEURS_* constants above.
+        turn_overrides = {
+            "max_turn_seconds": FLEURS_MAX_TURN_SECONDS,
+            "vad_silence_ms": FLEURS_VAD_SILENCE_MS,
         }
 
     for i, sample in enumerate(load_staged(dataset, lang, args.limit, out_dir=staged_dir)):

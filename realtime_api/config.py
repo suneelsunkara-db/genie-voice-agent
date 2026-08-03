@@ -376,10 +376,6 @@ def benchmark_results_dir(config_dir: str | Path | None = None) -> Path:
     return Path(resolve_volume_path(template, config_dir))
 
 
-def benchmark_summary_path(config_dir: str | Path | None = None) -> Path:
-    return benchmark_results_dir(config_dir) / "summary.json"
-
-
 def benchmark_api_host(config_dir: str | Path | None = None) -> str:
     block = (_load_merged(config_dir or config_dir_from_env()).get("realtime_voice") or {}).get("benchmark") or {}
     host = str(block.get("api_host") or "").strip()

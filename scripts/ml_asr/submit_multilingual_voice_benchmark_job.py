@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
@@ -115,6 +115,7 @@ def _build_tasks(
     dataset_sel: str,
     languages_sel: str,
     max_parallel: int,
+    roundtrip: bool = True,
 ) -> list[jobs.Task]:
     base_params = [
         "--transport", "ws",
@@ -174,6 +175,11 @@ def _build_tasks(
         run_if = jobs.RunIf.ALL_SUCCESS if dep_key == "prepare" else jobs.RunIf.ALL_DONE
         key = f"{dataset}_{lang}"
         params = base_params + ["--mode", "benchmark", "--dataset", dataset, "--language", lang]
+        # FLEURS TTFT: synthesize the reference through the TTS route (LLM skipped)
+        # and record the engine's time-to-first-audio. run_benchmark only acts on
+        # this flag for the fleurs dataset, so it's a no-op for belebele/ccfqa.
+        if roundtrip and dataset == "fleurs":
+            params += ["--tts-roundtrip"]
         tasks.append(jobs.Task(
             task_key=key,
             environment_key="mlv_env",
@@ -203,6 +209,10 @@ def main() -> None:
     )
     parser.add_argument("--wait", action="store_true", help="Block until the run finishes")
     parser.add_argument("--resume", help="Resume a prior sweep by run_id (skips completed pairs)")
+    parser.add_argument(
+        "--no-roundtrip", action="store_true",
+        help="Skip the FLEURS TTS round-trip (which captures TTFT + intelligibility)",
+    )
     args = parser.parse_args()
 
     config = load_config()
@@ -251,6 +261,7 @@ def main() -> None:
         env_version=env_version,
         dataset_sel=args.dataset, languages_sel=args.languages,
         max_parallel=args.max_parallel,
+        roundtrip=not args.no_roundtrip,
     )
 
     from databricks.sdk.service import compute
@@ -290,7 +301,10 @@ def main() -> None:
 
     if args.wait:
         # run_now returns a Wait[Run]; .result() blocks until the run terminates.
-        result = run.result()
+        # The full sweep (STT accuracy + TTS round-trip per pair) can run well past
+        # the SDK's 20-minute default, so give it an hour before giving up the wait
+        # (the job itself keeps running server-side regardless).
+        result = run.result(timeout=timedelta(minutes=60))
         print(f"final state: {result.state}")
 
 

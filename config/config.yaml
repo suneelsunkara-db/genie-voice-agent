@@ -53,7 +53,8 @@ volume:
   audio_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/audio"
   transcript_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/call_streaming_data/transcripts"
   checkpoint_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/_pipeline_state" # Auto Loader checkpoints/schema (OUTSIDE raw_stt)
-  # Multilingual voice benchmark outputs (summary.json, issues.jsonl, optional per-lang rows).
+  # Multilingual voice benchmark logs (run_<ts>.log, issues.jsonl). Scores go to
+  # the benchmark_runs/benchmark_samples Delta tables, not this Volume.
   multilingual_voice_benchmark_path: "/Volumes/{catalog}/{schema}/{streaming_volume}/multilingual_voice_benchmark"
 
 # UC analytics tables (created in {catalog}.{schema}). Lakebase is the source

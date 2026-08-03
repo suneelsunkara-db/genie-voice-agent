@@ -30,6 +30,11 @@ CAPABILITY_PATHS = {
     "text-to-speech": "/v1/text-to-speech",
 }
 
+# FLEURS uses the STT-only route for accuracy (WER/CER on transcript.final). TTFT
+# is NOT measured on this turn — routing FLEURS through the full agent capability
+# would time the tool-assisted LLM (tens of seconds on read-speech), not the voice
+# stack. Instead, --tts-roundtrip synthesizes the reference text through the
+# text-to-speech route and records the TTS engine's time-to-first-audio as TTFT.
 DATASET_CAPABILITIES = {
     "fleurs": "speech-to-text",
     "belebele": "speech-llm-toolassist-speech",
@@ -283,7 +288,14 @@ class WebSocketRealtimeClient:
             result.roundtrip = {"spoken_text": spoken_text, "reheard_text": None, "error": "no_tts_audio"}
             return result
         pcm, rate = _to_session_rate(result.tts_audio, result.tts_sample_rate or 24_000)
-        heard = self.run_turn(pcm, sample_rate_hz=rate, language=language or self.language, capability="speech-to-text")
+        # Re-transcribe in BATCH mode (no real-time pacing): this leg only scores
+        # intelligibility of the synthesized audio, so streaming it at wall-clock
+        # speed would just double the per-sample time. audio.end finalizes the turn;
+        # the high VAD ceiling keeps it from cutting the reheard audio early.
+        heard = self.run_turn(
+            pcm, sample_rate_hz=rate, language=language or self.language,
+            capability="speech-to-text", max_turn_seconds=120.0, vad_silence_ms=5000,
+        )
         result.roundtrip = {
             "spoken_text": spoken_text,
             "reheard_text": heard.transcript,
@@ -484,7 +496,14 @@ class InProcessRealtimeClient:
             result.roundtrip = {"spoken_text": spoken_text, "reheard_text": None, "error": "no_tts_audio"}
             return result
         pcm, rate = _to_session_rate(result.tts_audio, result.tts_sample_rate or 24_000)
-        heard = self.run_turn(pcm, sample_rate_hz=rate, language=language or self.language, capability="speech-to-text")
+        # Re-transcribe in BATCH mode (no real-time pacing): this leg only scores
+        # intelligibility of the synthesized audio, so streaming it at wall-clock
+        # speed would just double the per-sample time. audio.end finalizes the turn;
+        # the high VAD ceiling keeps it from cutting the reheard audio early.
+        heard = self.run_turn(
+            pcm, sample_rate_hz=rate, language=language or self.language,
+            capability="speech-to-text", max_turn_seconds=120.0, vad_silence_ms=5000,
+        )
         result.roundtrip = {
             "spoken_text": spoken_text, "reheard_text": heard.transcript,
             "reheard_language": heard.detected_language, "error": heard.error,
