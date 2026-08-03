@@ -193,6 +193,15 @@ def _mount_realtime(app: FastAPI) -> None:
 
         app.mount("/realtime", create_realtime_app(settings=rt_settings, bundle_factory=_factory))
 
+        # A bare "/realtime" (no trailing slash) is NOT matched by the Mount above,
+        # so without this it falls through to the SPA catch-all in _mount_frontend
+        # and serves the web app instead of the API. Redirect to "/realtime/" so the
+        # base path lands on the sub-app's JSON API descriptor. Registered before the
+        # catch-all (this runs before _mount_frontend); same pattern as /realtime-test.
+        @app.get("/realtime", include_in_schema=False)
+        def _realtime_index() -> RedirectResponse:
+            return RedirectResponse(url="/realtime/")
+
         @app.on_event("startup")
         def _warm_realtime_serving() -> None:
             # Mounted sub-apps don't get their own startup events from Starlette,

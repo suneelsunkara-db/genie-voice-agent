@@ -11,7 +11,7 @@ import wave
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
@@ -128,6 +128,28 @@ def create_app(
         # Starlette does NOT run a mounted sub-app's startup events, so the parent
         # triggers warm-up itself via ``warm_serving`` (see api/app/main.py).
         warm_serving(settings, bundle_factory)
+
+    @app.get("/")
+    async def root(request: Request) -> dict:
+        """API landing: identifies the service and lists its endpoints.
+
+        Without this the base path has no route, so callers hit a bare 404 (or,
+        when mounted under the main app, fall through to the web SPA). ``root_path``
+        is the mount prefix ("/realtime" under the Databricks App, "" standalone),
+        so the advertised links are correct in both deployments.
+        """
+        base = request.scope.get("root_path", "").rstrip("/")
+        return {
+            "service": "realtime-voice-api",
+            "version": app.version,
+            "endpoints": {
+                "capabilities": f"{base}/v1/capabilities",
+                "languages": f"{base}/v1/languages",
+                "benchmarks": f"{base}/v1/benchmarks",
+                "health": f"{base}/healthz",
+            },
+            "websockets": {spec.capability: f"{base}{spec.path}" for spec in ROUTES},
+        }
 
     @app.get("/healthz")
     async def healthz() -> dict:

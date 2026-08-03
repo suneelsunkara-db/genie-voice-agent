@@ -404,12 +404,64 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
    so `deploy_app.sh` ships them alongside the contact-center cockpit without
    touching it. In the app the pipeline authenticates as the injected service
    principal (OAuth). Endpoints become:
-   - `WS /realtime/v1/speech-to-text`, `WS /realtime/v1/speech-llm-toolassist-speech`, `WS /realtime/v1/text-to-speech`, `GET /realtime/v1/capabilities`, `GET /realtime/v1/languages`
+   - `GET /realtime` (and `/realtime/`) — a JSON **API descriptor** that names the
+     service and lists every endpoint below (links are mount-prefix aware). The bare
+     `/realtime` 307-redirects to `/realtime/` so the base path lands on the API, not
+     the web SPA.
+   - `WS /realtime/v1/speech-to-text`, `WS /realtime/v1/speech-llm-toolassist-speech`, `WS /realtime/v1/text-to-speech`, `GET /realtime/v1/capabilities`, `GET /realtime/v1/languages`, `GET /realtime/v1/benchmarks`
    - Test UI: `https://<app-host>/realtime-test/` (auto-targets the `/realtime` mount)
+
+   All of the above are behind Databricks Apps auth (SSO in a browser; a Bearer
+   token from an identity with access to the app for programmatic callers).
 
    `deploy_app.sh` attaches the realtime STT/LLM/TTS serving endpoints (from the
    `realtime_voice:` config block) as app resources so the service principal gets
    `CAN_QUERY`. Missing endpoints are skipped with a warning.
+
+### External / cross-workspace access
+
+A Databricks App is protected by its **host workspace's** OAuth/OIDC — there is no
+anonymous access and no API key. Two rules follow:
+
+1. **Auth is workspace-scoped.** The caller must present an OAuth token issued by
+   the **app's** workspace host. A token minted against a different workspace is
+   rejected (an unauthenticated request 302-redirects to the app workspace's OIDC).
+2. **The principal needs `CAN_USE` on the app** (App → Permissions). A valid token
+   without app permission still gets `403`.
+
+**Option A — Service principal (M2M), recommended for programmatic / cross-workspace
+callers.** This is how the multilingual benchmark reaches the app
+(`M2MTokenProvider` in `Benchmarks/MultilingualVoice/databricks_auth.py`). The
+realtime API calls its STT/LLM/TTS endpoints as the **app's own** service principal,
+so the *caller's* SP only needs `CAN_USE` on the app — no serving grants.
+
+1. In the app's account, create a service principal and generate an **OAuth secret**
+   (`client_id` + `client_secret`). Secret creation is an **account-admin** action
+   (Account Console → *Service principals* → *Secrets*, or
+   `databricks account service-principal-secrets create --service-principal-id <id>`).
+2. Grant that SP `CAN_USE` on the app:
+   ```bash
+   databricks apps update-permissions genie-voice-agent -p <profile> --json '{
+     "access_control_list": [
+       {"service_principal_name": "<client-id>", "permission_level": "CAN_USE"}
+     ]}'
+   ```
+3. The caller mints a token against the **app's workspace host** and sends it as a
+   Bearer on every request (HTTP and the WebSocket upgrade):
+   ```python
+   from databricks.sdk.core import Config
+   cfg = Config(host="https://<app-workspace-host>", client_id="<client-id>",
+                client_secret="<secret>", auth_type="oauth-m2m")
+   token = cfg.authenticate()["Authorization"].removeprefix("Bearer ").strip()
+   # ws:  wss://<app-host>/realtime/v1/speech-to-text   header: Authorization: Bearer <token>
+   ```
+   Raw equivalent: `POST https://<app-workspace-host>/oidc/v1/token` with
+   `grant_type=client_credentials&scope=all-apis` and HTTP Basic `client_id:secret`.
+
+**Option B — Existing account user (U2M).** If the caller is already a user in the
+app's account (this app grants `CAN_USE` to *account users*), they authenticate to
+the app's workspace host directly — `databricks auth login --host https://<app-workspace-host>`
+then `databricks auth token` — or simply SSO in the browser. No shared secret.
 
 ## Capabilities
 
@@ -449,7 +501,9 @@ python -m realtime_api.server            # ws://localhost:8001/v1/speech-llm-too
 Auth uses the Databricks SDK serving client (no local mlflow needed), authenticating
 with the profile from config (`databricks.profile`) or `DATABRICKS_CONFIG_PROFILE`.
 
-HTTP endpoints: `GET /healthz`, `GET /v1/languages` (end-to-end supported languages).
+HTTP endpoints: `GET /` (JSON API descriptor listing all routes), `GET /healthz`,
+`GET /v1/capabilities`, `GET /v1/languages` (end-to-end supported languages), and
+`GET /v1/benchmarks` (latest multilingual scores from Delta).
 
 ## Run the UI (standalone client)
 
@@ -485,6 +539,14 @@ Connect to `WS /v1/speech-llm-toolassist-speech` (or `WS /v1/speech-to-text` / `
 `pcm_s16le` frames (8/16/24/48 kHz accepted; 16 kHz recommended). The service
 finalizes a turn automatically after configured speech silence or maximum duration;
 `audio.end` remains available for push-to-talk clients.
+
+**Turn ownership (`endpointing`).** By default the server owns the end-of-turn
+boundary (Silero VAD + smart-turn). A `session.start` may set `endpointing: false`
+to take **client-managed** control: the server does no automatic finalization and
+ends the turn only on `audio.end` (with `max_turn_seconds` as a safety ceiling).
+This is for offline/batch callers that already hold a whole utterance — e.g. the
+multilingual benchmark — so a natural mid-utterance pause can't split the clip into
+truncated turns. Omitting the flag preserves the live-call behavior exactly.
 
 Server → client events:
 

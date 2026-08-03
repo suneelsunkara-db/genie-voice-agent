@@ -25,9 +25,20 @@ TTS engine's **time-to-first-audio** (`client_ttfa_ms`) — a model-level "how f
 the voice starts speaking" number. (Routing FLEURS through the full agent
 capability instead would time the tool-assisted LLM — tens of seconds on
 read-speech — which measures the app, not the voice stack.) TTFT is the headline
-latency in the UI, with the STT stage time shown alongside it. The UI only
-promotes a new run once it has swept the full language set with accuracy **and**
-TTFT on every unit — a partial/in-flight run keeps showing the last full run.
+latency in the UI, with the STT stage time shown alongside it. The UI shows the
+**freshest complete measurement per language**: the newest complete run is the
+primary, and older complete runs backfill only the languages it did not cover, so
+one deliberately-skipped locale never pins the whole page to an older, staler run.
+
+**Client-managed turns (no truncation).** Every clip is sent with
+`endpointing: false` in `session.start`, so the API does **no** automatic
+end-of-turn detection and transcribes the whole clip as one turn, finalizing only
+on `audio.end`. This is the fix for a former artifact where server-side turn
+detection (Silero + smart-turn) cut a long clip at a natural mid-utterance pause
+and the harness recorded only the first fragment — inflating WER/CER. Live calls
+are unaffected: absent the flag, sessions keep the server's default endpointing.
+`max_turn_seconds` is still sent, but only as a safety ceiling (an audio-duration
+cap, not a turn detector) that also enables fast batch streaming.
 
 > **Deprecated:** the earlier LLM-QA datasets (**2M-Belebele**, **CCFQA**) are no
 > longer part of the comparison. They exercised the contact-center billing-agent

@@ -72,6 +72,17 @@ def _drive_turn(ws) -> None:
     assert ws.receive_json()["type"] == "turn.started"
 
 
+def test_root_returns_api_descriptor_not_html() -> None:
+    with _app() as client:
+        response = client.get("/")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["service"] == "realtime-voice-api"
+        # Advertised endpoints/WS routes let a caller discover the API from its base.
+        assert body["endpoints"]["capabilities"].endswith("/v1/capabilities")
+        assert "speech-to-text" in body["websockets"]
+
+
 def test_healthz() -> None:
     with _app() as client:
         response = client.get("/healthz")
