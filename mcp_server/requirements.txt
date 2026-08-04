@@ -1,0 +1,7 @@
+# MCP server for the Genie realtime voice API. Install into a venv, then point
+# your MCP client (Cursor / Claude Desktop) at `python -m mcp_server.server`.
+mcp>=1.9,<2                # Model Context Protocol SDK (bundles FastMCP; 2.0 removed it)
+websockets>=12             # WebSocket transport to the realtime API
+requests>=2.31             # HTTP for the metadata endpoints
+databricks-sdk>=0.40       # OAuth (SP M2M / CLI profile) to a Databricks App
+numpy>=1.24                # audio decode / resample (WAV <-> PCM s16le)

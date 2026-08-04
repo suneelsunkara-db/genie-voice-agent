@@ -13,3 +13,9 @@ requests>=2.31
 # are bundled under realtime_api/models/.
 numpy>=1.24
 onnxruntime>=1.17
+# Model Context Protocol server, hosted in-process at /realtime/mcp (see
+# mcp_server/ and api/app/main.py:_mount_mcp) so remote MCP clients can reach the
+# realtime voice API as tools over HTTP. Pinned <2: mcp 2.0 dropped the bundled
+# FastMCP (mcp.server.fastmcp) that mcp_server/server.py builds on; 1.x still
+# ships FastMCP *and* the StreamableHTTPSessionManager the mount uses.
+mcp>=1.9,<2

@@ -409,6 +409,7 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
      `/realtime` 307-redirects to `/realtime/` so the base path lands on the API, not
      the web SPA.
    - `WS /realtime/v1/speech-to-text`, `WS /realtime/v1/speech-llm-toolassist-speech`, `WS /realtime/v1/text-to-speech`, `GET /realtime/v1/capabilities`, `GET /realtime/v1/languages`, `GET /realtime/v1/benchmarks`
+   - `POST /realtime/mcp` — the MCP endpoint (voice API exposed as MCP tools); see [MCP server](#mcp-server-remote-over-http)
    - Test UI: `https://<app-host>/realtime-test/` (auto-targets the `/realtime` mount)
 
    All of the above are behind Databricks Apps auth (SSO in a browser; a Bearer
@@ -462,6 +463,75 @@ so the *caller's* SP only needs `CAN_USE` on the app — no serving grants.
 app's account (this app grants `CAN_USE` to *account users*), they authenticate to
 the app's workspace host directly — `databricks auth login --host https://<app-workspace-host>`
 then `databricks auth token` — or simply SSO in the browser. No shared secret.
+
+### MCP server (remote, over HTTP)
+
+The realtime voice API is also exposed as a **Model Context Protocol** endpoint so
+MCP clients (Cursor, Claude Desktop, any MCP host) can use it as tools. It is hosted
+**in-process** by the app at the exact path:
+
+```
+https://<app-host>/realtime/mcp
+```
+
+Transport is **streamable HTTP** (the MCP `StreamableHTTPSessionManager`). The server
+code lives in `mcp_server/`; `api/app/main.py:_mount_mcp` wires it at `/realtime/mcp`,
+and `deploy_app.sh` ships/updates it with every deploy (no extra step). Its tools call
+the co-hosted `/realtime` routes over **loopback**, so there is no second auth hop.
+
+**Tools exposed:** `describe_api`, `get_capabilities`, `list_languages`,
+`get_benchmarks`, `health`, `synthesize_speech`, `transcribe_audio`, `ask_voice_agent`.
+
+**Auth is the app's normal ingress auth** — attach `Authorization: Bearer <token>`
+where `<token>` is a Databricks OAuth token from the app's workspace with `CAN_USE`
+on the app (same tokens as [External / cross-workspace access](#external--cross-workspace-access)).
+Opening `/realtime/mcp` in a **browser** returns
+`{"error":{"code":-32600,"message":"Not Acceptable: Client must accept text/event-stream"}}`
+— that is **expected**: a browser `GET` isn't an MCP client. Only clients that send
+`Accept: application/json, text/event-stream` can speak the protocol.
+
+**Connect a remote MCP client** (e.g. Cursor `~/.cursor/mcp.json`):
+
+```jsonc
+{
+  "mcpServers": {
+    "genie-voice": {
+      "url": "https://<app-host>/realtime/mcp",
+      "headers": { "Authorization": "Bearer <databricks-oauth-token>" }
+    }
+  }
+}
+```
+
+**Run locally over stdio** (the same package, pointed at the deployed app or a local
+`python -m realtime_api.server`):
+
+```bash
+pip install -r mcp_server/requirements.txt      # mcp>=1.9,<2 (bundles FastMCP)
+GENIE_VOICE_API_URL=https://<app-host>/realtime \
+DATABRICKS_HOST=https://<app-workspace-host> \
+DATABRICKS_CLIENT_ID=<sp-client-id> DATABRICKS_CLIENT_SECRET=<sp-secret> \
+python -m mcp_server.server                      # or DATABRICKS_CONFIG_PROFILE=<profile>
+```
+
+**Verify the deployed endpoint** (JSON-RPC over streamable HTTP):
+
+```bash
+TOKEN=$(databricks auth token -p <profile> | jq -r .access_token)
+MCP=https://<app-host>/realtime/mcp
+# initialize -> 200 + an `mcp-session-id` response header
+curl -s -D- -o/dev/null -X POST "$MCP" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}'
+# then tools/list (reuse the returned session id via header `mcp-session-id: <id>`)
+```
+
+A liveness/mount probe is available at `GET /__mcp_status` →
+`{"mounted":true,"path":"/realtime/mcp","via":"asgi-middleware"}`.
+
+> Note: `mcp` is pinned `>=1.9,<2` — the `mcp` 2.0 release removed the bundled
+> `FastMCP` (`mcp.server.fastmcp`) this server builds on.
 
 ## Capabilities
 

@@ -156,10 +156,117 @@ def create_app() -> FastAPI:
 
         threading.Thread(target=_work, daemon=True, name="api-warm").start()
 
+    @app.get("/__mcp_status", include_in_schema=False)
+    def _mcp_status_route() -> dict:
+        # Lightweight ops probe: is the in-process MCP endpoint mounted, and if
+        # not, why (import / build / start error). Registered before the SPA
+        # catch-all so it isn't shadowed.
+        return dict(getattr(app.state, "mcp_status", {"mounted": False, "error": "not attempted"}))
+
+    _mount_mcp(app)
     _mount_realtime(app)
     _mount_realtime_test_ui(app)
     _mount_frontend(app)
     return app
+
+
+def _mount_mcp(app: FastAPI) -> None:
+    """Host the MCP server over HTTP at EXACTLY ``/realtime/mcp`` (remote MCP).
+
+    Exposes the realtime voice API as Model Context Protocol tools so remote MCP
+    clients (Cursor, Claude Desktop) can reach it via URL + a Databricks token
+    (the app's normal ingress auth). It runs IN-PROCESS: its tools call the
+    ``/realtime`` routes over loopback (see ``mcp_server.server._resolve_target``),
+    so there's no second auth hop.
+
+    We deliberately avoid both ``FastMCP.streamable_http_app()`` (its Starlette app
+    mounts the transport at ``streamable_http_path``, default ``/mcp``, → the
+    endpoint would nest at ``/realtime/mcp/mcp``) and ``app.mount("/realtime/mcp")``
+    (a Starlette Mount only FULL-matches ``/realtime/mcp/<sub>`` and 307-redirects
+    the bare path, so ``/realtime/mcp`` with no trailing slash falls through to the
+    ``/realtime`` mount). Instead we drive the transport directly with a
+    ``StreamableHTTPSessionManager`` over the FastMCP low-level server, dispatched
+    from a thin pure-ASGI middleware that matches the exact path (see below), so the
+    endpoint is precisely ``/realtime/mcp`` with no redirect and no nested sub-path.
+
+    The session manager needs a task group that must be started inside a running
+    lifespan, so we start it from the parent's startup event and keep it open for
+    the app's life via an AsyncExitStack. Fully guarded: any failure degrades to
+    "no MCP endpoint" and never blocks the app.
+    """
+    status: dict = {"mounted": False, "path": "/realtime/mcp", "via": None, "error": None}
+    app.state.mcp_status = status
+
+    try:
+        from mcp_server.server import mcp
+    except Exception as exc:  # noqa: BLE001
+        status["error"] = f"import mcp_server.server: {type(exc).__name__}: {exc}"
+        print(f"[api-startup] MCP mount skipped: {status['error']}")
+        return
+
+    try:
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+        low_level = getattr(mcp, "_mcp_server", None) or getattr(mcp, "server", None)
+        if low_level is None:
+            raise RuntimeError("cannot access FastMCP low-level server")
+        manager = StreamableHTTPSessionManager(app=low_level)
+    except Exception as exc:  # noqa: BLE001
+        status["error"] = f"build session manager: {type(exc).__name__}: {exc}"
+        print(f"[api-startup] MCP mount skipped: {status['error']}")
+        return
+
+    # Serve the transport at EXACTLY "/realtime/mcp". We do NOT use app.mount():
+    # a Starlette Mount only FULL-matches "/realtime/mcp/<sub>" and 307-redirects
+    # the bare path, so "/realtime/mcp" (no trailing slash) would fall through to
+    # the "/realtime" mount. Instead a thin PURE-ASGI middleware (kept pure so the
+    # SSE stream isn't buffered) intercepts the exact path + any subpath, rewrites
+    # the scope to the transport root, and hands off to the path-agnostic manager.
+    mount = "/realtime/mcp"
+
+    class _MCPPathMiddleware:
+        # Starlette instantiates middleware as ``cls(app=<next-asgi-app>, **opts)``,
+        # so the first parameter MUST be named ``app``.
+        def __init__(self, app) -> None:
+            self._inner = app
+
+        async def __call__(self, scope, receive, send) -> None:
+            if scope.get("type") == "http":
+                path = scope.get("path", "")
+                if path == mount or path.startswith(mount + "/"):
+                    scope = dict(scope)
+                    scope["path"] = "/"
+                    scope["raw_path"] = b"/"
+                    scope["root_path"] = mount
+                    await manager.handle_request(scope, receive, send)
+                    return
+            await self._inner(scope, receive, send)
+
+    app.add_middleware(_MCPPathMiddleware)
+    status["via"] = "asgi-middleware"
+
+    @app.on_event("startup")
+    async def _mcp_start() -> None:
+        from contextlib import AsyncExitStack
+
+        try:
+            stack = AsyncExitStack()
+            await stack.enter_async_context(manager.run())
+            app.state._mcp_stack = stack
+            status["mounted"] = True
+            print(f"[api-startup] MCP endpoint live at {mount} (via {status['via']})")
+        except Exception as exc:  # noqa: BLE001
+            status["error"] = f"start: {type(exc).__name__}: {exc}"
+            print(f"[api-startup] MCP session start skipped: {status['error']}")
+
+    @app.on_event("shutdown")
+    async def _mcp_stop() -> None:
+        stack = getattr(app.state, "_mcp_stack", None)
+        if stack is not None:
+            try:
+                await stack.aclose()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[api-startup] MCP shutdown error: {exc}")
 
 
 def _mount_realtime(app: FastAPI) -> None:

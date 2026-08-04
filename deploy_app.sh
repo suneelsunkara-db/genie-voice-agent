@@ -13,7 +13,11 @@
 #      service principal is auto-granted access on deploy, then re-assert CAN_USE
 #      for external callers (see APP_EXTERNAL_* below) so cross-workspace access
 #      survives every redeploy
-#   4. sync source to a workspace folder (respects .gitignore)
+#   4. sync source to a workspace folder (respects .gitignore) — this includes
+#      the mcp_server/ package, which the app hosts in-process at /realtime/mcp
+#      (a remote MCP endpoint; `mcp` is declared in requirements.txt). No extra
+#      deploy step is needed: syncing the source + the mount in api/app/main.py
+#      deploy and update the MCP server together with the app.
 #   5. create the app (first run) and deploy it
 #
 # Config: edit the block below OR export the same vars before running.
@@ -304,5 +308,10 @@ dbx apps deploy "$APP_NAME" --source-code-path "$WORKSPACE_DIR" --mode SNAPSHOT
 APP_URL="$(dbx apps get "$APP_NAME" -o json | python3 -c 'import sys,json;print(json.load(sys.stdin).get("url",""))' 2>/dev/null || true)"
 log "------------------------------------------------------------------"
 log "deployed. app URL: ${APP_URL:-<see: databricks apps get $APP_NAME>}"
+if [[ -n "$APP_URL" ]]; then
+  log "realtime voice API: ${APP_URL%/}/realtime"
+  log "MCP endpoint (remote MCP over HTTP): ${APP_URL%/}/realtime/mcp"
+  log "  connect an MCP client with that URL + header 'Authorization: Bearer <databricks-token>'"
+fi
 log "logs: Compute -> Apps -> $APP_NAME -> Logs"
 log "------------------------------------------------------------------"
