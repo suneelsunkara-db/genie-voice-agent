@@ -1,3 +1,5 @@
+import { InteractionLanguage } from "../api/client";
+import { uiCopy } from "../i18n";
 import { Lang, flagFor } from "../lib/languages";
 import "../styles/langbar.css";
 
@@ -8,13 +10,16 @@ import "../styles/langbar.css";
  *
  * Pre-call it just records the choice; in-call the parent restarts the session
  * in the new language (session config is immutable after start).
+ *
+ * Its own label follows the selected language, so the control a caller uses to
+ * pick their language is not itself stuck in English.
  */
 export function LanguageBar({
   value,
   options,
   onChange,
   disabled,
-  label = "Voice language",
+  label,
 }: {
   value: string;
   options: Lang[];
@@ -22,10 +27,11 @@ export function LanguageBar({
   disabled?: boolean;
   label?: string;
 }) {
+  const copy = uiCopy(value as InteractionLanguage);
   return (
     <label className="langbar">
       <span className="langbar-label">
-        {label} · {options.length} languages
+        {copy.langbarLabel(label ?? copy.voiceLanguage, String(options.length))}
       </span>
       <span className="langbar-control">
         <span className="langbar-flag" aria-hidden>

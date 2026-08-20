@@ -248,6 +248,58 @@ export type UiCopy = {
   deepFailed: (reason: string) => string;
   deepNoSummary: (status: string) => string;
   deepShowData: (count: string) => string;
+  // Progress phases of a long governed workspace read. The runtime sends a stable
+  // code per phase (realtime_api/runtime/genie_one.py) and the name is rendered
+  // here, so the timeline is not the one part of a non-English call left in
+  // English. Same contract as localizedValue() for canonical backend values.
+  progressStageUnderstanding: string;
+  progressStageFindingData: string;
+  progressStageRunningAnalysis: string;
+  progressStageCheckingResults: string;
+  progressStagePreparingAnswer: string;
+  // Knowledge Agent page. Every voice surface localizes its own chrome; this page
+  // shipped hardcoded, so a Hindi call read a Hindi answer inside English framing.
+  kbProduct: string;
+  kbHome: string;
+  kbHeadTitle: string;
+  kbHeadSub: (questions: string, areas: string) => string;
+  kbHeadLoading: string;
+  kbBadgeLive: string;
+  kbAnswer: string;
+  kbStatusAsking: string;
+  kbStatusSpeaking: string;
+  kbStatusAnswered: string;
+  kbFullAnswer: string;
+  kbResult: string;
+  kbTranslating: string;
+  kbGrounded: string;
+  kbAnalyzing: string;
+  kbWorkingGeneric: string;
+  kbReviewingBusiness: string;
+  kbTimeout: string;
+  kbTurnFailed: (code: string) => string;
+  kbEmptyHint: string;
+  kbDisclaimer: string;
+  kbTapOrb: string;
+  kbConnecting: string;
+  kbListening: string;
+  kbThinking: string;
+  kbSpeaking: string;
+  kbInterrupt: string;
+  kbGenie: string;
+  kbEndCall: string;
+  kbMicDenied: string;
+  kbShape: (rows: string, columns: string) => string;
+  // Governed result rendering, shared by any surface that shows Genie's typed rows.
+  saGovernedAnalysis: string;
+  saQueryResult: string;
+  saQueryResultNumbered: (index: string) => string;
+  saRows: (count: string) => string;
+  saViewSql: string;
+  saChartAria: string;
+  saShowingRows: (shown: string, total: string) => string;
+  voiceLanguage: string;
+  langbarLabel: (label: string, count: string) => string;
 };
 
 const EN: UiCopy = {
@@ -469,10 +521,62 @@ const EN: UiCopy = {
   deepFailed: (reason) => `Couldn’t complete the deep dive: ${reason}`,
   deepNoSummary: (status) => `No summary returned (status: ${status})`,
   deepShowData: (count) => `Show the data (${count} queries)`,
+  progressStageUnderstanding: "Understanding your question",
+  progressStageFindingData: "Finding the right data",
+  progressStageRunningAnalysis: "Running the analysis",
+  progressStageCheckingResults: "Checking the results",
+  progressStagePreparingAnswer: "Preparing your answer",
+  kbProduct: "Knowledge Agent",
+  kbHome: "Home",
+  kbHeadTitle: "What you can ask Genie One",
+  kbHeadSub: (questions, areas) =>
+    `${questions} questions across ${areas} areas · every one runs live against your own governed workspace`,
+  kbHeadLoading: "Loading questions…",
+  kbBadgeLive: "Genie One · live",
+  kbAnswer: "Answer",
+  kbStatusAsking: "Asking Genie One…",
+  kbStatusSpeaking: "Speaking now",
+  kbStatusAnswered: "Answered",
+  kbFullAnswer: "Full answer",
+  kbResult: "Result",
+  kbTranslating: "Translating the full answer…",
+  kbGrounded: "What grounded this",
+  kbAnalyzing: "Analyzing your request",
+  kbWorkingGeneric: "I’m working through the relevant information…",
+  kbReviewingBusiness: "I’m reviewing the relevant business information…",
+  kbTimeout: "Genie One took too long to answer. Ask again, or narrow the question.",
+  kbTurnFailed: (code) => `Genie One could not complete that turn (${code}).`,
+  kbEmptyHint:
+    "Ask any question below out loud. The answer appears here as Genie speaks it, with the governed sources it came from.",
+  kbDisclaimer:
+    "Every question here runs live against your own Databricks workspace through Genie One, under your permissions — so the answer describes what you can actually reach. Anything Genie cannot cite, it says so instead of guessing.",
+  kbTapOrb: "Tap the orb to start",
+  kbConnecting: "Connecting…",
+  kbListening: "Listening…",
+  kbThinking: "Asking your governed workspace…",
+  kbSpeaking: "Genie is speaking…",
+  kbInterrupt: "Interrupt Genie",
+  kbGenie: "Genie",
+  kbEndCall: "End call",
+  kbMicDenied: "Microphone access denied",
+  kbShape: (rows, columns) => `${rows} rows · ${columns} columns`,
+  saGovernedAnalysis: "Governed analysis",
+  saQueryResult: "Query result",
+  saQueryResultNumbered: (index) => `Query result ${index}`,
+  saRows: (count) => `${count} rows`,
+  saViewSql: "View SQL",
+  saChartAria: "Chart of the governed query results",
+  saShowingRows: (shown, total) => `Showing ${shown} of ${total} rows`,
+  voiceLanguage: "Voice language",
+  langbarLabel: (label, count) => `${label} · ${count} languages`,
 };
 
-const TH: UiCopy = {
-  ...EN,
+// The hand-authored locales are OVERRIDES layered on top of the generated bundle,
+// not standalone catalogs. When they spread EN instead, every key added after they
+// were written silently rendered English in Thai, Indonesian, and Chinese — the
+// three languages that look the most cared-for. Authored text still wins wherever
+// it exists; anything absent here comes from the generated bundle, then English.
+const TH: Partial<UiCopy> = {
   navCockpit: "ค็อกพิท",
   navBenchmark: "เบนช์มาร์ก ASR",
   runtime: "รันไทม์",
@@ -692,8 +796,7 @@ const TH: UiCopy = {
   deepShowData: (count) => `ดูข้อมูล (${count} คำค้น)`,
 };
 
-const ID: UiCopy = {
-  ...EN,
+const ID: Partial<UiCopy> = {
   navCockpit: "kokpit",
   navBenchmark: "benchmark ASR",
   runtime: "runtime",
@@ -913,8 +1016,7 @@ const ID: UiCopy = {
   deepShowData: (count) => `Lihat data (${count} kueri)`,
 };
 
-const ZH: UiCopy = {
-  ...EN,
+const ZH: Partial<UiCopy> = {
   navCockpit: "工作台",
   navBenchmark: "ASR 基准",
   runtime: "运行模式",
@@ -1170,6 +1272,13 @@ const FUNCTION_FIELDS: Record<string, string[]> = {
   deepFailed: ["reason"],
   deepNoSummary: ["status"],
   deepShowData: ["count"],
+  kbHeadSub: ["questions", "areas"],
+  kbTurnFailed: ["code"],
+  kbShape: ["rows", "columns"],
+  saQueryResultNumbered: ["index"],
+  saRows: ["count"],
+  saShowingRows: ["shown", "total"],
+  langbarLabel: ["label", "count"],
 };
 
 /** Flatten a UiCopy into a translatable catalog of strings + {placeholder} templates. */
@@ -1212,15 +1321,29 @@ function buildCopy(catalog: Record<string, string>): UiCopy {
   return out as UiCopy;
 }
 
-// Resolved UiCopy per interaction code. Seeded with the hand-authored locales;
-// generated bundles are inserted on demand by ensureLocale().
+/** Hand-authored overrides, applied on top of whatever the bundle provides. */
+const AUTHORED: Record<string, Partial<UiCopy>> = {
+  "th-TH": TH,
+  "id-ID": ID,
+  "zh-CN": ZH,
+};
+
+/** Authored overrides over English, i.e. what to show before a bundle lands. */
+function seedCopy(code: string): UiCopy {
+  return { ...buildCopy({}), ...(AUTHORED[code] ?? {}) };
+}
+
+// Resolved UiCopy per interaction code. Seeded so the authored locales read
+// correctly on first paint; ensureLocale() then layers the generated bundle
+// underneath for every key the authored override does not cover.
 const COPY_CACHE = new Map<string, UiCopy>([
   ["en-US", EN],
-  ["th-TH", TH],
-  ["id-ID", ID],
-  ["zh-CN", ZH],
+  ["th-TH", seedCopy("th-TH")],
+  ["id-ID", seedCopy("id-ID")],
+  ["zh-CN", seedCopy("zh-CN")],
 ]);
-const AUTHORED_CODES = new Set(COPY_CACHE.keys());
+/** Codes whose bundle has been merged in (or that need no bundle at all). */
+const RESOLVED_CODES = new Set(["en-US"]);
 
 // Pre-generated locale bundles, resolved lazily via Vite's glob import. Guarded
 // so this module stays importable under plain Node (offline extraction tool),
@@ -1240,20 +1363,27 @@ function notifyLocaleChange(): void {
   for (const listener of localeListeners) listener();
 }
 
-/** Ensure the bundle for `language` is loaded (no-op for authored/loaded codes). */
+/** Ensure the bundle for `language` is loaded (no-op once resolved). */
 export function ensureLocale(language: InteractionLanguage | undefined): void {
   const code = contentLanguage(language);
-  if (AUTHORED_CODES.has(code) || COPY_CACHE.has(code) || pendingLocales.has(code)) return;
+  if (RESOLVED_CODES.has(code) || pendingLocales.has(code)) return;
   const loader = LOCALE_BUNDLES[`./locales/${code}.json`];
-  if (!loader) return; // no bundle yet → English (already cached under en-US)
+  if (!loader) {
+    // No bundle: an authored locale keeps its seeded copy, anything else is
+    // English. Either way there is nothing left to wait for.
+    RESOLVED_CODES.add(code);
+    return;
+  }
   pendingLocales.add(code);
   loader()
     .then((mod) => {
-      COPY_CACHE.set(code, buildCopy(mod.default ?? (mod as unknown as Record<string, string>)));
+      const bundle = mod.default ?? (mod as unknown as Record<string, string>);
+      COPY_CACHE.set(code, { ...buildCopy(bundle), ...(AUTHORED[code] ?? {}) });
+      RESOLVED_CODES.add(code);
       notifyLocaleChange();
     })
     .catch(() => {
-      /* keep English fallback */
+      /* keep the seeded copy (authored overrides over English) */
     })
     .finally(() => pendingLocales.delete(code));
 }

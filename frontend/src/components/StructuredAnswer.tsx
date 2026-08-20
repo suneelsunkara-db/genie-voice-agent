@@ -1,5 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { InteractionLanguage } from "../api/client";
+import { UiCopy, uiCopy } from "../i18n";
 import {
   Bar,
   BarChart,
@@ -44,13 +46,65 @@ function numberValue(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function formatValue(value: unknown): string {
+/**
+ * Format a governed cell for display in the caller's locale.
+ *
+ * Grouping and decimal separators follow the language of the call rather than
+ * whatever locale the browser happens to run in — a Genie figure shown to a German
+ * caller should read 1.234,56. The VALUE is never changed: no rounding beyond two
+ * decimals, no currency conversion, no unit inference. Digits stay Latin because
+ * these are financial figures that also appear in the report, statements, and the
+ * SQL beside them, and they have to match.
+ */
+function formatValue(value: unknown, language: string): string {
   if (value === null || value === undefined) return "—";
   const numeric = numberValue(value);
   if (numeric !== null && typeof value === "number") {
-    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(numeric);
+    try {
+      return new Intl.NumberFormat(language || undefined, {
+        maximumFractionDigits: 2,
+        numberingSystem: "latn",
+      }).format(numeric);
+    } catch {
+      return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(numeric);
+    }
   }
   return String(value);
+}
+
+/** Largest absolute value a column reaches, for comparing measure scales. */
+function columnMagnitude(result: AnalysisResult, column: AnalysisColumn): number {
+  const index = result.columns.indexOf(column);
+  return result.rows.reduce((peak, row) => {
+    const value = numberValue(row[index]);
+    return value === null ? peak : Math.max(peak, Math.abs(value));
+  }, 0);
+}
+
+/**
+ * A shared Y axis only works for measures of comparable size.
+ *
+ * Genie results routinely mix a total, a count, and an average in one row — 416,659
+ * beside 1,645 beside 252. Plotting those together scales the axis to the total and
+ * flattens everything else onto the baseline, which reads as a chart that failed to
+ * render. So chart the largest measure and only those within this factor of it; the
+ * rest stay in the table underneath, where their values are legible.
+ */
+const MEASURE_SCALE_RATIO = 20;
+
+function comparableMeasures(
+  result: AnalysisResult,
+  candidates: AnalysisColumn[]
+): AnalysisColumn[] {
+  const ranked = candidates
+    .map((column) => ({ column, magnitude: columnMagnitude(result, column) }))
+    .sort((a, b) => b.magnitude - a.magnitude);
+  const largest = ranked[0]?.magnitude ?? 0;
+  if (largest <= 0) return candidates.slice(0, 3);
+  return ranked
+    .filter(({ magnitude }) => magnitude * MEASURE_SCALE_RATIO >= largest)
+    .map(({ column }) => column)
+    .slice(0, 3);
 }
 
 export function chartModel(result: AnalysisResult): {
@@ -68,7 +122,10 @@ export function chartModel(result: AnalysisResult): {
   const dimension =
     result.columns.find((column) => !numeric.includes(column)) ?? result.columns[0];
   const dimensionIndex = result.columns.indexOf(dimension);
-  const measures = numeric.filter((column) => column !== dimension).slice(0, 3);
+  const measures = comparableMeasures(
+    result,
+    numeric.filter((column) => column !== dimension)
+  );
   if (!measures.length) return null;
   const data = result.rows.map((row, rowIndex) => {
     const point: Record<string, string | number> = {
@@ -88,7 +145,7 @@ export function chartModel(result: AnalysisResult): {
   };
 }
 
-function AnalysisChart({ result }: { result: AnalysisResult }) {
+function AnalysisChart({ result, copy }: { result: AnalysisResult; copy: UiCopy }) {
   const model = chartModel(result);
   if (!model) return null;
   const common = (
@@ -117,7 +174,7 @@ function AnalysisChart({ result }: { result: AnalysisResult }) {
     </>
   );
   return (
-    <div className="kb-analysis-chart" aria-label="Chart of Genie One query results">
+    <div className="kb-analysis-chart" aria-label={copy.saChartAria}>
       <ResponsiveContainer width="100%" height={280}>
         {model.kind === "line" ? (
           <LineChart data={model.data} margin={{ top: 12, right: 18, left: 4, bottom: 8 }}>
@@ -153,14 +210,22 @@ function AnalysisChart({ result }: { result: AnalysisResult }) {
   );
 }
 
-function ResultTable({ result }: { result: AnalysisResult }) {
+function ResultTable({
+  result,
+  copy,
+  language,
+}: {
+  result: AnalysisResult;
+  copy: UiCopy;
+  language: string;
+}) {
   if (result.rows.length === 1) {
     return (
       <div className="kb-kpis">
         {result.columns.map((column, index) => (
           <div className="kb-kpi" key={column.name}>
             <span>{displayName(column.name)}</span>
-            <strong>{formatValue(result.rows[0][index])}</strong>
+            <strong>{formatValue(result.rows[0][index], language)}</strong>
           </div>
         ))}
       </div>
@@ -180,7 +245,7 @@ function ResultTable({ result }: { result: AnalysisResult }) {
           {result.rows.map((row, rowIndex) => (
             <tr key={rowIndex}>
               {result.columns.map((column, columnIndex) => (
-                <td key={column.name}>{formatValue(row[columnIndex])}</td>
+                <td key={column.name}>{formatValue(row[columnIndex], language)}</td>
               ))}
             </tr>
           ))}
@@ -188,11 +253,30 @@ function ResultTable({ result }: { result: AnalysisResult }) {
       </table>
       {(result.truncated || result.totalRowCount > result.rows.length) && (
         <div className="kb-result-note">
-          Showing {result.rows.length} of {result.totalRowCount} rows
+          {copy.saShowingRows(String(result.rows.length), String(result.totalRowCount))}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Drop the lookup steps Genie ran on its way to the answer.
+ *
+ * A governed turn often starts by asking the workspace what exists — which months
+ * have data, which categories are spelled how — and each of those round-trips comes
+ * back as its own typed result. Shown beside the real answer they read as a broken
+ * table: one bare column of keys under the heading "Query result 1".
+ *
+ * A single-column result is treated as scaffolding only when a richer result exists
+ * to be the answer instead. On its own it stays, because "which months do I have?"
+ * is a legitimate question whose answer is exactly that one column.
+ */
+export function withoutScaffoldingResults(results: AnalysisResult[]): AnalysisResult[] {
+  const richest = results.reduce((peak, result) => Math.max(peak, result.columns.length), 0);
+  if (richest < 2) return results;
+  const kept = results.filter((result) => result.columns.length > 1);
+  return kept.length ? kept : results;
 }
 
 export function withoutEmbeddedQueryMarkdown(
@@ -211,11 +295,16 @@ export function withoutEmbeddedQueryMarkdown(
 export function StructuredAnswer({
   markdown,
   results,
+  language,
 }: {
   markdown: string;
   results: AnalysisResult[];
+  /** The call language: this panel's chrome and number formatting follow it. */
+  language?: string;
 }) {
-  const prose = withoutEmbeddedQueryMarkdown(markdown, results.length > 0);
+  const copy = uiCopy(language as InteractionLanguage | undefined);
+  const shown = withoutScaffoldingResults(results);
+  const prose = withoutEmbeddedQueryMarkdown(markdown, shown.length > 0);
   return (
     <div className="kb-structured-answer">
       {prose && (
@@ -234,20 +323,24 @@ export function StructuredAnswer({
           </ReactMarkdown>
         </div>
       )}
-      {results.map((result, index) => (
+      {shown.map((result, index) => (
         <section className="kb-analysis" key={result.itemId || index}>
           <div className="kb-analysis-head">
             <div>
-              <span className="kb-analysis-eyebrow">Governed analysis</span>
-              <h4>Query result{results.length > 1 ? ` ${index + 1}` : ""}</h4>
+              <span className="kb-analysis-eyebrow">{copy.saGovernedAnalysis}</span>
+              <h4>
+                {shown.length > 1
+                  ? copy.saQueryResultNumbered(String(index + 1))
+                  : copy.saQueryResult}
+              </h4>
             </div>
-            <span>{result.totalRowCount} rows</span>
+            <span>{copy.saRows(String(result.totalRowCount))}</span>
           </div>
-          <AnalysisChart result={result} />
-          <ResultTable result={result} />
+          <AnalysisChart result={result} copy={copy} />
+          <ResultTable result={result} copy={copy} language={language ?? ""} />
           {result.sql && (
             <details className="kb-analysis-sql">
-              <summary>View SQL</summary>
+              <summary>{copy.saViewSql}</summary>
               <pre>{result.sql}</pre>
             </details>
           )}

@@ -8,7 +8,6 @@
 # still starts and Databricks-backed views (Lakebase/UC/Genie) degrade
 # gracefully. Also exports GENIE_OBO_LOCAL_TOKEN from the CLI U2M cache so Genie
 # workspace tools have a principal without Apps' x-forwarded-access-token.
-# The Deepgram key check is also optional (only warns).
 # =============================================================================
 set -euo pipefail
 
@@ -44,30 +43,6 @@ fi
 # Load .env if present (env overrides config.local.yaml secrets).
 if [[ -f .env ]]; then
   set -a; source .env; set +a
-fi
-if [[ -z "${DEEPGRAM_API_KEY:-}" ]]; then
-  DEEPGRAM_API_KEY="$(PYTHONPATH="$ROOT/backend" python -c "
-from genie_voice.config import get_settings
-get_settings.cache_clear()
-print(get_settings().secrets.deepgram_api_key or '')
-" 2>/dev/null || true)"
-  export DEEPGRAM_API_KEY
-fi
-
-# Optional: validate the Deepgram key if one is configured. Never blocks startup
-# - a missing/invalid key only means mic transcription won't work; the API + UI
-# still come up.
-if [[ -n "${DEEPGRAM_API_KEY:-}" ]]; then
-  code="$(curl -sS -o /tmp/dg_projects.json -w "%{http_code}" \
-    -H "Authorization: Token ${DEEPGRAM_API_KEY}" \
-    "https://api.deepgram.com/v1/projects" || true)"
-  if [[ "$code" != "200" ]]; then
-    warn "Deepgram key check failed (HTTP $code); mic transcription will fail."
-  else
-    log "Deepgram auth check passed."
-  fi
-else
-  warn "DEEPGRAM_API_KEY not found; mic transcription will fail (UI still starts)."
 fi
 
 # --- Databricks auth (auto-login if not configured; never blocks) ------------

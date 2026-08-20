@@ -1,0 +1,210 @@
+{
+  "ar-SA": {
+    "no_evidence": "لم أتمكن من العثور على بيانات يمكنني الاستناد إليها في ذلك. هل يمكنك إعادة صياغة السؤال، أو طرح سؤال أكثر تحديداً؟",
+    "permission": "لا تتوفر لدي حالياً صلاحية حسابك في Databricks للاطلاع على ذلك. يرجى تسجيل الدخول مرة أخرى، أو طلب منح صلاحية الوصول من مسؤول النظام.",
+    "timeout": "استغرق البحث وقتاً أطول من اللازم، واضطررت إلى إيقافه. يرجى المحاولة مرة أخرى بعد قليل.",
+    "cancelled": "حسناً، أوقفت هذا الطلب.",
+    "unsupported": "لا يمكنني المساعدة في ذلك من خلال هذا المساعد. جرّب سؤالاً مختلفاً أو باقة مختلفة.",
+    "ambiguous": "أود التأكد من فهم طلبك بشكل صحيح. هل يمكنك توضيح ما الذي ترغب مني البحث عنه؟"
+  },
+  "da-DK": {
+    "no_evidence": "Jeg kunne ikke finde data, som jeg kan henvise til for det. Kan du formulere det på en anden måde eller stille et mere specifikt spørgsmål?",
+    "permission": "Jeg har ikke dine Databricks-tilladelser til at slå det op lige nu. Log venligst ind igen, eller bed en administrator om at give adgang.",
+    "timeout": "Opslaget tog for lang tid, så jeg måtte stoppe. Prøv venligst igen om et øjeblik.",
+    "cancelled": "Okay, jeg har stoppet den forespørgsel.",
+    "unsupported": "Det kan jeg ikke hjælpe med i denne assistent. Prøv et andet spørgsmål eller en anden pakke.",
+    "ambiguous": "Jeg vil gerne sikre mig, at jeg forstår det rigtigt. Kan du præcisere, hvad du gerne vil have mig til at slå op?"
+  },
+  "de-DE": {
+    "no_evidence": "Ich konnte dazu keine Daten finden, die ich zitieren kann. Könnten Sie die Frage anders formulieren oder genauer stellen?",
+    "permission": "Mir fehlt im Moment die Databricks-Berechtigung, um das nachzuschlagen. Bitte melden Sie sich erneut an, oder bitten Sie eine Administratorin oder einen Administrator, den Zugriff freizugeben.",
+    "timeout": "Diese Abfrage hat zu lange gedauert, deshalb musste ich sie abbrechen. Bitte versuchen Sie es gleich noch einmal.",
+    "cancelled": "Okay, ich habe diese Anfrage gestoppt.",
+    "unsupported": "Dabei kann ich Ihnen mit diesem Assistenten nicht helfen. Versuchen Sie es bitte mit einer anderen Frage oder einem anderen Paket.",
+    "ambiguous": "Ich möchte sicherstellen, dass ich Sie richtig verstehe. Könnten Sie bitte genauer sagen, was ich nachschlagen soll?"
+  },
+  "el-GR": {
+    "no_evidence": "Δεν μπόρεσα να βρω δεδομένα που να μπορώ να παραθέσω για αυτό. Θα μπορούσατε να το διατυπώσετε διαφορετικά ή να κάνετε μια πιο συγκεκριμένη ερώτηση;",
+    "permission": "Δεν έχω την άδειά σας στο Databricks για να το αναζητήσω αυτήν τη στιγμή. Παρακαλώ συνδεθείτε ξανά ή ζητήστε από έναν διαχειριστή να σας δώσει πρόσβαση.",
+    "timeout": "Αυτή η αναζήτηση πήρε πολύ χρόνο και χρειάστηκε να τη σταματήσω. Παρακαλώ δοκιμάστε ξανά σε λίγο.",
+    "cancelled": "Εντάξει, σταμάτησα αυτό το αίτημα.",
+    "unsupported": "Δεν μπορώ να βοηθήσω με αυτό από αυτόν τον βοηθό. Δοκιμάστε μια διαφορετική ερώτηση ή ένα διαφορετικό πακέτο.",
+    "ambiguous": "Θέλω να βεβαιωθώ ότι το καταλαβαίνω σωστά. Θα μπορούσατε να διευκρινίσετε τι θα θέλατε να αναζητήσω;"
+  },
+  "en-US": {
+    "no_evidence": "I wasn't able to find data I can cite for that. Could you rephrase, or ask a more specific question?",
+    "permission": "I don't have your Databricks permission to look that up right now. Please sign in again, or ask an admin to grant access.",
+    "timeout": "That lookup took too long and I had to stop. Please try again in a moment.",
+    "cancelled": "Okay — I've stopped that request.",
+    "unsupported": "I can't help with that from this assistant. Try a different question or pack.",
+    "ambiguous": "I want to make sure I get this right — could you clarify what you'd like me to look up?"
+  },
+  "es-ES": {
+    "no_evidence": "No he podido encontrar datos que pueda citar para eso. ¿Podría formularlo de otra manera, o hacer una pregunta más específica?",
+    "permission": "No tengo su permiso de Databricks para consultar eso ahora mismo. Vuelva a iniciar sesión, por favor, o pida a un administrador que le conceda acceso.",
+    "timeout": "Esa consulta ha tardado demasiado y he tenido que detenerla. Inténtelo de nuevo dentro de un momento, por favor.",
+    "cancelled": "De acuerdo, he detenido esa solicitud.",
+    "unsupported": "No puedo ayudarle con eso desde este asistente. Pruebe con otra pregunta o con otro paquete.",
+    "ambiguous": "Quiero asegurarme de entenderlo bien. ¿Podría aclarar qué quiere que consulte?"
+  },
+  "fi-FI": {
+    "no_evidence": "En löytänyt tietoja, joihin voisin viitata tässä asiassa. Voisitteko muotoilla kysymyksen uudelleen tai kysyä tarkemmin?",
+    "permission": "Minulla ei ole tällä hetkellä tarvittavaa käyttöoikeutta hakuun kohteessa Databricks. Kirjautukaa sisään uudelleen tai pyytäkää ylläpitäjää myöntämään käyttöoikeus.",
+    "timeout": "Haku kesti liian kauan, ja minun piti pysäyttää se. Yrittäkää hetken kuluttua uudelleen.",
+    "cancelled": "Selvä, olen pysäyttänyt pyynnön.",
+    "unsupported": "En voi auttaa tässä asiassa tämän avustajan kautta. Kokeilkaa toista kysymystä tai pakettia.",
+    "ambiguous": "Haluan varmistaa, että ymmärrän oikein. Voisitteko tarkentaa, mitä haluaisitte minun hakevan?"
+  },
+  "fil-PH": {
+    "no_evidence": "Hindi po ako nakahanap ng datos na maaari kong gawing batayan para roon. Maaari po ba ninyong ulitin sa ibang paraan, o magtanong nang mas tiyak?",
+    "permission": "Wala po akong kasalukuyang pahintulot sa Databricks ninyo para hanapin iyon. Pakisign in po ulit, o humiling sa admin na bigyan kayo ng access.",
+    "timeout": "Masyado pong nagtagal ang paghahanap na iyon, kaya kailangan kong ihinto. Pakisubukan po ulit maya-maya.",
+    "cancelled": "Sige po — itinigil ko na ang kahilingang iyon.",
+    "unsupported": "Hindi po ako makakatulong diyan mula sa assistant na ito. Subukan po ang ibang tanong o ibang pack.",
+    "ambiguous": "Gusto ko pong masigurong tama ang makukuha ko. Maaari po ba ninyong linawin kung ano ang gusto ninyong hanapin ko?"
+  },
+  "fr-FR": {
+    "no_evidence": "Je n’ai pas réussi à trouver des données que je puisse citer pour cela. Pourriez-vous reformuler, ou poser une question plus précise ?",
+    "permission": "Je n’ai pas l’autorisation Databricks nécessaire pour consulter cette information pour le moment. Veuillez vous reconnecter, ou demander à un administrateur d’accorder l’accès.",
+    "timeout": "Cette recherche a pris trop de temps, et j’ai dû l’arrêter. Veuillez réessayer dans un instant.",
+    "cancelled": "D’accord, j’ai arrêté cette demande.",
+    "unsupported": "Je ne peux pas vous aider sur ce point avec cet assistant. Essayez avec une autre question ou un autre pack.",
+    "ambiguous": "Je veux m’assurer de bien comprendre. Pourriez-vous préciser ce que vous souhaitez que je recherche ?"
+  },
+  "hi-IN": {
+    "no_evidence": "मुझे इसके लिए ऐसी जानकारी नहीं मिल पाई जिसे मैं उद्धृत कर सकूं। क्या आप इसे दूसरे तरीके से पूछेंगे, या थोड़ा और स्पष्ट सवाल पूछेंगे?",
+    "permission": "मेरे पास अभी इसे देखने के लिए आपकी Databricks अनुमति नहीं है। कृपया फिर से साइन इन करें, या किसी एडमिन से एक्सेस देने के लिए कहें।",
+    "timeout": "इस जानकारी को देखने में बहुत समय लग गया, इसलिए मुझे रुकना पड़ा। कृपया थोड़ी देर बाद फिर से कोशिश करें।",
+    "cancelled": "ठीक है — मैंने वह अनुरोध रोक दिया है।",
+    "unsupported": "मैं इस assistant से इसमें मदद नहीं कर सकता। कृपया कोई दूसरा सवाल या पैक आज़माएं।",
+    "ambiguous": "मैं यह पक्का करना चाहता हूं कि मैं सही समझूं — क्या आप कृपया स्पष्ट करेंगे कि आप मुझसे क्या खोजने के लिए कहना चाहते हैं?"
+  },
+  "id-ID": {
+    "no_evidence": "Saya tidak menemukan data yang dapat saya jadikan rujukan untuk itu. Bisakah Bapak/Ibu mengucapkannya dengan cara lain, atau mengajukan pertanyaan yang lebih spesifik?",
+    "permission": "Saat ini saya tidak memiliki izin Databricks dari Bapak/Ibu untuk mencari informasi itu. Silakan masuk kembali, atau minta admin memberikan akses.",
+    "timeout": "Pencarian itu memakan waktu terlalu lama, jadi saya harus menghentikannya. Silakan coba lagi beberapa saat lagi.",
+    "cancelled": "Baik, saya sudah menghentikan permintaan itu.",
+    "unsupported": "Saya tidak dapat membantu dengan hal itu melalui asisten ini. Silakan coba pertanyaan atau paket yang berbeda.",
+    "ambiguous": "Agar saya memahaminya dengan tepat, bisakah Bapak/Ibu memperjelas apa yang ingin saya cari?"
+  },
+  "it-IT": {
+    "no_evidence": "Non sono riuscito a trovare dati a cui posso fare riferimento per rispondere. Potrebbe riformulare la domanda, oppure farne una più specifica?",
+    "permission": "Al momento non ho la sua autorizzazione Databricks per consultare queste informazioni. La invito ad accedere di nuovo, oppure a chiedere a un amministratore di concederle l'accesso.",
+    "timeout": "La ricerca ha richiesto troppo tempo e ho dovuto interromperla. La invito a riprovare tra poco.",
+    "cancelled": "Va bene, ho interrotto questa richiesta.",
+    "unsupported": "Non posso aiutarla con questa richiesta da questo assistente. Provi con una domanda diversa o con un altro pack.",
+    "ambiguous": "Vorrei assicurarmi di rispondere correttamente. Potrebbe chiarire che cosa desidera che cerchi?"
+  },
+  "ja-JP": {
+    "no_evidence": "その件について、根拠としてお伝えできるデータを見つけることができませんでした。別の言い方でお尋ねいただくか、もう少し具体的にご質問いただけますか。",
+    "permission": "現在、その情報を確認するための Databricks の権限を確認できません。再度サインインしていただくか、管理者にアクセス権の付与をご依頼ください。",
+    "timeout": "確認に時間がかかったため、処理を停止しました。しばらくしてからもう一度お試しください。",
+    "cancelled": "承知しました。そのリクエストは停止しました。",
+    "unsupported": "このアシスタントでは、そのご依頼には対応できません。別のご質問をいただくか、別のパックをお試しください。",
+    "ambiguous": "正確にお調べするために確認させてください。何をお調べすればよいか、もう少し詳しくお聞かせいただけますか。"
+  },
+  "ko-KR": {
+    "no_evidence": "그 내용에 대해 인용할 수 있는 데이터를 찾지 못했습니다. 질문을 바꿔 말씀해 주시거나, 조금 더 구체적으로 문의해 주시겠습니까?",
+    "permission": "현재 고객님의 Databricks 권한으로는 해당 내용을 조회할 수 없습니다. 다시 로그인하시거나, 관리자에게 접근 권한 부여를 요청해 주시기 바랍니다.",
+    "timeout": "조회에 시간이 너무 오래 걸려 중단했습니다. 잠시 후 다시 시도해 주시기 바랍니다.",
+    "cancelled": "알겠습니다. 해당 요청은 중단했습니다.",
+    "unsupported": "이 어시스턴트에서는 해당 요청을 도와드릴 수 없습니다. 다른 질문이나 팩을 이용해 주시기 바랍니다.",
+    "ambiguous": "정확히 도와드리기 위해 확인하겠습니다. 어떤 내용을 조회해 드리면 될지 조금 더 구체적으로 말씀해 주시겠습니까?"
+  },
+  "ms-MY": {
+    "no_evidence": "Saya tidak dapat menemui data yang boleh saya rujuk untuk perkara itu. Boleh tuan atau puan nyatakan semula, atau tanya soalan yang lebih khusus?",
+    "permission": "Saya tidak mempunyai kebenaran Databricks tuan atau puan untuk membuat semakan itu sekarang. Sila log masuk semula, atau minta pentadbir memberikan akses.",
+    "timeout": "Semakan itu mengambil masa terlalu lama, jadi saya perlu menghentikannya. Sila cuba lagi sebentar lagi.",
+    "cancelled": "Baik, saya telah menghentikan permintaan itu.",
+    "unsupported": "Saya tidak dapat membantu dengan perkara itu melalui pembantu ini. Cuba tanya soalan yang lain atau gunakan pakej yang berbeza.",
+    "ambiguous": "Saya mahu pastikan jawapan saya tepat. Boleh tuan atau puan jelaskan perkara yang ingin disemak?"
+  },
+  "nl-NL": {
+    "no_evidence": "Ik kon daar geen gegevens voor vinden die ik kan citeren. Kunt u het anders formuleren, of een specifiekere vraag stellen?",
+    "permission": "Ik heb op dit moment niet de juiste Databricks-rechten om dat op te zoeken. Log alstublieft opnieuw in, of vraag een beheerder om toegang te verlenen.",
+    "timeout": "Die zoekopdracht duurde te lang, dus ik heb moeten stoppen. Probeert u het over een moment opnieuw.",
+    "cancelled": "Goed, ik heb die aanvraag gestopt.",
+    "unsupported": "Hier kan ik u vanuit deze assistent niet mee helpen. Probeer een andere vraag of een ander pakket.",
+    "ambiguous": "Ik wil zeker weten dat ik dit goed begrijp. Kunt u verduidelijken wat u wilt dat ik opzoek?"
+  },
+  "pl-PL": {
+    "no_evidence": "Nie udało mi się znaleźć danych, które mogę przytoczyć. Proszę przeformułować pytanie albo zadać bardziej konkretne.",
+    "permission": "Nie mam teraz Pani lub Pana uprawnień Databricks, żeby to sprawdzić. Proszę zalogować się ponownie albo poprosić administratora o przyznanie dostępu.",
+    "timeout": "To sprawdzanie trwało zbyt długo, więc zostało przerwane. Proszę spróbować ponownie za chwilę.",
+    "cancelled": "Dobrze, ta prośba została przerwana.",
+    "unsupported": "Nie mogę w tym pomóc z poziomu tego asystenta. Proszę zadać inne pytanie albo użyć innego pakietu.",
+    "ambiguous": "Chcę mieć pewność, że dobrze to zrozumiem. Proszę doprecyzować, co mam sprawdzić."
+  },
+  "pt-PT": {
+    "no_evidence": "Não consegui encontrar dados que possa referir para responder a isso. Pode reformular, ou fazer uma pergunta mais específica?",
+    "permission": "Neste momento, não tenho permissão no Databricks para consultar essa informação. Por favor, inicie sessão novamente, ou peça a um administrador que lhe conceda acesso.",
+    "timeout": "Essa consulta demorou demasiado tempo e tive de parar. Por favor, tente novamente daqui a pouco.",
+    "cancelled": "Está bem — parei esse pedido.",
+    "unsupported": "Não consigo ajudar com isso neste assistente. Experimente fazer outra pergunta ou usar outro pacote.",
+    "ambiguous": "Quero garantir que compreendo bem. Pode esclarecer o que pretende que eu consulte?"
+  },
+  "ru-RU": {
+    "no_evidence": "Я не смог найти данные, на которые можно сослаться. Не могли бы Вы переформулировать вопрос или задать его точнее?",
+    "permission": "Сейчас у меня нет Ваших прав Databricks, чтобы это посмотреть. Пожалуйста, войдите снова или попросите администратора предоставить доступ.",
+    "timeout": "Поиск занял слишком много времени, и мне пришлось остановиться. Пожалуйста, попробуйте еще раз через некоторое время.",
+    "cancelled": "Хорошо, я остановил этот запрос.",
+    "unsupported": "Я не могу помочь с этим в этом ассистенте. Попробуйте задать другой вопрос или выбрать другой пакет.",
+    "ambiguous": "Я хочу убедиться, что правильно Вас понял. Не могли бы Вы уточнить, что именно нужно посмотреть?"
+  },
+  "sv-SE": {
+    "no_evidence": "Jag kunde inte hitta uppgifter som jag kan hänvisa till för det. Kan du formulera om frågan, eller ställa en mer specifik fråga?",
+    "permission": "Jag har inte din Databricks-behörighet för att slå upp det just nu. Logga in igen, eller be en administratör att ge åtkomst.",
+    "timeout": "Den sökningen tog för lång tid och jag behövde avbryta. Försök igen om en liten stund.",
+    "cancelled": "Okej, jag har avbrutit den förfrågan.",
+    "unsupported": "Jag kan inte hjälpa till med det från den här assistenten. Prova med en annan fråga eller ett annat paket.",
+    "ambiguous": "Jag vill vara säker på att det blir rätt. Kan du förtydliga vad du vill att jag ska slå upp?"
+  },
+  "th-TH": {
+    "no_evidence": "ขออภัยค่ะ ดิฉันไม่พบข้อมูลที่สามารถอ้างอิงได้สำหรับเรื่องนี้ กรุณาถามใหม่อีกครั้ง หรือถามให้เฉพาะเจาะจงมากขึ้นได้ไหมคะ",
+    "permission": "ขออภัยค่ะ ตอนนี้ดิฉันไม่มีสิทธิ์ Databricks ของคุณในการค้นหาข้อมูลนี้ กรุณาเข้าสู่ระบบอีกครั้ง หรือขอให้ผู้ดูแลระบบให้สิทธิ์การเข้าถึงค่ะ",
+    "timeout": "ขออภัยค่ะ การค้นหานี้ใช้เวลานานเกินไป ดิฉันจึงต้องหยุดไว้ก่อน กรุณาลองใหม่อีกครั้งในอีกสักครู่ค่ะ",
+    "cancelled": "ได้ค่ะ ดิฉันหยุดคำขอนั้นแล้วค่ะ",
+    "unsupported": "ขออภัยค่ะ ผู้ช่วยนี้ไม่สามารถช่วยเรื่องนั้นได้ กรุณาลองถามคำถามอื่น หรือใช้ชุดข้อมูลอื่นค่ะ",
+    "ambiguous": "ดิฉันต้องการให้แน่ใจว่าตอบได้ถูกต้อง รบกวนช่วยอธิบายเพิ่มเติมได้ไหมคะ ว่าต้องการให้ดิฉันค้นหาเรื่องใด"
+  },
+  "tr-TR": {
+    "no_evidence": "Bunun için kaynak gösterebileceğim bir veri bulamadım. Sorunuzu yeniden ifade edebilir misiniz ya da daha belirli bir soru sorabilir misiniz?",
+    "permission": "Şu anda bunu kontrol etmek için Databricks izniniz bulunmuyor. Lütfen tekrar oturum açın ya da bir yöneticiden erişim vermesini isteyin.",
+    "timeout": "Bu sorgulama çok uzun sürdü ve durdurmam gerekti. Lütfen birazdan tekrar deneyin.",
+    "cancelled": "Tamam, bu isteği durdurdum.",
+    "unsupported": "Bu asistan üzerinden bu konuda yardımcı olamıyorum. Farklı bir soru ya da paket deneyebilirsiniz.",
+    "ambiguous": "Doğru anladığımdan emin olmak istiyorum. Neye bakmamı istediğinizi biraz daha açıklayabilir misiniz?"
+  },
+  "vi-VN": {
+    "no_evidence": "Tôi chưa tìm thấy dữ liệu có thể trích dẫn cho nội dung đó. Quý khách có thể diễn đạt lại, hoặc đặt câu hỏi cụ thể hơn được không?",
+    "permission": "Hiện tại tôi không có quyền truy cập Databricks của quý khách để tra cứu thông tin đó. Vui lòng đăng nhập lại, hoặc nhờ quản trị viên cấp quyền truy cập.",
+    "timeout": "Việc tra cứu này mất quá nhiều thời gian nên tôi phải dừng lại. Vui lòng thử lại sau ít phút.",
+    "cancelled": "Vâng, tôi đã dừng yêu cầu đó.",
+    "unsupported": "Trợ lý này chưa thể hỗ trợ nội dung đó. Quý khách vui lòng thử một câu hỏi khác hoặc một gói khác.",
+    "ambiguous": "Tôi muốn bảo đảm hiểu đúng ý quý khách. Quý khách có thể nói rõ hơn muốn tôi tra cứu điều gì được không?"
+  },
+  "zh-CN": {
+    "no_evidence": "我没能找到可以引用的数据。您可以换个说法，或者问得更具体一点吗？",
+    "permission": "我目前没有您的 Databricks 权限来查询这项内容。请您重新登录，或者请管理员授予访问权限。",
+    "timeout": "这次查询用时太长，我不得不停止。请您稍后再试。",
+    "cancelled": "好的，我已经停止了这个请求。",
+    "unsupported": "这个助手无法协助处理这项请求。您可以换个问题，或者尝试其他包。",
+    "ambiguous": "我想确保理解准确。您可以说明一下希望我查询什么内容吗？"
+  },
+  "zh-CN-paraformer": {
+    "no_evidence": "我没能找到可以引用的数据。您可以换个说法，或者问得更具体一些吗？",
+    "permission": "我目前没有您的 Databricks 权限来查询这项内容。请您重新登录，或者请管理员授予访问权限。",
+    "timeout": "这次查询用时太长，我不得不停止。请您稍后再试。",
+    "cancelled": "好的，我已经停止了这项请求。",
+    "unsupported": "这个助手无法帮助处理这项请求。请您尝试换个问题，或者使用其他内容包。",
+    "ambiguous": "我想确保理解准确。请问您能再说明一下，希望我查询什么内容吗？"
+  },
+  "zh-CN-sensevoice": {
+    "no_evidence": "我没能找到可以引用的数据。您可以换一种说法，或者问得更具体一些吗？",
+    "permission": "我现在没有您的 Databricks 权限来查询这项内容。请您重新登录，或者请管理员授予访问权限。",
+    "timeout": "这次查询用时太长，我需要先停止。请您稍后再试。",
+    "cancelled": "好的，我已经停止了这个请求。",
+    "unsupported": "这个助手无法处理这类请求。您可以换一个问题，或者换一个包试试。",
+    "ambiguous": "为了确保理解准确，您能说明一下希望我查询什么内容吗？"
+  }
+}

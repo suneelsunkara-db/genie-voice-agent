@@ -2,7 +2,8 @@
 
 Genie reports internal steps while it works. Their field names are not a contract we
 own and their text can contain reasoning, SQL, table names, and raw results. These
-tests pin the business-safe normalization used by both TTS and the timeline.
+tests pin the business-safe pipeline used by both TTS and the on-screen timeline:
+one ordered set of phases, always rendered in order, only ever moving forward.
 """
 from __future__ import annotations
 
@@ -11,8 +12,34 @@ from realtime_api.runtime.genie_one import (
     normalize_progress_steps,
 )
 
+PIPELINE = [
+    "Understanding your question",
+    "Finding the right data",
+    "Running the analysis",
+    "Checking the results",
+    "Preparing your answer",
+]
 
-def test_internal_trace_becomes_business_facing_stages():
+# The page renders these codes from its own message catalog, so they are a
+# contract: renaming one silently drops that phase back to English on screen.
+PIPELINE_CODES = [
+    "understanding",
+    "finding_data",
+    "running_analysis",
+    "checking_results",
+    "preparing_answer",
+]
+
+
+def test_every_phase_travels_as_a_stable_code_the_ui_can_localize():
+    steps = normalize_progress_steps(["Considering how to approach this"])
+    assert [step["code"] for step in steps] == PIPELINE_CODES
+    # The English label rides along for the spoken narration prompt and as the
+    # fallback for a UI whose catalog does not know the code yet.
+    assert [step["label"] for step in steps] == PIPELINE
+
+
+def test_the_timeline_is_the_pipeline_in_order_with_one_phase_in_flight():
     steps = normalize_progress_steps(
         [
             {
@@ -27,34 +54,73 @@ def test_internal_trace_becomes_business_facing_stages():
                 "title": "Query result: Query returned 6 rows with qwen3-next-80b",
                 "status": "running",
             },
-            {"title": "Formatting the answer", "status": "queued"},
         ]
     )
-    assert [step["label"] for step in steps] == [
-        "Analyzing usage",
-        "Matching the requested item",
-        "Checking the results",
-        "Preparing your answer",
+    assert [step["label"] for step in steps] == PIPELINE
+    assert [step["status"] for step in steps] == [
+        "done",
+        "done",
+        "done",
+        "active",
+        "pending",
     ]
-    assert [step["status"] for step in steps] == ["done", "done", "active", "pending"]
     assert current_progress_step(steps) == "Checking the results"
 
 
-def test_steps_without_status_treat_the_latest_as_in_flight():
+def test_a_step_naming_several_things_lands_on_the_furthest_phase_it_evidences():
+    """"Running SQL: SELECT SUM(...)" is analysis, not still looking for the data."""
     steps = normalize_progress_steps(
-        [{"name": "Thinking about the request"}, {"name": "Searching available sources"}]
+        ["Running SQL: SELECT SUM(list_cost) FROM system.billing.usage"]
     )
-    assert [step["status"] for step in steps] == ["done", "active"]
-    assert current_progress_step(steps) == "Finding the relevant information"
+    assert current_progress_step(steps) == "Running the analysis"
+
+
+def test_finishing_the_last_reported_phase_moves_the_timeline_on():
+    working = normalize_progress_steps([{"name": "Formatting the answer", "status": "running"}])
+    assert current_progress_step(working) == "Preparing your answer"
+    # Nothing follows the final phase, so a completed last step stays there rather
+    # than claiming a phase that does not exist.
+    finished = normalize_progress_steps(
+        [{"name": "Formatting the answer", "status": "completed"}]
+    )
+    assert current_progress_step(finished) == "Preparing your answer"
+
+    advanced = normalize_progress_steps(
+        [{"name": "Searching available sources", "status": "completed"}]
+    )
+    assert current_progress_step(advanced) == "Running the analysis"
+
+
+def test_the_timeline_never_walks_the_caller_backwards():
+    """Upstream revisits earlier work; un-completing a done phase reads as a bug."""
+    steps = normalize_progress_steps(
+        [
+            "Query result: returned 12 rows",
+            "Running another query against a second table",
+        ]
+    )
+    assert current_progress_step(steps) == "Checking the results"
+
+
+def test_unrecognised_text_is_still_early_reasoning():
+    steps = normalize_progress_steps(["Considering how to approach this"])
+    assert current_progress_step(steps) == "Understanding your question"
+    assert [step["status"] for step in steps] == [
+        "active",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+    ]
 
 
 def test_plain_strings_and_a_bare_string_are_both_accepted():
-    assert normalize_progress_steps(["Looking up billing usage"]) == [
-        {"label": "Calculating the amount", "status": "active"}
-    ]
-    assert normalize_progress_steps("Scanning tables") == [
-        {"label": "Finding the relevant information", "status": "active"}
-    ]
+    assert current_progress_step(normalize_progress_steps(["Scanning tables"])) == (
+        "Finding the right data"
+    )
+    assert current_progress_step(normalize_progress_steps("Scanning tables")) == (
+        "Finding the right data"
+    )
 
 
 def test_an_unrecognised_shape_degrades_to_no_steps():
@@ -65,27 +131,15 @@ def test_an_unrecognised_shape_degrades_to_no_steps():
     assert current_progress_step([]) == ""
 
 
-def test_repeated_internal_operations_collapse_into_one_business_stage():
-    steps = normalize_progress_steps(
-        [
-            "Running SQL: SELECT * FROM private.table_a",
-            "Running query against private.table_b",
-            "Searching another schema",
-        ]
-    )
-    assert steps == [
-        {"label": "Finding the relevant information", "status": "active"}
-    ]
-
-
 def test_raw_sql_reasoning_results_and_identifiers_never_reach_the_wire():
     raw = [
         "Thinking: use `system`.`billing`.`usage` to find the SKU",
         "Running SQL: SELECT SUM(list_cost) FROM system.billing.usage",
         "Query result: returned 7 rows for ENTERPRISE_GEMINI_MODEL_SERVING",
     ]
-    steps = normalize_progress_steps(raw)
-    rendered = " ".join(step["label"] for step in steps).lower()
+    rendered = " ".join(
+        step["label"] for step in normalize_progress_steps(raw)
+    ).lower()
 
     for forbidden in (
         "thinking",

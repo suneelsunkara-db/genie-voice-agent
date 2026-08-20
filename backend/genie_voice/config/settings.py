@@ -7,8 +7,7 @@ Config files are the single source of truth:
 
 No `GENIE_*` env overrides. The only environment inputs are things that cannot
 live in a committed file: vendor SECRETS (used as a fallback when the config
-value is empty — e.g. the Databricks secret scope injects DEEPGRAM_API_KEY on
-the app), platform-injected credentials/host that the SDK reads on its own, and
+value is empty — e.g. eval jobs read DEEPGRAM_API_KEY from the secret scope), platform-injected credentials/host that the SDK reads on its own, and
 `GENIE_CONFIG` which merely points at which config file to load.
 """
 from __future__ import annotations
@@ -212,12 +211,11 @@ class CardIssuerConfig(BaseModel):
 
 
 class Secrets(BaseModel):
-    """Vendor API keys / tokens for live STT/TTS and model-weight downloads.
+    """Vendor API keys for optional TTS, evals/benchmarks, and model-weight downloads.
 
-    Loaded from config `secrets:` (typically config.local.yaml, which is the
-    source of truth). The matching env var is only a fallback for values that
-    can't be committed — e.g. the Databricks secret scope injects DEEPGRAM_API_KEY
-    on the app.
+    Loaded from config `secrets:` (typically config.local.yaml). The live app STT
+    path is Databricks Model Serving. `deepgram_api_key` is kept for ASR evals
+    and FLEURS vendor tracks, not for cockpit/realtime transcription.
     """
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""

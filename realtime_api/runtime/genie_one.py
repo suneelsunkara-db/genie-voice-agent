@@ -35,37 +35,30 @@ _MAX_PROGRESS_STEPS = 12
 _STEP_LABEL_KEYS = ("title", "label", "name", "step", "summary", "description", "text")
 _STEP_STATUS_KEYS = ("status", "state")
 _DONE_STATUSES = frozenset({"completed", "complete", "done", "success", "succeeded", "finished"})
-_ACTIVE_STATUSES = frozenset({"running", "in_progress", "active", "executing", "started", "pending"})
 
-# Ordered, finite business vocabulary used by both the timeline and TTS narration.
-# Keep labels free of product names and technical implementation terminology.
-_BUSINESS_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
+# The phases a governed workspace read actually goes through, in the order they
+# happen. Genie's internal steps are classified INTO this pipeline rather than
+# renamed one-for-one, because upstream reports the same phase many times, revisits
+# earlier ones, and orders nothing: a per-step rename produced a timeline that read
+# backwards ("preparing your answer" first, "understanding your question" last).
+#
+# Each phase travels as a stable CODE plus its English label. The code is what the
+# page renders, from its own message catalog, so a Hindi call gets a Hindi timeline
+# instead of English chrome around a Hindi answer — the same contract already used
+# for canonical backend values. The English label is the prompt input for spoken
+# narration, which is localized by the voice path. Labels stay free of product
+# names and implementation terminology.
+_STAGES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    # Stage 0 is the default: anything not recognised is still early reasoning.
+    ("understanding", "Understanding your question", ()),
     (
-        "Preparing your answer",
-        ("format", "summar", "prepar", "final answer", "respond"),
-    ),
-    (
-        "Calculating the amount",
-        ("cost", "spend", "price", "dollar", "billing", "charge", "sku"),
-    ),
-    (
-        "Checking the results",
-        ("query result", "returned", "rows", "validat", "verify", "check result"),
-    ),
-    (
-        "Matching the requested item",
-        ("model name", "potential match", "matching", "resolve", "identify", "distinct"),
-    ),
-    (
-        "Analyzing usage",
-        ("usage", "token", "consumption", "request count", "aggregate", "sum(", "count("),
-    ),
-    (
-        "Finding the relevant information",
+        "finding_data",
+        "Finding the right data",
         (
             "sql",
             "query",
             "table",
+            "column",
             "dashboard",
             "catalog",
             "schema",
@@ -73,11 +66,55 @@ _BUSINESS_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "source",
             "retriev",
             "search",
+            "scan",
             "load",
+            "inspect",
+            "explor",
+            "distinct",
+            "resolve",
+            "matching",
+            "potential match",
         ),
     ),
+    (
+        "running_analysis",
+        "Running the analysis",
+        (
+            "sum(",
+            "count(",
+            "avg(",
+            "max(",
+            "min(",
+            "group by",
+            "order by",
+            "aggregat",
+            "calculat",
+            "comput",
+            "join",
+            "rank",
+            "top ",
+        ),
+    ),
+    (
+        "checking_results",
+        "Checking the results",
+        (
+            "query result",
+            "result:",
+            "returned",
+            "rows",
+            "validat",
+            "verify",
+            "check result",
+            "sanity",
+        ),
+    ),
+    (
+        "preparing_answer",
+        "Preparing your answer",
+        ("format", "summar", "prepar", "final answer", "compose", "respond", "writing"),
+    ),
 )
-_DEFAULT_BUSINESS_STAGE = "Understanding your question"
 
 
 def _raw_step_text(item: Any) -> str:
@@ -92,13 +129,18 @@ def _raw_step_text(item: Any) -> str:
     return ""
 
 
-def _business_stage(raw_text: str) -> str:
-    """Classify an upstream implementation step into safe business language."""
+def _stage_index(raw_text: str) -> int:
+    """Which pipeline phase an upstream implementation step belongs to.
+
+    Scanned late-to-early so a step that names several things lands on the furthest
+    phase it evidences: "Running SQL: SELECT SUM(cost) FROM ..." is analysis, not
+    discovery, even though it also mentions SQL.
+    """
     lowered = raw_text.casefold()
-    for label, signals in _BUSINESS_STAGES:
-        if any(signal in lowered for signal in signals):
-            return label
-    return _DEFAULT_BUSINESS_STAGE
+    for index in range(len(_STAGES) - 1, 0, -1):
+        if any(signal in lowered for signal in _STAGES[index][2]):
+            return index
+    return 0
 
 
 def _step_status(item: Any) -> str:
@@ -112,47 +154,51 @@ def _step_status(item: Any) -> str:
 
 
 def normalize_progress_steps(value: Any) -> list[dict[str, str]]:
-    """Convert Genie's internal trace into business-safe ``{label, status}`` steps.
+    """Convert Genie's internal trace into the business-safe progress pipeline.
 
-    Raw labels are never returned. Repeated internal operations collapse into one
-    business stage, keeping a long analytical trace useful without exposing SQL,
-    chain-of-thought, table names, query results, or Databricks terminology.
+    Returns the whole pipeline with one phase marked ``active``, so the caller sees
+    a stable list that fills in rather than a shuffled rename of upstream's steps.
+    Raw labels never escape: SQL, chain-of-thought, table names, query results, and
+    Databricks terminology are classification input only.
     """
     items = [value] if isinstance(value, str) else value
     if not isinstance(items, list):
         return []
-    steps: list[dict[str, str]] = []
+    reached = -1
+    reached_status = ""
     for item in items[:_MAX_PROGRESS_STEPS]:
         raw_text = _raw_step_text(item)
         if not raw_text:
             continue
-        label = _business_stage(raw_text)
-        raw = _step_status(item)
-        if raw in _DONE_STATUSES:
-            status = "done"
-        elif raw in _ACTIVE_STATUSES:
-            status = "active"
-        else:
-            status = ""
-        existing = next((step for step in steps if step["label"] == label), None)
-        if existing is not None:
-            # The latest occurrence is authoritative when upstream revisits a stage.
-            existing["status"] = status
-        else:
-            steps.append({"label": label, "status": status})
-    if steps and not any(step["status"] for step in steps):
-        for step in steps[:-1]:
-            step["status"] = "done"
-        steps[-1]["status"] = "active"
-    return [{"label": s["label"], "status": s["status"] or "pending"} for s in steps]
+        index = _stage_index(raw_text)
+        # Never walk the caller backwards: upstream revisits earlier phases, but a
+        # timeline that un-completes a step it already showed as done reads as a bug.
+        if index >= reached:
+            reached = index
+            reached_status = _step_status(item)
+    if reached < 0:
+        return []
+    active = reached
+    if reached_status in _DONE_STATUSES and reached + 1 < len(_STAGES):
+        # Upstream finished the furthest phase it reported, so the work in flight is
+        # the next one — otherwise the timeline stalls on a completed step.
+        active = reached + 1
+    return [
+        {
+            "code": code,
+            "label": label,
+            "status": "done" if index < active else "active" if index == active else "pending",
+        }
+        for index, (code, label, _signals) in enumerate(_STAGES)
+    ]
 
 
 def current_progress_step(steps: list[dict[str, str]]) -> str:
-    """The one step worth saying out loud: the active one, else the latest."""
-    for step in reversed(steps):
+    """The English label of the phase in flight, for the spoken narration prompt."""
+    for step in steps:
         if step.get("status") == "active":
             return step.get("label", "")
-    return steps[-1].get("label", "") if steps else ""
+    return ""
 
 
 def _payload(result: Any) -> dict[str, Any]:

@@ -126,14 +126,18 @@ dbx warehouses get "$SQL_WAREHOUSE_ID" >/dev/null 2>&1 \
 dbx serving-endpoints get "$CLAUDE_ENDPOINT" >/dev/null 2>&1 \
   || die "Required enrichment endpoint '$CLAUDE_ENDPOINT' does not exist or is not accessible."
 
-# ---- 2. vendor keys -> secret scope ----------------------------------------
+# ---- 2. vendor keys -> secret scope (evals/benchmarks; not injected into the app)
 DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.deepgram_api_key)' 2>/dev/null || true)}"
 ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.elevenlabs_api_key)' 2>/dev/null || true)}"
-[[ -n "$DEEPGRAM_API_KEY" ]] || die "DEEPGRAM_API_KEY not found (env or config.local.yaml). Required for mic STT."
 
 log "ensuring secret scope '$SECRET_SCOPE'"
 dbx secrets create-scope "$SECRET_SCOPE" >/dev/null 2>&1 || true
-dbx secrets put-secret "$SECRET_SCOPE" deepgram_api_key --string-value "$DEEPGRAM_API_KEY"
+if [[ -n "$DEEPGRAM_API_KEY" ]]; then
+  dbx secrets put-secret "$SECRET_SCOPE" deepgram_api_key --string-value "$DEEPGRAM_API_KEY"
+  log "stored deepgram_api_key (evals/benchmarks only; not attached to the app)"
+else
+  warn "DEEPGRAM_API_KEY empty - skipping (live app STT is Databricks; evals that need Deepgram will fail)."
+fi
 if [[ -n "$ELEVENLABS_API_KEY" ]]; then
   dbx secrets put-secret "$SECRET_SCOPE" elevenlabs_api_key --string-value "$ELEVENLABS_API_KEY"
   log "stored elevenlabs_api_key"
@@ -246,7 +250,6 @@ REALTIME_ENDPOINTS="$REALTIME_ENDPOINTS" INCLUDE_EL="$INCLUDE_EL" \
 import json, os
 res = [
     {"name": "sql-warehouse",    "sql_warehouse":    {"id": os.environ["SQL_WAREHOUSE_ID"], "permission": "CAN_USE"}},
-    {"name": "deepgram-api-key", "secret":           {"scope": os.environ["SECRET_SCOPE"], "key": "deepgram_api_key", "permission": "READ"}},
     {"name": "claude-endpoint",  "serving_endpoint": {"name": os.environ["CLAUDE_ENDPOINT"], "permission": "CAN_QUERY"}},
 ]
 seen = set()

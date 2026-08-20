@@ -20,9 +20,12 @@ import { API_BASE_URL, WS_BASE_URL } from "../config";
 import { getAppLanguage } from "../lib/appLanguage";
 import {
   ProgressStep,
+  activeStep,
   formatElapsed,
   readProgressSteps,
+  stepLabel,
 } from "../lib/workspaceProgress";
+import { uiCopy, useUiLocale } from "../i18n";
 import "../styles/knowledge.css";
 
 /**
@@ -158,6 +161,12 @@ export function KnowledgeAgentPage() {
   const [answerEvidence, setAnswerEvidence] = useState<AnswerEvidence[]>([]);
   const [answerFailure, setAnswerFailure] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // This page's chrome follows the call language, like the answer does. The
+  // runtime sends progress phases as stable codes so they resolve from the same
+  // catalog as everything else here.
+  useUiLocale(callLanguage);
+  const copy = uiCopy(callLanguage);
 
   const sessionRef = useRef<RealtimeVoiceSession | null>(null);
   const callIdRef = useRef<string>("");
@@ -346,13 +355,11 @@ export function KnowledgeAgentPage() {
               if (steps.length) setProgressSteps(steps);
             } else if (kind === "tool.progress") {
               // Upstream confirmed it is still active. Its own steps say what is
-              // running; keep any richer spoken phrase already shown, and never
-              // stand in for the answer with an invented partial one.
+              // running, and `answerProgress` holds only words the voice actually
+              // spoke — the waiting placeholder is rendered below instead, so this
+              // never stands in for the answer with an invented partial one.
               const steps = readProgressSteps(payload.steps);
               if (steps.length) setProgressSteps(steps);
-              setAnswerProgress((previous) =>
-                previous || "I’m reviewing the relevant business information…"
-              );
             } else if (kind === "evidence.available") {
               const evidence = readEvidence(payload);
               if (evidence) setAnswerEvidence((prev) => [...prev, evidence]);
@@ -407,11 +414,11 @@ export function KnowledgeAgentPage() {
     try {
       await openSession(callLanguageRef.current);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Microphone access denied");
+      setError(e instanceof Error ? e.message : copy.kbMicDenied);
       setPhase("idle");
       setAgentState("idle");
     }
-  }, [phase, resetPlayback, fetchGreeting, openSession]);
+  }, [phase, resetPlayback, fetchGreeting, openSession, copy]);
 
   // Auto-connect on mount so Genie greets the moment the page opens — same as the
   // card assistant. The browser gesture that arrived with us from Home unlocks
@@ -493,6 +500,8 @@ export function KnowledgeAgentPage() {
     );
   }, [answerEvidence]);
 
+  const hasAnswerDetail = Boolean(fullAnswer) || analysisResults.length > 0;
+
   // Tapping a question shows what asking it will run. It deliberately does NOT
   // touch the answer panel: that panel only ever shows what Genie One actually
   // returned for a question you asked out loud.
@@ -504,12 +513,17 @@ export function KnowledgeAgentPage() {
     ? null
     : answerText
       ? agentState === "speaking"
-        ? "Speaking now"
-        : "Answered"
-      : "Asking Genie One…";
+        ? copy.kbStatusSpeaking
+        : copy.kbStatusAnswered
+      : copy.kbStatusAsking;
 
   const waitElapsed =
     waitStartedAt === null ? null : formatElapsed(waitNow - waitStartedAt);
+
+  const inFlight = activeStep(progressSteps);
+  const activeStepLabel = inFlight
+    ? stepLabel(inFlight, copy as unknown as Record<string, unknown>)
+    : "";
 
   const orbLevel = agentState === "speaking" ? speakLevel : agentState === "listening" ? micLevel : 0;
   const liveCaption = interimText.trim() || caption;
@@ -538,9 +552,9 @@ export function KnowledgeAgentPage() {
       <VoiceBackdrop />
       <div className="gv-content">
         <header className="kb-top">
-          <BrandLockup product="Knowledge Agent" />
+          <BrandLockup product={copy.kbProduct} />
           <button type="button" className="kb-back" onClick={() => (window.location.hash = "#/")}>
-            ← Home
+            ← {copy.kbHome}
           </button>
         </header>
 
@@ -553,15 +567,15 @@ export function KnowledgeAgentPage() {
                 level={orbLevel}
                 size="120px"
                 onClick={onOrbTap}
-                ariaLabel={agentState === "speaking" ? "Interrupt Genie" : "Genie"}
+                ariaLabel={agentState === "speaking" ? copy.kbInterrupt : copy.kbGenie}
               />
             </div>
             <div className={`kb-status kb-status-${agentState}`}>
-              {phase === "idle" && "Tap the orb to start"}
-              {agentState === "greeting" && "Connecting…"}
-              {agentState === "listening" && "Listening…"}
-              {agentState === "thinking" && "Asking your governed workspace…"}
-              {agentState === "speaking" && "Genie is speaking…"}
+              {phase === "idle" && copy.kbTapOrb}
+              {agentState === "greeting" && copy.kbConnecting}
+              {agentState === "listening" && copy.kbListening}
+              {agentState === "thinking" && copy.kbThinking}
+              {agentState === "speaking" && copy.kbSpeaking}
             </div>
             {liveCaption && phase !== "idle" && <p className="kb-caption">{liveCaption}</p>}
             <div className="kb-langwrap">
@@ -576,34 +590,30 @@ export function KnowledgeAgentPage() {
                 is still explicit, and the orb re-opens a session after a cold
                 refresh where the browser withheld the audio gesture. */}
             <button type="button" className="kb-end" onClick={endCall}>
-              End call
+              {copy.kbEndCall}
             </button>
             {error && <p className="kb-error">{error}</p>}
-            <p className="kb-disclaimer">
-              Every question here runs live against your own Databricks workspace through
-              Genie One, under your permissions — so the answer describes what you can
-              actually reach. Anything Genie cannot cite, it says so instead of guessing.
-            </p>
+            <p className="kb-disclaimer">{copy.kbDisclaimer}</p>
           </aside>
 
           {/* Knowledge canvas */}
           <main className="kb-canvas">
             <section className="kb-head">
               <div>
-                <div className="kb-head-title">What you can ask Genie One</div>
+                <div className="kb-head-title">{copy.kbHeadTitle}</div>
                 <div className="kb-head-sub">
                   {topics.length
-                    ? `${topics.length} questions across ${groups.length} areas · every one runs live against your own governed workspace`
-                    : "Loading questions…"}
+                    ? copy.kbHeadSub(String(topics.length), String(groups.length))
+                    : copy.kbHeadLoading}
                 </div>
               </div>
-              <div className="kb-head-badge">Genie One · live</div>
+              <div className="kb-head-badge">{copy.kbBadgeLive}</div>
             </section>
 
             {/* The answer, on screen while it is spoken. */}
             <section className={`kb-answer${askedQuestion ? " is-active" : ""}`}>
               <div className="kb-section-title">
-                Answer
+                {copy.kbAnswer}
                 {askedQuestion && answerStatus && (
                   <span className="kb-answer-status">{answerStatus}</span>
                 )}
@@ -614,39 +624,17 @@ export function KnowledgeAgentPage() {
                   {answerFailure ? (
                     <p className="kb-error">
                       {answerFailure === "timeout"
-                        ? "Genie One took too long to answer. Ask again, or narrow the question."
-                        : `Genie One could not complete that turn (${answerFailure}).`}
+                        ? copy.kbTimeout
+                        : copy.kbTurnFailed(answerFailure)}
                     </p>
                   ) : answerText ? (
-                    <>
-                      <p className="kb-answer-text">{answerText}</p>
-                      {(fullAnswer || localizationPending) && (
-                        <div className="kb-full-answer">
-                          <div className="kb-evidence-title">Full answer</div>
-                          {fullAnswer ? (
-                            <StructuredAnswer
-                              markdown={fullAnswer}
-                              results={analysisResults}
-                            />
-                          ) : (
-                            <p className="kb-answer-pending">
-                              Translating the full answer…
-                            </p>
-                          )}
-                          {fullAnswer && localizationPending && (
-                            <p className="kb-answer-pending">
-                              Translating the full answer…
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </>
+                    <p className="kb-answer-text">{answerText}</p>
                   ) : (
                     <div className="kb-progress">
                       <div className="kb-progress-head">
                         <span className="kb-progress-spinner" aria-hidden="true" />
                         <span className="kb-progress-label">
-                          Analyzing your request
+                          {activeStepLabel || copy.kbAnalyzing}
                         </span>
                         {waitElapsed && (
                           <span className="kb-progress-clock">{waitElapsed}</span>
@@ -655,26 +643,51 @@ export function KnowledgeAgentPage() {
                       {/* The words being spoken right now, so the screen and the
                           audio say the same thing. */}
                       <p className="kb-progress-said">
-                        {answerProgress || "I’m working through the relevant information…"}
+                        {answerProgress || copy.kbWorkingGeneric}
                       </p>
                       {progressSteps.length > 0 && (
                         <ol className="kb-progress-steps">
                           {progressSteps.map((step, i) => (
                             <li
                               className={`kb-progress-step is-${step.status}`}
-                              key={`${i}-${step.label}`}
+                              key={`${i}-${step.code || step.label}`}
                             >
                               <span className="kb-progress-dot" aria-hidden="true" />
-                              <span className="kb-progress-step-label">{step.label}</span>
+                              <span className="kb-progress-step-label">
+                                {stepLabel(step, copy as unknown as Record<string, unknown>)}
+                              </span>
                             </li>
                           ))}
                         </ol>
                       )}
                     </div>
                   )}
+                  {/* Typed rows render as soon as they arrive, whether or not the
+                      spoken summary has landed yet: they come back before the voice
+                      finishes composing, and the chart and table ARE the detailed
+                      answer for a "how much" or "top N" question. Holding them until
+                      the narrative existed made a chart that was already in hand
+                      look slow, and hid it entirely when Genie wrote no prose. */}
+                  {!answerFailure && (hasAnswerDetail || localizationPending) && (
+                    <div className="kb-full-answer">
+                      <div className="kb-evidence-title">
+                        {fullAnswer ? copy.kbFullAnswer : copy.kbResult}
+                      </div>
+                      {hasAnswerDetail && (
+                        <StructuredAnswer
+                          markdown={fullAnswer}
+                          results={analysisResults}
+                          language={callLanguage}
+                        />
+                      )}
+                      {localizationPending && (
+                        <p className="kb-answer-pending">{copy.kbTranslating}</p>
+                      )}
+                    </div>
+                  )}
                   {answerEvidence.length > 0 && (
                     <div className="kb-evidence">
-                      <div className="kb-evidence-title">What grounded this</div>
+                      <div className="kb-evidence-title">{copy.kbGrounded}</div>
                       {answerEvidence.map((e, i) => (
                         <div className="kb-evidence-item" key={`${e.tool}-${i}`}>
                           <div className="kb-evidence-head">
@@ -684,9 +697,10 @@ export function KnowledgeAgentPage() {
                             ) : (
                               e.rowCount > 0 && (
                                 <span className="kb-evidence-shape">
-                                  {e.rowCount} {e.rowCount === 1 ? "row" : "rows"} ·{" "}
-                                  {e.columns.length}{" "}
-                                  {e.columns.length === 1 ? "column" : "columns"}
+                                  {copy.kbShape(
+                                    String(e.rowCount),
+                                    String(e.columns.length)
+                                  )}
                                 </span>
                               )
                             )}
@@ -700,10 +714,7 @@ export function KnowledgeAgentPage() {
                   )}
                 </>
               ) : (
-                <p className="kb-answer-pending">
-                  Ask any question below out loud. The answer appears here as Genie speaks
-                  it, with the governed sources it came from.
-                </p>
+                <p className="kb-answer-pending">{copy.kbEmptyHint}</p>
               )}
             </section>
 

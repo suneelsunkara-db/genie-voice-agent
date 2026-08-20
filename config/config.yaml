@@ -15,8 +15,8 @@
 
 # Deployment target - the ONLY run switch. It selects who PRODUCES live/mock data:
 #   local = synthetic producer (genie_voice.datagen) generates vendor-shaped
-#           Deepgram/ElevenLabs payloads + reference records (no vendor API calls).
-#   live  = real Deepgram/ElevenLabs capture produces the payloads.
+#           streaming payloads + reference records (no vendor API calls).
+#   live  = Databricks ASR for the app; Deepgram remains available for evals.
 # The app runs `live`; config.local.yaml overrides this to `local` for dev.
 deployment: live
 
@@ -107,8 +107,9 @@ providers:
       databricks: "genie_voice.providers.stt.databricks:DatabricksSTT"
       # assemblyai: "genie_voice.providers.stt.assemblyai:AssemblyAISTT"
       # azure:      "genie_voice.providers.stt.azure:AzureSTT"
-    # The app uses the Databricks ASR endpoints; config.local.yaml overrides this
-    # to `deepgram` for local dev.
+    # The app always uses Databricks ASR. Deepgram stays registered for
+    # evals/benchmarks (ml_asr, FLEURS vendor track) — do not set active=deepgram
+    # for the live cockpit or Databricks App.
     active: databricks
     options:
       deepgram:
@@ -394,8 +395,8 @@ realtime_voice:
          lo, ms, "no", pl, pt, ru, es, sw, sv, fil, th, tr, vi]
       initial_validation_languages: [en-US, th-TH, id-ID, zh-CN]
 
-# Vendor API keys for live STT/TTS (deployment: live).
-# Set real values in gitignored config/config.local.yaml (overrides these).
+# Vendor API keys. The live app STT path is Databricks Model Serving.
+# Deepgram is for evals/benchmarks — set the key in gitignored config.local.yaml.
 # Environment variables (DEEPGRAM_API_KEY, etc.) override YAML when set.
 secrets:
   deepgram_api_key: ""

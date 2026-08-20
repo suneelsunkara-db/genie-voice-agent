@@ -15,8 +15,6 @@ import json
 import logging
 import time
 from typing import Any
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -101,40 +99,6 @@ async def greeting(language: str = "en-US", name: str = "") -> dict:
 
 
 
-def _transcribe_with_deepgram(audio_bytes: bytes, mime_type: str, settings, language: str | None) -> str:
-    key = settings.secrets.deepgram_api_key.strip()
-    if not key:
-        raise HTTPException(status_code=400, detail="DEEPGRAM_API_KEY is not configured")
-    from genie_voice.providers.stt.deepgram import deepgram_query_params
-
-    params = deepgram_query_params(
-        settings.providers.stt.active_options(),
-        language=language_spec(language).deepgram_language,
-        streaming=False,
-    )
-    req = Request(
-        f"https://api.deepgram.com/v1/listen?{urlencode(params)}",
-        data=audio_bytes,
-        method="POST",
-    )
-    req.add_header("Authorization", f"Token {key}")
-    req.add_header("Content-Type", mime_type or "audio/webm")
-    req.add_header("Accept", "application/json")
-    try:
-        with urlopen(req, timeout=45) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Deepgram call failed: {exc}") from exc
-
-    channels = body.get("results", {}).get("channels") or []
-    alternatives = channels[0].get("alternatives") if channels else []
-    transcript = (alternatives[0].get("transcript") if alternatives else "") or ""
-    transcript = transcript.strip()
-    if not transcript:
-        raise HTTPException(status_code=422, detail="No transcript returned from Deepgram")
-    return transcript
-
-
 def _prediction_response_dict(response) -> dict:
     if isinstance(response, dict):
         return response
@@ -179,12 +143,8 @@ def _transcribe_with_databricks_model(body: MicAudioIn, settings) -> str:
 
 
 def _transcribe_mic_audio(body: MicAudioIn, audio_bytes: bytes, settings) -> str:
-    provider = settings.providers.stt.active
-    if provider == "deepgram":
-        return _transcribe_with_deepgram(audio_bytes, body.mime_type, settings, body.language)
-    if provider == "databricks":
-        return _transcribe_with_databricks_model(body, settings)
-    raise HTTPException(status_code=400, detail=f"Unsupported STT provider for mic transcription: {provider}")
+    del audio_bytes
+    return _transcribe_with_databricks_model(body, settings)
 
 
 
@@ -657,7 +617,7 @@ def post_assist(call_id: str, body: UtteranceIn) -> dict:
 
 @router.post("/{call_id}/mic-transcribe")
 def post_mic_transcribe(call_id: str, body: MicAudioIn) -> dict:
-    """Transcribe browser mic audio with Deepgram and route into the same assist flow."""
+    """Transcribe browser mic audio with Databricks ASR and route into the same assist flow."""
     s = get_settings()
     route_language = normalize_language(body.language)
     language = content_language(body.language)

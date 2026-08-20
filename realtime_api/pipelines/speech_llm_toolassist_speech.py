@@ -1269,7 +1269,12 @@ async def process_turn(
         refuse_text: str | None = None
         # A long written answer may need the same dual rendering as the FSI deep
         # dive: short translated voice summary + full translated panel report.
+        # ``render_answer`` is what gets summarized for the voice; ``render_report``
+        # is the written answer the panel paints. They differ when the governed
+        # result is a table: the summary is spoken, but the panel renders the typed
+        # rows as a table/chart rather than a second copy of them as markdown.
         render_answer = ""
+        render_report = ""
         render_question = transcript
         render_source = ""
         from ..runtime import (
@@ -1278,6 +1283,7 @@ async def process_turn(
             evidence_from_tool_result,
             refuse_speech,
         )
+        from ..runtime.answer_rendering import governed_answer_render
 
         composer = EvidenceComposer()
         for invocation in tool_invocations:
@@ -1292,12 +1298,20 @@ async def process_turn(
                 name,
                 raw if isinstance(raw, dict) else {"answer": raw},
             )
-            if name == "workspace_query" and ev.prose is not None:
-                render_answer = ev.prose.text
-                render_source = ev.source
-                args = invocation.get("arguments")
-                if isinstance(args, dict) and args.get("question"):
-                    render_question = str(args["question"])
+            if name == "workspace_query":
+                # Genie answers a "how much" / "top N" question with rows and often
+                # no narrative. The row claims exist to CITE those numbers, not to be
+                # read out: speaking them turns an answer into "category: Shopping;
+                # total spend sgd: 416659.61; ...". A table-only result therefore gets
+                # the same rendering a narrative one does.
+                answer_source, panel_report = governed_answer_render(ev)
+                if answer_source:
+                    render_answer = answer_source
+                    render_report = panel_report
+                    render_source = ev.source
+                    args = invocation.get("arguments")
+                    if isinstance(args, dict) and args.get("question"):
+                        render_question = str(args["question"])
             elif name == "start_deep_dive" and isinstance(raw, dict):
                 # Agent Mode's report is the exact long-answer source used by the
                 # established FSI renderer. Tables remain the factual speech gate;
@@ -1305,6 +1319,7 @@ async def process_turn(
                 long_report = str(raw.get("report") or "").strip()
                 if long_report:
                     render_answer = long_report
+                    render_report = long_report
                     render_source = ev.source
                     args = invocation.get("arguments")
                     if isinstance(args, dict) and args.get("question"):
@@ -1356,10 +1371,12 @@ async def process_turn(
 
         localization_queue: asyncio.Queue[str | None] | None = None
         localization_pending = False
-        if render_answer and rendered_summary:
+        if rendered_summary:
             from ..runtime.answer_rendering import is_english, localize_answer_stream
 
-            localization_pending = not is_english(language)
+            # Nothing to translate when the answer was a table: the panel renders the
+            # typed rows, whose headers and figures are not ours to rewrite.
+            localization_pending = bool(render_report) and not is_english(language)
             last_event_seq += 1
             session.event_seq_by_turn[turn_id] = last_event_seq
             yield {
@@ -1372,7 +1389,7 @@ async def process_turn(
                     "summary": rendered_summary,
                     # Never flash English during a non-English call. The panel
                     # opens with the translated summary while deltas fill the report.
-                    "report": "" if localization_pending else render_answer,
+                    "report": "" if localization_pending else render_report,
                     "report_language": language if localization_pending else "en",
                     "localization_pending": localization_pending,
                     "source": render_source,
@@ -1385,7 +1402,7 @@ async def process_turn(
 
                 def _localize() -> None:
                     try:
-                        for delta in localize_answer_stream(render_answer, language):
+                        for delta in localize_answer_stream(render_report, language):
                             loop.call_soon_threadsafe(localization_queue.put_nowait, delta)
                     finally:
                         loop.call_soon_threadsafe(localization_queue.put_nowait, None)

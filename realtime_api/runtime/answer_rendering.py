@@ -12,7 +12,10 @@ evidence. This module only renders text that already passed that boundary.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
+
+if TYPE_CHECKING:
+    from .evidence import Evidence
 
 
 @lru_cache(maxsize=1)
@@ -52,6 +55,65 @@ def language_name(language: str | None) -> str:
         return tag
 
 
+_MAX_REPORT_ROWS = 30
+_MAX_REPORT_COLUMNS = 10
+
+
+def table_as_markdown(
+    columns: list[str],
+    rows: list[list[object]],
+    *,
+    max_rows: int = _MAX_REPORT_ROWS,
+) -> str:
+    """A governed result table as markdown, so it can be summarized like prose.
+
+    Genie answers a "how much / top N" question with numbers and, often, no
+    narrative. That result is still the answer, so it needs the same rendering a
+    narrative gets — reciting the rows is what the row claims are for, not what the
+    caller asked. Bounded: a summary needs the shape and the leading rows, not every
+    row, and the typed rows reach the screen through the evidence contract anyway.
+    """
+    header = [str(column) for column in columns[:_MAX_REPORT_COLUMNS]]
+    if not header or not rows:
+        return ""
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join("---" for _ in header) + " |",
+    ]
+    for row in rows[:max_rows]:
+        cells = [
+            "" if value is None else str(value).replace("|", "\\|")
+            for value in list(row)[: len(header)]
+        ]
+        cells += [""] * (len(header) - len(cells))
+        lines.append("| " + " | ".join(cells) + " |")
+    if len(rows) > max_rows:
+        lines.append("")
+        lines.append(f"({len(rows)} rows in total; the first {max_rows} are shown.)")
+    return "\n".join(lines)
+
+
+def governed_answer_render(evidence: "Evidence") -> tuple[str, str]:
+    """Split a governed result into (text to summarize for voice, panel report).
+
+    A narrative answer is both: it is summarized for speech and painted as the
+    written report. A result that arrived as rows only is summarized from its table
+    but has no report — the panel renders the typed rows as a table and chart, so
+    emitting the same rows again as markdown would just duplicate them.
+
+    Returning ("", "") means there is nothing to render, and the turn falls back to
+    the composed row claims as its spoken evidence.
+    """
+    prose = evidence.prose
+    if prose is not None and prose.text.strip():
+        text = prose.text.strip()
+        return text, text
+    table = evidence.table
+    if table is not None and table.columns and table.rows:
+        return table_as_markdown(list(table.columns), [list(row) for row in table.rows]), ""
+    return "", ""
+
+
 def summarize_for_voice(question: str, answer: str, language: str | None) -> str:
     """Return a short, translated summary suitable for both TTS and the panel."""
     text = (answer or "").strip()
@@ -66,7 +128,10 @@ def summarize_for_voice(question: str, answer: str, language: str | None) -> str
         "You render a governed analytical answer for a realtime voice assistant. "
         "Write 2-3 concise, natural sentences in the language identified by BCP-47 "
         f"code '{lang}'. Preserve the answer's important facts, limitations, permission "
-        "boundaries, and most useful next step. Do not invent capabilities or numbers. "
+        "boundaries, and most useful next step. The governed answer may be a result "
+        "table; if so, state what it shows and the few figures that answer the "
+        "question, rounded for speech, and never read the table row by row. Use only "
+        "facts present in the governed answer: do not invent capabilities or numbers. "
         "Use no markdown, headings, bullets, or citation markers. Output only the "
         "sentences the agent should speak."
     )

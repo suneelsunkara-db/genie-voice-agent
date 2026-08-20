@@ -93,6 +93,115 @@ def test_english_spoken_summary_is_not_a_translation(monkeypatch):
     assert "en-US" in system
 
 
+def test_a_narrative_answer_is_both_the_spoken_source_and_the_panel_report():
+    from realtime_api.runtime.genie_adapters import evidence_from_genie_one
+
+    evidence = evidence_from_genie_one(
+        {
+            "status": "completed",
+            "response_id": "r1",
+            "final_answer": "## Spending\n\nShopping leads at 416,660 SGD.",
+            "query_results": [
+                {
+                    "item_id": "q1",
+                    "columns": [{"name": "category", "type_text": "STRING"}],
+                    "rows": [["Shopping"]],
+                }
+            ],
+        }
+    )
+
+    spoken_source, panel_report = answer_rendering.governed_answer_render(evidence)
+    assert "Shopping leads" in spoken_source
+    assert panel_report == spoken_source
+
+
+def test_a_table_only_answer_still_gets_rendered_instead_of_read_out():
+    """Genie answered "top spending categories" with rows and no narrative.
+
+    Before this, no narrative meant no summary, and the voice fell through to the
+    row cites — "category: Shopping; total spend sgd: 416659.61; ..." — while the
+    panel showed no detail at all, because both were gated on prose existing.
+    """
+    from realtime_api.runtime.genie_adapters import evidence_from_genie_one
+
+    evidence = evidence_from_genie_one(
+        {
+            "status": "completed",
+            "response_id": "r2",
+            "query_results": [
+                {
+                    "item_id": "q1",
+                    "sql": "select category, total_spend_sgd from spending",
+                    "columns": [
+                        {"name": "category", "type_text": "STRING"},
+                        {"name": "total_spend_sgd", "type_text": "DECIMAL"},
+                    ],
+                    "rows": [["Shopping", "416659.61"], ["Groceries", "296301.32"]],
+                }
+            ],
+        }
+    )
+
+    spoken_source, panel_report = answer_rendering.governed_answer_render(evidence)
+    assert "| category | total_spend_sgd |" in spoken_source
+    assert "416659.61" in spoken_source
+    # The typed rows render as the table and chart, so the report would only be a
+    # second copy of them.
+    assert panel_report == ""
+
+
+def test_an_unusable_result_renders_nothing_and_leaves_the_cites_to_speak():
+    from realtime_api.runtime.evidence import Evidence
+
+    assert answer_rendering.governed_answer_render(Evidence(source="genie_one")) == ("", "")
+
+
+def test_a_table_only_answer_is_summarized_like_prose(monkeypatch):
+    """Genie answers "top spending categories" with rows and no narrative.
+
+    Those rows are still the answer, so they get the same short spoken rendering a
+    narrative gets. Without this the voice reads the row cites out loud —
+    "category: Shopping; total spend sgd: 416659.61; ..." — which is a cite list,
+    not an answer.
+    """
+    serving = _Serving()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+
+    report = answer_rendering.table_as_markdown(
+        ["category", "total_spend_sgd", "total_transactions"],
+        [["Shopping", "416659.61", 1645], ["Other", "365561.20", 1421]],
+    )
+    assert report.splitlines()[0] == "| category | total_spend_sgd | total_transactions |"
+    assert "| Shopping | 416659.61 | 1645 |" in report
+
+    summary = answer_rendering.summarize_for_voice("Top categories?", report, "en-US")
+
+    assert summary == "Resumen breve para hablar."
+    system = serving.calls[0]["system"]
+    assert "row by row" in system
+    assert report in serving.calls[0]["user"]
+
+
+def test_table_markdown_is_bounded_and_survives_awkward_cells():
+    rows = [[f"row-{index}", None, "a|b"] for index in range(40)]
+    report = answer_rendering.table_as_markdown(["name", "value", "note"], rows)
+
+    body = [line for line in report.splitlines() if line.startswith("| row-")]
+    assert len(body) == 30
+    assert "40 rows in total" in report
+    # A raw pipe would break out of the cell it belongs to.
+    assert "| row-0 |  | a\\|b |" in report
+
+
+def test_table_markdown_needs_both_a_header_and_rows():
+    assert answer_rendering.table_as_markdown([], [["x"]]) == ""
+    assert answer_rendering.table_as_markdown(["name"], []) == ""
+
+
 def test_language_helpers_use_bcp47_primary_tag():
     assert answer_rendering.is_english("en-US")
     assert answer_rendering.is_english("en")

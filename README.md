@@ -62,13 +62,13 @@ streamed to the agent at the moment they matter.
 ## Proposed approach: streaming, Genie, and Lakebase
 
 ```
-Voice (Deepgram)  →  utterance-bound inference  →  Lakebase live serving
+Voice (Databricks ASR)  →  utterance-bound inference  →  Lakebase live serving
 Governed UC data  →  Genie fact validation      →  Agent Assist UI
 Lakebase CDF      →  UC analytics + gold         →  Genie space (portfolio intelligence)
 ```
 
 1. **Streaming capture** — STT turns continuous audio into **final utterances**
-   (not per-chunk LLM calls). Local mode uses synthetic producer; live mode uses Deepgram.
+   (not per-chunk LLM calls). Local mode uses a synthetic producer; live mode uses Databricks ASR.
 2. **Lakebase (hot path)** — sub-second reads/writes for `call_state`, account facts
    overlay, `resolution_events`, and `billing_adjustments`. No warehouse round-trip
    on every UI poll.
@@ -201,7 +201,7 @@ the process runs and how it authenticates.
 |---|---|---|
 | Processes | Vite dev server + uvicorn (two processes) | one uvicorn process serving API **and** built SPA |
 | Auth to Databricks | U2M OAuth **as your user** (`databricks auth login`) | M2M OAuth as the app's **service principal** (injected creds) |
-| Vendor keys (Deepgram) | from `config/config.local.yaml` / `.env` | Databricks **secret scope** → injected as env via app resources |
+| Vendor keys (optional TTS) | from `config/config.local.yaml` / `.env` | Databricks **secret scope** → injected as env via app resources |
 | Frontend URL | `http://localhost:5173` | `https://<app>.<region>.databricksapps.com` (same origin as API) |
 | Command | `./local-deploy.sh` / `./start_app.sh` | `./deploy_app.sh` |
 
@@ -226,12 +226,8 @@ cp config/config.yaml config/config.local.yaml   # then edit with your workspace
 ./local-undeploy.sh              # stop API + UI
 ```
 
-One-command startup with optional Deepgram validation:
-
 ```bash
-./start_app.sh                   # auth-only Deepgram check (if key exists) + start app
-./start_app.sh --live            # force live mode + require DEEPGRAM_API_KEY
-./start_app.sh --live --listen-once   # exactly one prerecorded STT test then start
+./start_app.sh                   # Databricks auth check (if CLI is available) + start app
 ```
 
 If you skip the Databricks login the script runs in **offline mode** (local
@@ -256,8 +252,6 @@ at runtime).
   `databricks auth login --profile <profile>`.
 - `npm` (builds the frontend) and the repo virtualenv at `.venv/` (the script
   uses `.venv/bin/python` so backend deps are available when reading config).
-- `deepgram_api_key` present in `config/config.local.yaml` (or `DEEPGRAM_API_KEY`
-  in the env) — required for mic STT.
 - The `partner_demo_catalog`, Lakebase instance, SQL warehouse, and the Claude /
   Whisper serving endpoints already exist and are owned by (or grantable by) you.
 
@@ -265,10 +259,10 @@ at runtime).
 
 1. **Builds the frontend** for same-origin (`VITE_API_BASE_URL=""`) and copies
    `frontend/dist` → `api/app/static`.
-2. **Pushes vendor keys** from `config.local.yaml` into the `genie-voice` secret
-   scope (`deepgram_api_key`; `elevenlabs_api_key` only if set).
+2. **Pushes optional vendor keys** from `config.local.yaml` into the `genie-voice` secret
+   scope (`elevenlabs_api_key` only if set).
 3. **Creates/updates the app** with declared **resources** (SQL warehouse,
-   Deepgram secret, Claude + Whisper serving endpoints) so the app's service
+   Claude + Whisper serving endpoints) so the app's service
    principal is auto-granted access. ElevenLabs is included only when its key exists.
 4. **Grants the service principal** its runtime access:
    - `workspace-access` **entitlement** via SCIM (needed to mint Lakebase Postgres
@@ -311,12 +305,7 @@ dev sets a real email in `config.local.yaml`).
 - **File-size limit:** Databricks Apps reject any single synced file > 10 MB.
   Large non-runtime assets are `.gitignore`d (e.g. `deck-framework/`, `.run/`) so
   `databricks sync` skips them.
-- **`websockets` version:** the mic→Deepgram proxy detects whether the installed
-  `websockets` uses `additional_headers` (v13+) or `extra_headers` (v12), so the
-  same code works locally and on the Apps runtime.
 - **Logs:** Compute → Apps → `genie-voice-agent` → Logs.
-- **Egress:** the app calls `api.deepgram.com` directly over the serverless egress
-  plane (validated); no proxy/warehouse round-trip for STT.
 
 ## Agent-assist API endpoints
 
@@ -328,8 +317,8 @@ dev sets a real email in `config.local.yaml`).
 | GET | `/calls/{call_id}/assist` | Read persisted call enrichment + resolution state |
 | GET | `/accounts/with-issues` | Customers with billing/account risk (sidebar queue) |
 | POST | `/calls/{call_id}/assist` | Enrich one utterance (FM), advance resolution, optional billing close, FM agent reply |
-| POST | `/calls/{call_id}/mic-transcribe` | Deepgram mic blob → same flow as `POST /assist` |
-| WS | `/calls/{call_id}/mic-stream` | Streaming mic → Deepgram → `POST /assist` |
+| POST | `/calls/{call_id}/mic-transcribe` | Databricks ASR mic blob → same flow as `POST /assist` |
+| WS | `/calls/{call_id}/mic-stream` | Disabled (use `mic-transcribe`; live STT is utterance-level Databricks ASR) |
 | GET | `/calls/{call_id}/account` | Account facts for the call's customer (Lakebase overlay + billing adjustments) |
 | GET | `/calls/{call_id}/resolution-events` | Issue status timeline for the call |
 | GET | `/calls/{call_id}/alignment` | Lakebase resolution + billing vs account facts consistency check |
@@ -371,9 +360,8 @@ Edit `config/config.yaml`:
 providers:
   stt:
     adapters:
-      deepgram: "genie_voice.providers.stt.deepgram:DeepgramSTT"
-      assemblyai: "genie_voice.providers.stt.assemblyai:AssemblyAISTT"   # add file + line
-    active: assemblyai
+      databricks: "genie_voice.providers.stt.databricks:DatabricksSTT"
+    active: databricks
 ```
 
 Drop in `backend/genie_voice/providers/stt/assemblyai.py` implementing
@@ -385,9 +373,9 @@ Independent of *where* the app runs (Setup A/B above), one flag — `deployment`
 (top of `config/config.yaml`) — selects the capture producer:
 
 - `deployment: local` (default): the synthetic `datagen` generator produces
-  vendor-shaped Deepgram/ElevenLabs payloads + reference records. No vendor calls.
-- `deployment: live`: set `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` and wire the
-  live `stream()`/API paths in the adapters.
+  streaming-transcript payloads + reference records. No vendor STT calls.
+- `deployment: live`: Databricks ASR transcribes live audio. Optional
+  `ELEVENLABS_API_KEY` is unused by the realtime voice loop.
 
 The serving and analytics flow is identical for both; only the capture source
 changes.
@@ -851,7 +839,7 @@ and eval steps run on **serverless** by default. Entry point: **`scripts/ml_asr.
 
 | Route prefix | Kind | Register / serve? |
 |--------------|------|-------------------|
-| `deepgram_nova3` | Commercial API (Deepgram Nova-3) | No — API key only, eval in step 5 |
+| `deepgram_nova3` | Commercial API (Deepgram Nova-3) | Eval only — API key, not used by the live app |
 | `databricks_*` | UC-registered models on Model Serving | Yes — steps 3–4, then eval in step 5 |
 
 `eval_matrix` in config lists every route scored at eval time. `model_serving` lists
@@ -919,7 +907,7 @@ run the full legacy sequence for eval.
 dataset used for Whisper fine-tuning and model selection. The first benchmark is
 Deepgram Nova-3 on a locked training/evaluation manifest; Whisper and Databricks
 model-serving baselines use the same manifest and scoring functions for fair
-comparison.
+comparison. The live app does not call Deepgram.
 
 ### Manifest
 

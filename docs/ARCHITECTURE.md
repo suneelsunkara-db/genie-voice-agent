@@ -31,7 +31,7 @@ assigns each layer a distinct job:
 
 | Layer | Role in voice assist |
 |---|---|
-| **Streaming capture** | STT produces **final utterances** (Deepgram live or synthetic producer); not per-chunk LLM |
+| **Streaming capture** | STT produces **final utterances** (Databricks ASR or synthetic producer); not per-chunk LLM |
 | **Lakebase** | Hot path: `call_state`, account overlay, `resolution_events`, `billing_adjustments` |
 | **Foundation Model** | One structured + prose call **per customer turn** — detects intent/signals and **composes the agent reply** |
 | **Genie** | Governed NL→SQL over curated UC tables — pre-fetched account insight (off critical path), fact validation, portfolio Q&A |
@@ -70,7 +70,7 @@ assigns each layer a distinct job:
 flowchart LR
     subgraph RAW["UC Volumes"]
         BATCH["raw_batch_data<br/>customers, agents, invoices, payments"]
-        STREAM["raw_streaming_data<br/>Deepgram events + call_facts records"]
+        STREAM["raw_streaming_data<br/>transcript events + call_facts records"]
     end
 
     subgraph UCREF["Unity Catalog Reference Delta"]
@@ -177,7 +177,7 @@ flowchart TB
 
     subgraph DBX["Databricks control/serving plane"]
         SP["App service principal<br/>UC + Lakebase + Genie grants"]
-        SEC["Secret scope genie-voice<br/>deepgram_api_key"]
+        SEC["Secret scope genie-voice<br/>optional elevenlabs_api_key"]
         RES["App resources<br/>warehouse · secret · serving endpoints"]
     end
 
@@ -187,7 +187,7 @@ flowchart TB
 ```
 
 `deploy_app.sh` builds the SPA, pushes vendor keys to the secret scope, declares
-the app **resources** (SQL warehouse, Deepgram secret, Claude + Whisper serving
+the app **resources** (SQL warehouse, Claude + Whisper serving
 endpoints) so the service principal is auto-granted, applies UC/Lakebase/Genie
 grants (`infra/apps/grant_app_sp.py`) plus the `workspace-access` entitlement
 (required to mint Lakebase Postgres OAuth tokens at runtime), syncs source
@@ -199,33 +199,27 @@ empty so the SP identity is used. There are no `GENIE_*` env overrides.
 
 ## Voice capture path (mic → STT)
 
-Two capture endpoints keep the Deepgram key server-side; the browser never sees it.
+Mic audio is transcribed by **Databricks Model Serving** ASR. The browser never
+sends audio to a third-party STT vendor.
 
 ```mermaid
 flowchart LR
-    MIC["Browser mic<br/>PCM 16k chunks"]
+    MIC["Browser mic<br/>recorded blob"]
     subgraph FASTAPI["FastAPI"]
-        WS["WS /calls/{id}/mic-stream<br/>live proxy"]
-        BLOB["POST /calls/{id}/mic-transcribe<br/>blob transcribe"]
+        BLOB["POST /calls/{id}/mic-transcribe"]
         ASSIST["POST /calls/{id}/assist"]
     end
-    DG["Deepgram nova-3<br/>api.deepgram.com"]
+    ASR["Databricks ASR<br/>Model Serving"]
 
-    MIC -->|"WebSocket audio"| WS
-    WS -->|"proxy audio (server-side key)"| DG
-    DG -->|"interim/final transcripts"| WS
-    WS -->|"final utterance"| ASSIST
-    MIC -->|"recorded blob"| BLOB
-    BLOB --> DG
+    MIC -->|"audio blob"| BLOB
+    BLOB --> ASR
+    ASR -->|"transcript"| BLOB
     BLOB --> ASSIST
 ```
 
-- The **streaming** path (`WS /mic-stream`) proxies mic audio to Deepgram live STT
-  and forwards final utterances into the assist flow. The proxy is
-  `websockets`-version agnostic — it detects `additional_headers` (v13+) vs
-  `extra_headers` (v12) so the identical code runs locally and on the Apps runtime.
-- Egress to `api.deepgram.com` goes directly over the serverless egress plane
-  (validated); no warehouse or proxy round-trip is added to STT.
+- `POST /mic-transcribe` sends the recorded clip to the configured Databricks
+  ASR endpoint and feeds the transcript into the assist flow.
+- `WS /mic-stream` is disabled (utterance-level serving, not a live vendor socket).
 - Only **final utterances** enter `POST /assist` — audio frames never reach the FM
   or Genie (see token economics below).
 

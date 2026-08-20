@@ -166,7 +166,7 @@ export function CockpitPage({
               customerName={selectedCustomer?.full_name ?? null}
               callLabel={`${copy.call} ${selectedCall.call_id}`}
               issueTags={activeIssueTags}
-              sttProvider={status?.stt_provider ?? "deepgram"}
+              sttProvider={status?.stt_provider ?? "databricks"}
               languageOptions={status?.languages?.supported}
               defaultLanguage={status?.languages?.default}
               selectedLanguage={interactionLanguage}

@@ -32,9 +32,13 @@ from realtime_api.services import _SdkDeployClient  # noqa: E402
 LOCALES_DIR = REPO_ROOT / "frontend" / "src" / "locales"
 EN_PATH = LOCALES_DIR / "en.json"
 
-# Hand-authored locales (kept for top quality) + the zh ASR-comparison variants
-# (same audio language) are never machine-translated.
-SKIP_CODES = {"en-US", "th-TH", "id-ID", "zh-CN", "zh-CN-sensevoice", "zh-CN-paraformer"}
+# English is the source. The zh ASR-comparison variants are the same audio language
+# and resolve to zh-CN in the UI, so they need no bundle of their own.
+#
+# th-TH / id-ID / zh-CN ARE generated: their hand-authored text is layered on top as
+# overrides (see AUTHORED in frontend/src/i18n.ts), so authored quality is kept while
+# every key added later still gets translated instead of silently reading English.
+SKIP_CODES = {"en-US", "zh-CN-sensevoice", "zh-CN-paraformer"}
 
 # Tokens the model must copy verbatim (brands, schema, currency, IDs). "Autopay" is
 # treated as a product-feature name and kept in its canonical Latin form: it has no
@@ -152,7 +156,10 @@ def main() -> int:
     targets = requested or [code for code in LANGUAGE_SPECS if code not in SKIP_CODES]
 
     settings = RealtimeSettings.resolve()
-    client = _SdkDeployClient(databricks_profile())
+    # Offline GPT-5.5 catalog chunks can exceed the live-call 45s predict timeout
+    # (Finnish and Hindi timed out on the 248-key pass). This job is not on the
+    # voice path, so wait longer rather than silently shipping English fallbacks.
+    client = _SdkDeployClient(databricks_profile(), predict_timeout_s=180.0)
     # This runs OFFLINE, so it is not bound to the low-latency model the call path
     # uses. Terminology is where a small model fails: the runtime 80B rendered
     # "overdue" in Hindi as "अधिकांश" ("most") and then "अतिव्याप्त"
