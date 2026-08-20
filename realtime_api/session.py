@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from .contracts import SessionStart
 from .endpointing import TurnEndpointer
+from .runtime.workspace_conversation import WorkspaceConversation
 
 # --- Adaptive energy VAD tuning ---------------------------------------------
 # A single fixed RMS gate can't serve both a quiet mic (real speech falls under
@@ -47,23 +48,45 @@ class VoiceSession:
     # per turn) so the gate stays calibrated to the caller's room/mic level.
     noise_floor: float = _INITIAL_NOISE_FLOOR
     busy: bool = False
+    # Progressive turn phase (working / awaiting_user / completed). ``busy`` stays
+    # as the compatibility gate for audio.end / barge-in; it tracks phase==working.
+    phase: str = "idle"
+    # Active TurnState for the current progressive turn (None when idle).
+    active_turn: object | None = None
+    # Speech budget for the active turn (ack/progress/preview/final).
+    speech_scheduler: object | None = None
+    # OBO principal bound at session.start from x-forwarded-access-token (or local
+    # U2M stand-in). Genie / workspace paths fail closed when token is missing.
+    principal: object | None = None
     history: list = field(default_factory=list)
+    # Authoritative SpokenClaim[] committed on turn_final (cross-turn memory).
+    committed_claims: list = field(default_factory=list)
+    # Last emitted AgentEvent sequence per logical turn. Amendments retain the
+    # turn id and continue from this value so clients can drop regressions.
+    event_seq_by_turn: dict[int, int] = field(default_factory=dict)
     # Session-scoped account-facts cache (customer_id -> facts), shared across
     # turns and passed into each turn's ToolContext. Lets a confirmation turn
     # that only calls apply_billing_action reuse facts read by an earlier
     # lookup_account turn. Invalidated by the billing tool on any write.
     account_store: dict = field(default_factory=dict)
     _cooldown_until: float = 0.0
-    # Voice consistency: the agent's first synthesized turn is captured as a
-    # reference clip (base64 WAV, set exactly once). Every later turn clones it
-    # via VoxCPM2 reference-audio cloning, so one stable voice is used for the
-    # whole call. Cloning from real audio is deterministic w.r.t. timbre, unlike
-    # RNG seeding (which the deployed model does not even support).
+    # Voice consistency: seeded at session.start from the committed reference clip
+    # (see ``voice_identity``), so every session on every page and in all 24
+    # languages clones one timbre. Cloning from real audio is deterministic w.r.t.
+    # timbre, unlike RNG seeding (which the deployed model does not even support).
+    # With no clip configured this stays None and the first synthesized turn is
+    # captured instead — stable for that call only.
     voice_reference_b64: str | None = None
     # Stable id for the clip above, derived from its bytes. The TTS endpoint caches
     # the clip under this id so later turns identify the voice without re-uploading
     # ~500KB of base64 audio on every turn (which dominated time-to-first-audio).
     voice_id: str | None = None
+    # Bumped whenever in-flight speech must be superseded (barge-in, same-turn
+    # inject). ``stream_tts`` stamps every audio event with the epoch it started
+    # under and aborts when the session moves on — so a deep-dive summary cannot
+    # overlap the turn's earlier ack/progress audio. The client drops any chunk
+    # whose speech_epoch does not match the last ``playback.stop``.
+    speech_epoch: int = 0
     # Semantic end-of-turn detector (Silero VAD + smart-turn). When set, it
     # replaces the energy VAD for speech gating and end-of-turn decisions; None
     # keeps the legacy energy VAD (also the graceful fallback when models can't
@@ -78,6 +101,12 @@ class VoiceSession:
     # its after_turn hook). Empty and unused by the default telco path; the engine
     # never inspects its contents, so it stays domain-agnostic.
     profile_state: dict[str, object] = field(default_factory=dict)
+    # Handle to the governed Genie One conversation this call is continuing. Genie
+    # One owns the conversational context; this only remembers where it lives, so a
+    # follow-up reaches the conversation that asked instead of opening a new one.
+    workspace_conversation: "WorkspaceConversation" = field(
+        default_factory=lambda: WorkspaceConversation()
+    )
 
     def add_audio(self, frame: bytes) -> bool:
         """Append PCM audio and report whether this frame begins speech."""
@@ -141,6 +170,26 @@ class VoiceSession:
             and self.silence_ms >= silence_ms
         )
 
+    def set_working(self) -> None:
+        self.busy = True
+        self.phase = "working"
+
+    def set_idle(self) -> None:
+        self.busy = False
+        self.phase = "idle"
+        self.active_turn = None
+        self.speech_scheduler = None
+
+    def set_awaiting_user(self) -> None:
+        self.busy = False
+        self.phase = "awaiting_user"
+
+    def set_completed(self) -> None:
+        self.busy = False
+        self.phase = "completed"
+        self.active_turn = None
+        self.speech_scheduler = None
+
     def set_cooldown(self, seconds: float) -> None:
         """Suppress turn finalization for `seconds` after the agent finishes speaking."""
         self._cooldown_until = time.monotonic() + seconds
@@ -153,10 +202,26 @@ class VoiceSession:
         self._reset_turn()
         return self.turn_id, audio
 
-    def barge_in(self) -> int:
-        self.turn_id += 1
+    def barge_in(self, *, reserve_new_turn: bool = True) -> int:
+        """Stop current speech and reset capture.
+
+        Acoustic barge-in passes ``reserve_new_turn=False`` because the following
+        utterance is classified as amend/new/stop before an id is committed.
+        """
+        if reserve_new_turn:
+            self.turn_id += 1
+        self.bump_speech_epoch()
+        if self.active_turn is not None:
+            cancel_turn = getattr(self.active_turn, "cancel_turn", None)
+            if cancel_turn is not None:
+                cancel_turn()
         self._reset_turn()
         return self.turn_id
+
+    def bump_speech_epoch(self) -> int:
+        """Supersede any in-flight TTS; return the new epoch stamped on later audio."""
+        self.speech_epoch += 1
+        return self.speech_epoch
 
     def discard_buffer(self) -> None:
         """Drop audio captured while busy (echo/tail) without bumping turn_id."""

@@ -149,6 +149,9 @@ class TurnTrace:
         self.server_gen_ms: float | None = None  # full synthesis time on the endpoint
         self._spans: list[Span] = []
         self._lock = threading.Lock()
+        # Domain-neutral L200 counters/labels. Kept as one map so adding a proof
+        # metric never requires another billing-shaped trace column.
+        self.metrics: dict[str, Any] = {}
         # Every guardrail check on this turn, including the ones that found nothing
         # and the ones we deliberately delegate to Qwen. Spans are only added for
         # checks that FIRED, so the roster doesn't bloat the waterfall.
@@ -191,6 +194,14 @@ class TurnTrace:
             self._spans.append(span)
         return _SpanHandle(self, span)
 
+    def set_metric(self, key: str, value: Any) -> None:
+        with self._lock:
+            self.metrics[str(key)] = value
+
+    def increment_metric(self, key: str, amount: int = 1) -> None:
+        with self._lock:
+            self.metrics[str(key)] = int(self.metrics.get(str(key), 0) or 0) + amount
+
     def _end_span(self, span: Span) -> None:
         span.end_ms = self._now_ms()
         span.duration_ms = span.end_ms - span.start_ms
@@ -202,6 +213,7 @@ class TurnTrace:
     def to_dict(self) -> dict[str, Any]:
         with self._lock:
             spans = [s.to_dict() for s in self._spans]
+            metrics = dict(self.metrics)
         tool_names = [s.name.split(".", 1)[-1] for s in self._spans if s.kind == "TOOL"]
         llm_iterations = sum(1 for s in self._spans if s.kind == "LLM")
         return {
@@ -218,8 +230,13 @@ class TurnTrace:
             "status": self.status,
             "error": self.error,
             "tool_names": tool_names,
+            # Generic per-tool counts for new observability (prefer over billing-only cols).
+            "tool_counts": {n: tool_names.count(n) for n in sorted(set(tool_names))},
+            "runtime_metrics": metrics,
             # Objective, language-agnostic signals for the observability view.
             "tools_this_turn": tool_names,
+            # Legacy billing columns kept for existing dashboards; new writers should
+            # prefer tool_counts.
             "apply_billing_action_called": "apply_billing_action" in tool_names,
             "lookup_account_count": tool_names.count("lookup_account"),
             "llm_iterations": llm_iterations,

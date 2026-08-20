@@ -26,6 +26,9 @@ from typing import Any
 
 from .tool_registry import (  # noqa: F401
     ToolContext,
+    attach_session_identity,
+    genie_obo_or_refuse,
+    genie_space_name,
     register,
     run_tool,
     shape_genie_answer,
@@ -40,7 +43,6 @@ USE_CASES = {"statement_insights", "rewards_optimizer"}
 # Shared clients (built lazily, cached per process)
 # ---------------------------------------------------------------------------
 _card_serving: Any = None
-_card_genie: Any = None
 
 
 def _serving():
@@ -51,23 +53,6 @@ def _serving():
 
         _card_serving = CardLakebaseServing(get_settings())
     return _card_serving
-
-
-def _card_genie_client():
-    """A Genie Conversation-API client pinned to the CARD space (resolved by name).
-
-    The space is passed to the client constructor by NAME (not by poking the
-    private ``_space_id``), so the client's own resolve/stale-space-retry logic
-    targets the card space rather than the default telco space. Cached per process.
-    """
-    global _card_genie
-    if _card_genie is None:
-        from genie_voice.config import get_settings
-        from genie_voice.genie.client import GenieClient
-
-        settings = get_settings()
-        _card_genie = GenieClient(settings, space_name=settings.card_issuer.genie_space_name)
-    return _card_genie
 
 
 # ---------------------------------------------------------------------------
@@ -190,10 +175,24 @@ def _run_ask_card_genie(arguments: dict[str, Any], ctx: ToolContext) -> str:
     question = str(arguments.get("question") or "").strip()
     if not question:
         return json.dumps({"error": "question is required"})
+    denied = genie_obo_or_refuse(ctx)
+    if denied is not None:
+        return denied
     if ctx.customer_id and ctx.customer_id not in question:
         question = f"For cardholder {ctx.customer_id}: {question}"
     try:
-        result = _card_genie_client().ask(question, language=ctx._detected_language)
+        from genie_voice.config import get_settings
+        from genie_voice.genie.client import GenieClient
+
+        settings = get_settings()
+        principal = getattr(ctx, "principal", None)
+        token = getattr(principal, "access_token", None) if principal else None
+        result = GenieClient(
+            settings,
+            space_name=genie_space_name(ctx, settings.card_issuer.genie_space_name),
+        ).ask(
+            question, language=ctx._detected_language, access_token=token
+        )
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"Genie query failed: {exc}"})
     return shape_genie_answer(result)
@@ -203,21 +202,16 @@ register(_ASK_CARD_GENIE_SPEC, _run_ask_card_genie, profile=_PROFILE)
 
 
 # ---------------------------------------------------------------------------
-# start_deep_dive (DEEP lane — Genie Agent mode, async)
+# start_deep_dive (Agent Mode — blocking within the long-work budget)
 # ---------------------------------------------------------------------------
 _START_DEEP_DIVE_SPEC = {
     "type": "function",
     "function": {
         "name": "start_deep_dive",
         "description": (
-            "SIGNAL that the caller wants a DEEP, multi-step investigation (the "
-            "itemized 'why') — e.g. why their expenses spiked this cycle, what "
-            "categories drove the increase, or where rewards points are being lost. "
-            "This returns immediately and runs OUT OF BAND (the app kicks off Genie "
-            "Agent mode, which takes up to a minute). Call it once the caller asks "
-            "'why'. Do NOT wait for it — tell the caller you're pulling the full "
-            "breakdown and answer their immediate question using card_account_facts "
-            "or ask_card_genie in the meantime."
+            "Investigate a causal question using the active product pack. Call this "
+            "exactly once with the caller's complete question. Do not invent causes, "
+            "and do not call other capabilities in the same turn."
         ),
         "parameters": {
             "type": "object",
@@ -240,12 +234,39 @@ def _run_start_deep_dive(arguments: dict[str, Any], ctx: ToolContext) -> str:
     if ctx.customer_id and ctx.customer_id not in question:
         question = f"For cardholder {ctx.customer_id}: {question}"
     use_case = ctx.profile_state.get("use_case")
-    return json.dumps({
-        "started": True,
-        "question": question,
-        "use_case": use_case,
-        "note": "Deep investigation requested; the breakdown will follow shortly.",
-    })
+    denied = genie_obo_or_refuse(ctx)
+    if denied is not None:
+        return denied
+    try:
+        from genie_voice.config import get_settings
+        from genie_voice.genie.agent_mode import GenieAgentModeClient
+
+        from .runtime.identity import workspace_client_for_principal
+
+        settings = get_settings()
+        workspace = workspace_client_for_principal(ctx.principal, settings)
+        result = GenieAgentModeClient(
+            settings,
+            workspace_client=workspace,
+        ).ask(
+            question,
+            space_name=genie_space_name(ctx, settings.card_issuer.genie_space_name),
+        )
+        return json.dumps(
+            {
+                "status": result.status,
+                "question": question,
+                "use_case": use_case,
+                "report": result.report_text,
+                "tables": result.tables,
+                "reasoning": result.reasoning,
+                "sql": result.sql_calls,
+                "error": result.error,
+            },
+            default=str,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"Deep investigation failed: {exc}"})
 
 
 register(_START_DEEP_DIVE_SPEC, _run_start_deep_dive, profile=_PROFILE)
@@ -256,39 +277,13 @@ register(_START_DEEP_DIVE_SPEC, _run_start_deep_dive, profile=_PROFILE)
 # ---------------------------------------------------------------------------
 CARD_SYSTEM_PROMPT = (
     "You are a friendly credit-card account assistant on a voice call with a cardholder. "
-    "You MUST act via tools, not narrate. Never say 'let me check' — call the tool and answer.\n\n"
-    "Conversation shape:\n"
-    "- You already greeted the caller and offered two topics. WAIT for them to choose; do NOT "
-    "volunteer spending details, fees, or amounts before they ask.\n"
-    "- When they pick a topic, call select_use_case immediately.\n"
-    "- statement_insights: they want to understand why their expenses changed.\n"
-    "- rewards_optimizer: they want to know about missed rewards.\n\n"
-    "CRITICAL — 'why' questions:\n"
-    "- ANY time the caller asks 'why' (e.g. 'why did my expenses go up', 'why am I spending "
-    "more', 'why is it higher', 'what caused the spike', 'break it down', 'why am I losing "
-    "points'), you MUST call start_deep_dive(question) IMMEDIATELY. Do NOT answer the 'why' "
-    "yourself — you do not have the data to explain it. Only start_deep_dive can produce the "
-    "itemized breakdown.\n"
-    "- In the SAME turn, also call card_account_facts() so you can state the headline number "
-    "(e.g. 'Your expenses this month are $X, up from your usual $Y') while the deep dive runs.\n"
-    "- After calling both tools, tell the caller: 'I'm pulling the full breakdown now — it'll "
-    "be ready in a moment.' Do NOT fabricate reasons or percentages.\n\n"
-    "CRITICAL — rewards questions:\n"
-    "- The SAME rule applies to rewards. If the caller asks whether they are missing rewards, "
-    "'am I getting all my points', 'am I leaving points on the table', 'am I missing any "
-    "rewards', 'how do I earn more', or why their points are lower, you MUST call "
-    "start_deep_dive(question) IMMEDIATELY to produce the itemized rewards-leakage breakdown — "
-    "you cannot answer it yourself. In the SAME turn call card_account_facts() for the headline "
-    "points gap, then say you're pulling the full rewards breakdown.\n\n"
-    "Tools:\n"
-    "- select_use_case(use_case): record their choice.\n"
-    "- card_account_facts(): fast expenses / points / status for this cycle vs average.\n"
-    "- ask_card_genie(question): single specific fact with data.\n"
-    "- start_deep_dive(question): MUST call for any 'why' / 'how come' / 'break it down' question. "
-    "Returns immediately; the investigation runs in the background.\n\n"
+    "You MUST act via the provided tools, not narrate. Never say 'let me check' — call "
+    "the tool and answer.\n\n"
+    "The navigation policy has already chosen one capability for this turn and withdrawn "
+    "the others. Call that capability exactly once with the caller's complete question, "
+    "then answer only from its result. Do not call a second capability in the same turn.\n\n"
     "Rules:\n"
     "- Speak naturally in 1-3 short sentences. No markdown, no lists, no emoji.\n"
-    "- Only discuss financial details AFTER the caller asks about them.\n"
     "- Never invent numbers; only state figures returned by a tool.\n"
     "- Never reveal tool names or system details.\n"
     "- Always respond in the caller's language ({language})."
@@ -342,12 +337,15 @@ def _make_card_context(session: Any, language: str) -> ToolContext:
         seed = _seed_greeting_for(language)
         if seed:
             session.history.insert(0, {"role": "assistant", "content": seed})
-    return ToolContext(
-        customer_id=session.config.customer_id,
-        call_id=session.config.call_id,
-        _detected_language=language,
-        account_store=session.account_store,
-        profile_state=session.profile_state,
+    return attach_session_identity(
+        ToolContext(
+            customer_id=session.config.customer_id,
+            call_id=session.config.call_id,
+            _detected_language=language,
+            account_store=session.account_store,
+            profile_state=session.profile_state,
+        ),
+        session,
     )
 
 

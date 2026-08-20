@@ -2,7 +2,7 @@
 
 The set of languages the voice stack supports is a FRAMEWORK concern (the
 intersection of the configured STT + TTS capabilities), not a per-industry one.
-Every voice surface — home concierge, card, healthcare — reads this ONE endpoint
+Every voice surface — home concierge, card, knowledge — reads this ONE endpoint
 so the language bar is identical everywhere and always matches what the pipeline
 can actually speak. (``/card/languages`` predates this and returns the same
 payload for backward-compat.)

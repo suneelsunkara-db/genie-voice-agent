@@ -69,6 +69,43 @@
   align-items: center;
   gap: 20px;
 }
+.home-voice-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.home-voice-label {
+  color: var(--home-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.home-voice-toggle {
+  display: flex;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--home-line);
+  background: rgba(8, 11, 20, 0.62);
+}
+.home-voice-toggle button {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: transparent;
+  color: var(--home-muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+.home-voice-toggle button:hover { color: var(--home-text); }
+.home-voice-toggle button.is-active {
+  color: #fff;
+  background: linear-gradient(135deg, rgba(124, 108, 255, 0.9), rgba(78, 168, 255, 0.9));
+  box-shadow: 0 3px 12px rgba(78, 168, 255, 0.28);
+}
 .home-topnav {
   display: flex;
   gap: 18px;
@@ -231,19 +268,50 @@
 }
 .home-card:hover {
   transform: translateY(-3px);
-  border-color: rgba(255, 107, 92, 0.5);
+  border-color: color-mix(in srgb, var(--home-accent, #ff6b5c) 55%, transparent);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4);
 }
 .home-card.is-chosen {
   border-color: var(--home-lava);
   box-shadow: 0 0 0 2px rgba(255, 54, 33, 0.5), 0 16px 40px rgba(255, 54, 33, 0.28);
 }
+/* Each surface carries its own accent, applied via --home-accent so the icon,
+   tag and hover ring on a card can never disagree with one another. */
+.home-card-telco { --home-accent: var(--home-lava-2); }
+.home-card-fsi { --home-accent: var(--home-genie-2); }
+.home-card-knowledge { --home-accent: var(--home-genie); }
+
+.home-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.home-card-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--home-accent, var(--home-lava-2));
+  border: 1px solid color-mix(in srgb, var(--home-accent, #ff6b5c) 40%, transparent);
+  background: color-mix(in srgb, var(--home-accent, #ff6b5c) 14%, transparent);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.home-card-icon svg {
+  width: 17px;
+  height: 17px;
+}
+.home-card:hover .home-card-icon {
+  transform: scale(1.06);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--home-accent, #ff6b5c) 45%, transparent);
+}
 .home-card-tag {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--home-lava-2);
+  color: var(--home-accent, var(--home-lava-2));
 }
 .home-card-title { font-size: clamp(17px, 2.4vh, 21px); font-weight: 800; }
 .home-card-blurb {
@@ -267,7 +335,7 @@
 .home-card-go {
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--home-lava-2);
+  color: var(--home-accent, var(--home-lava-2));
 }
 
 /* ---- Genie concept panels --------------------------------------------- */
@@ -303,30 +371,74 @@
   line-height: 1.4;
 }
 
-.home-ontology { width: 100%; height: clamp(160px, 26vh, 260px); }
-.home-ontology-edge {
-  stroke: rgba(124, 108, 255, 0.55);
-  stroke-width: 0.5;
-  stroke-dasharray: 4;
-  animation: home-dash 2.4s linear infinite;
+/* Sample questions: one card per surface, so "what can I say?" has a concrete
+   answer. Shares the industry-card accent scheme via --home-accent. */
+.home-samples {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
 }
-@keyframes home-dash {
-  to { stroke-dashoffset: -8; }
+.home-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--home-line);
+  background: rgba(255, 255, 255, 0.03);
+  opacity: 0;
+  animation: home-dr-in 0.5s ease forwards;
+  transition: transform 160ms ease, border-color 160ms ease;
 }
-.home-ontology-node circle {
-  fill: rgba(124, 108, 255, 0.92);
-  stroke: rgba(176, 164, 255, 0.9);
-  stroke-width: 0.6;
-  animation: home-node 3s ease-in-out infinite;
+.home-sample:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--home-accent, #4ea8ff) 50%, transparent);
 }
-.home-ontology-node text {
-  fill: #cbd7f5;
-  font-size: 3.9px;
+.home-sample-telco { --home-accent: var(--home-lava-2); }
+.home-sample-fsi { --home-accent: var(--home-genie-2); }
+.home-sample-knowledge { --home-accent: var(--home-genie); }
+.home-sample-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.home-sample-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  color: var(--home-accent, var(--home-genie-2));
+  border: 1px solid color-mix(in srgb, var(--home-accent, #4ea8ff) 38%, transparent);
+  background: color-mix(in srgb, var(--home-accent, #4ea8ff) 13%, transparent);
+}
+.home-sample-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.home-sample-surface {
+  font-size: 9.5px;
   font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--home-accent, var(--home-genie-2));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-@keyframes home-node {
-  0%, 100% { opacity: 0.75; }
-  50% { opacity: 1; }
+.home-sample-q {
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #dbe4fb;
+}
+.home-sample-detail {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--home-muted);
 }
 
 /* Deep-reasoning: a concrete illustrative "why" investigation. */
@@ -413,4 +525,5 @@
 @media (max-width: 860px) {
   .home-industries { grid-template-columns: 1fr; }
   .home-genie { grid-template-columns: 1fr; }
+  .home-samples { grid-template-columns: 1fr; }
 }

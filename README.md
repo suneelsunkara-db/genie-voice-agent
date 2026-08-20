@@ -28,6 +28,7 @@ that used to live in subfolders have been merged here (see the table of contents
 - [Swapping a provider](#swapping-a-provider-no-code-changes)
 - [Capture mode: local vs live](#capture-mode-local-vs-live-data-producer)
 - [Realtime Voice API + UI](#realtime-voice-api--ui)
+- [Share and consume the realtime API](#share-and-consume-the-realtime-api)
 - [ML ASR pipeline & model serving](#ml-asr-pipeline--model-serving)
 - [ASR model-training harness](#asr-model-training-harness)
 - [Lakebase (Autoscaling) serving layer](#lakebase-autoscaling-serving-layer)
@@ -156,6 +157,16 @@ app.yaml           Databricks Apps runtime config
 - **Databricks App (Setup B):** runs as the app's **service principal** via M2M
   OAuth (platform-injected `DATABRICKS_CLIENT_ID/SECRET/HOST`); `deploy_app.sh`
   grants that SP its UC/Lakebase/Genie access and the `workspace-access` entitlement.
+  **Genie / workspace Q&A** additionally uses **user authorization (OBO)**: enable
+  App → Authorization scopes `genie` and `sql` (declared in `app.yaml` as
+  `user_api_scopes` and explicitly granted/verified by `deploy_app.sh`; declaring
+  scopes in `app.yaml` alone does not grant them). Databricks forwards
+  `x-forwarded-access-token` on each
+  request/WS; the realtime session binds it at `session.start` into
+  `session.principal`. Missing token → fail-closed (`obo_deny` log/metric) — Genie
+  tools are not invoked. Local stand-in: `./start_app.sh` exports
+  `GENIE_OBO_LOCAL_TOKEN` from your Databricks CLI U2M token automatically (or
+  honors an existing env/.env value). Never use the app SP secret.
 
 Set workspace values in **`config/config.local.yaml`** (gitignored full config,
 deep-merged over `config/config.yaml`). Copy `config/config.yaml` as a starting
@@ -265,8 +276,12 @@ at runtime).
    - **UC + Lakebase + Genie** grants via `infra/apps/grant_app_sp.py`
      (catalog/schema/volume `SELECT`/`MODIFY`/`READ VOLUME`, Lakebase role +
      table/sequence grants, Genie `CAN_RUN`).
-5. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
+5. **Applies and verifies OBO scopes** `genie` + `sql`; deployment fails if User
+   Authorization is disabled or the scopes are not effective.
+6. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
    `.gitignore`) and **deploys** in `SNAPSHOT` mode, printing the app URL.
+7. **Smoke-tests** health, realtime, Knowledge, capabilities, and forwarded user
+   identity through the authenticated Databricks Apps URL.
 
 ### Configuration
 
@@ -410,7 +425,7 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
      the web SPA.
    - `WS /realtime/v1/speech-to-text`, `WS /realtime/v1/speech-llm-toolassist-speech`, `WS /realtime/v1/text-to-speech`, `GET /realtime/v1/capabilities`, `GET /realtime/v1/languages`, `GET /realtime/v1/benchmarks`
    - `POST /realtime/mcp` — the MCP endpoint (voice API exposed as MCP tools); see [MCP server](#mcp-server-remote-over-http)
-   - Test UI: `https://<app-host>/realtime-test/` (auto-targets the `/realtime` mount)
+   - Test UI: `https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime-test/` (auto-targets the `/realtime` mount)
 
    All of the above are behind Databricks Apps auth (SSO in a browser; a Bearer
    token from an identity with access to the app for programmatic callers).
@@ -419,119 +434,243 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
    `realtime_voice:` config block) as app resources so the service principal gets
    `CAN_QUERY`. Missing endpoints are skipped with a warning.
 
-### External / cross-workspace access
-
-A Databricks App is protected by its **host workspace's** OAuth/OIDC — there is no
-anonymous access and no API key. Two rules follow:
-
-1. **Auth is workspace-scoped.** The caller must present an OAuth token issued by
-   the **app's** workspace host. A token minted against a different workspace is
-   rejected (an unauthenticated request 302-redirects to the app workspace's OIDC).
-2. **The principal needs `CAN_USE` on the app** (App → Permissions). A valid token
-   without app permission still gets `403`.
-
-**Option A — Service principal (M2M), recommended for programmatic / cross-workspace
-callers.** This is how the multilingual benchmark reaches the app
-(`M2MTokenProvider` in `Benchmarks/MultilingualVoice/databricks_auth.py`). The
-realtime API calls its STT/LLM/TTS endpoints as the **app's own** service principal,
-so the *caller's* SP only needs `CAN_USE` on the app — no serving grants.
-
-1. In the app's account, create a service principal and generate an **OAuth secret**
-   (`client_id` + `client_secret`). Secret creation is an **account-admin** action
-   (Account Console → *Service principals* → *Secrets*, or
-   `databricks account service-principal-secrets create --service-principal-id <id>`).
-2. Grant that SP `CAN_USE` on the app:
-   ```bash
-   databricks apps update-permissions genie-voice-agent -p <profile> --json '{
-     "access_control_list": [
-       {"service_principal_name": "<client-id>", "permission_level": "CAN_USE"}
-     ]}'
-   ```
-3. The caller mints a token against the **app's workspace host** and sends it as a
-   Bearer on every request (HTTP and the WebSocket upgrade):
-   ```python
-   from databricks.sdk.core import Config
-   cfg = Config(host="https://<app-workspace-host>", client_id="<client-id>",
-                client_secret="<secret>", auth_type="oauth-m2m")
-   token = cfg.authenticate()["Authorization"].removeprefix("Bearer ").strip()
-   # ws:  wss://<app-host>/realtime/v1/speech-to-text   header: Authorization: Bearer <token>
-   ```
-   Raw equivalent: `POST https://<app-workspace-host>/oidc/v1/token` with
-   `grant_type=client_credentials&scope=all-apis` and HTTP Basic `client_id:secret`.
-
-**Option B — Existing account user (U2M).** If the caller is already a user in the
-app's account (this app grants `CAN_USE` to *account users*), they authenticate to
-the app's workspace host directly — `databricks auth login --host https://<app-workspace-host>`
-then `databricks auth token` — or simply SSO in the browser. No shared secret.
+How to grant access and call Genie Space, Agent Mode, and Genie One from another
+client is documented in [Share and consume the realtime API](#share-and-consume-the-realtime-api).
 
 ### MCP server (remote, over HTTP)
 
 The realtime voice API is also exposed as a **Model Context Protocol** endpoint so
 MCP clients (Cursor, Claude Desktop, any MCP host) can use it as tools. It is hosted
-**in-process** by the app at the exact path:
+**in-process** by the app at:
 
 ```
-https://<app-host>/realtime/mcp
+https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/mcp
 ```
 
-Transport is **streamable HTTP** (the MCP `StreamableHTTPSessionManager`). The server
-code lives in `mcp_server/`; `api/app/main.py:_mount_mcp` wires it at `/realtime/mcp`,
-and `deploy_app.sh` ships/updates it with every deploy (no extra step). Its tools call
-the co-hosted `/realtime` routes over **loopback**, so there is no second auth hop.
+Transport is **streamable HTTP**. The server lives in `mcp_server/`;
+`api/app/main.py:_mount_mcp` wires it at `/realtime/mcp`, and `deploy_app.sh`
+ships it with every deploy. Tools call the co-hosted `/realtime` routes over
+loopback.
 
-**Tools exposed:** `describe_api`, `get_capabilities`, `list_languages`,
-`get_benchmarks`, `health`, `synthesize_speech`, `transcribe_audio`, `ask_voice_agent`.
+**Tools:** `describe_api`, `get_capabilities`, `list_languages`, `get_benchmarks`,
+`health`, `synthesize_speech`, `transcribe_audio`, `ask_voice_agent`.
+`ask_voice_agent` takes a WAV plus `profile`: `billing` | `card` | `knowledge`.
 
-**Auth is the app's normal ingress auth** — attach `Authorization: Bearer <token>`
-where `<token>` is a Databricks OAuth token from the app's workspace with `CAN_USE`
-on the app (same tokens as [External / cross-workspace access](#external--cross-workspace-access)).
-Opening `/realtime/mcp` in a **browser** returns
-`{"error":{"code":-32600,"message":"Not Acceptable: Client must accept text/event-stream"}}`
-— that is **expected**: a browser `GET` isn't an MCP client. Only clients that send
-`Accept: application/json, text/event-stream` can speak the protocol.
-
-**Connect a remote MCP client** (e.g. Cursor `~/.cursor/mcp.json`):
+Auth is the same Bearer token as [Share and consume](#share-and-consume-the-realtime-api)
+(`CAN_USE` on the app, issued by the app's workspace). A browser `GET` returns
+`Not Acceptable` — that is expected; only clients that send
+`Accept: application/json, text/event-stream` speak MCP.
 
 ```jsonc
 {
   "mcpServers": {
     "genie-voice": {
-      "url": "https://<app-host>/realtime/mcp",
+      "url": "https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/mcp",
       "headers": { "Authorization": "Bearer <databricks-oauth-token>" }
     }
   }
 }
 ```
 
-**Run locally over stdio** (the same package, pointed at the deployed app or a local
-`python -m realtime_api.server`):
-
 ```bash
-pip install -r mcp_server/requirements.txt      # mcp>=1.9,<2 (bundles FastMCP)
-GENIE_VOICE_API_URL=https://<app-host>/realtime \
-DATABRICKS_HOST=https://<app-workspace-host> \
+pip install -r mcp_server/requirements.txt
+GENIE_VOICE_API_URL=https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime \
+DATABRICKS_HOST=https://<workspace-host>.cloud.databricks.com \
 DATABRICKS_CLIENT_ID=<sp-client-id> DATABRICKS_CLIENT_SECRET=<sp-secret> \
-python -m mcp_server.server                      # or DATABRICKS_CONFIG_PROFILE=<profile>
+python -m mcp_server.server
 ```
 
-**Verify the deployed endpoint** (JSON-RPC over streamable HTTP):
-
 ```bash
-TOKEN=$(databricks auth token -p <profile> | jq -r .access_token)
-MCP=https://<app-host>/realtime/mcp
-# initialize -> 200 + an `mcp-session-id` response header
+TOKEN=$(databricks auth token -p <profile> -o json | jq -r .access_token)
+MCP=https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/mcp
 curl -s -D- -o/dev/null -X POST "$MCP" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}'
-# then tools/list (reuse the returned session id via header `mcp-session-id: <id>`)
 ```
 
-A liveness/mount probe is available at `GET /__mcp_status` →
-`{"mounted":true,"path":"/realtime/mcp","via":"asgi-middleware"}`.
+`GET /__mcp_status` → `{"mounted":true,"path":"/realtime/mcp","via":"asgi-middleware"}`.
 
 > Note: `mcp` is pinned `>=1.9,<2` — the `mcp` 2.0 release removed the bundled
 > `FastMCP` (`mcp.server.fastmcp`) this server builds on.
+
+## Share and consume the realtime API
+
+This app is a **voice runtime** (STT → LLM+tools → TTS). The three Genie products
+are selected on `session.start`. They do **not** hard-wire a consumer to this
+demo's cardholder or telco datasets.
+
+| You want | `profile` | What it actually hits |
+|---|---|---|
+| **Genie One** — any question against *your* governed workspace | `knowledge` | The signed-in user's workspace (OBO). No space to pass. |
+| **Genie Space** — Conversation API against *your* space | `billing` | The space named in `space_name`. |
+| **Agent Mode** — long “why” investigation against *your* space | `card` | The space named in `space_name`. |
+
+Omit `customer_id` / `call_id` unless you are exercising **this** app's demo
+accounts. Those fields overlay Lakebase card/telco facts that are not yours.
+
+Genie tools run as **you** (`user_api_scopes`: `genie`, `sql`). You can only
+reach a space you already have `CAN_RUN` on. If `space_name` is omitted, Space
+and Agent Mode fall back to this app's configured demo spaces — that is the
+only time you hit "our cards".
+
+Hosts below are placeholders.
+
+| | Placeholder |
+|---|---|
+| App (HTTPS) | `https://<app-name>-<workspace-id>.aws.databricksapps.com` |
+| App (WSS) | `wss://<app-name>-<workspace-id>.aws.databricksapps.com` |
+| Token issuer | `https://<workspace-host>.cloud.databricks.com` (the app's workspace, not yours) |
+
+### Access
+
+1. **`CAN_USE`** on the app.
+2. An OAuth token issued by the **app's** workspace.
+
+```bash
+databricks auth login --host https://<workspace-host>.cloud.databricks.com
+TOKEN=$(databricks auth token -o json | jq -r .access_token)
+```
+
+M2M (STT/TTS only unless Apps user-authorization has consented `genie`+`sql`):
+
+```python
+from databricks.sdk.core import Config
+cfg = Config(
+    host="https://<workspace-host>.cloud.databricks.com",
+    client_id="<client-id>",
+    client_secret="<secret>",
+    auth_type="oauth-m2m",
+)
+token = cfg.authenticate()["Authorization"].removeprefix("Bearer ").strip()
+```
+
+Send `Authorization: Bearer <token>` on HTTP and on the WebSocket upgrade.
+
+```
+GET https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime
+GET https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/v1/capabilities
+```
+
+### Call your own Genie Space, Agent Mode, or Genie One
+
+`pcm` is 16-bit little-endian mono WAV. `endpointing: false` + `audio.end` is a
+whole file; omit `endpointing` for a live mic. `space_name` is the Genie space
+**title** (not an id). You must already have `CAN_RUN` on it.
+
+```python
+import asyncio, json, base64, wave
+import websockets
+
+WS = "wss://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/v1/speech-llm-toolassist-speech"
+TOKEN = "<token>"
+
+
+def load_wav(path):
+    with wave.open(path, "rb") as w:
+        assert w.getsampwidth() == 2 and w.getnchannels() == 1
+        return w.readframes(w.getnframes()), w.getframerate()
+
+
+async def ask(question_wav, profile, space_name=None):
+    pcm, rate = load_wav(question_wav)
+    start = {
+        "type": "session.start",
+        "language": "auto",
+        "sample_rate_hz": rate,
+        "encoding": "pcm_s16le",
+        "endpointing": False,
+        "profile": profile,
+    }
+    if space_name:
+        start["space_name"] = space_name
+    async with websockets.connect(
+        WS,
+        additional_headers={"Authorization": f"Bearer {TOKEN}"},
+        max_size=None,
+    ) as ws:
+        await ws.send(json.dumps(start))
+        assert json.loads(await ws.recv())["type"] == "session.ready"
+        await ws.send(json.dumps({
+            "type": "input_audio.buffer.append",
+            "audio": base64.b64encode(pcm).decode(),
+        }))
+        await ws.send(json.dumps({"type": "audio.end"}))
+        async for raw in ws:
+            ev = json.loads(raw)
+            kind = ev.get("type")
+            if kind == "transcript.final":
+                print("heard:", ev["text"])
+            elif kind == "tool.called":
+                print("tool:", ev["name"])
+            elif kind == "turn.event" and ev["kind"] == "speech.progress":
+                print("progress:", ev["payload"]["text"])
+            elif kind == "turn.event" and ev["kind"] == "answer.render.started":
+                print("report:\n", ev["payload"]["report"][:2000])
+            elif kind == "turn.event" and ev["kind"] == "speech.committed":
+                print("spoken:", ev["payload"]["text"])
+            elif kind == "response.audio" and ev.get("final"):
+                break
+```
+
+Genie One — your governed workspace. Do not pass `space_name`.
+
+```python
+asyncio.run(ask("question.wav", "knowledge"))
+```
+
+Genie Space — your Conversation API space.
+
+```python
+asyncio.run(ask("question.wav", "billing", space_name="<your-genie-space-title>"))
+```
+
+Agent Mode — same space, causal question. The turn can take minutes; watch
+`speech.progress`, then `answer.render.started`.
+
+```python
+asyncio.run(ask("why_did_it_drop.wav", "card", space_name="<your-genie-space-title>"))
+```
+
+Same fields over MCP (`POST` the tool, or any MCP client pointed at
+`https://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/mcp`):
+
+```python
+ask_voice_agent(audio_path="question.wav", profile="knowledge")
+ask_voice_agent(audio_path="question.wav", profile="card", space_name="<your-genie-space-title>")
+```
+
+Browser pages (`/#/telco`, `/#/card`, `/#/knowledge`) are **this** app's demos.
+They do not take a consumer space name — use the WebSocket or MCP for that.
+
+Text-to-speech only (no Genie):
+
+```python
+async def speak(text):
+    url = "wss://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/v1/text-to-speech"
+    async with websockets.connect(
+        url, additional_headers={"Authorization": f"Bearer {TOKEN}"}, max_size=None
+    ) as ws:
+        await ws.send(json.dumps({
+            "type": "session.start", "language": "en-US", "sample_rate_hz": 16000,
+        }))
+        await ws.recv()
+        await ws.send(json.dumps({"type": "synthesize", "text": text, "language": "en-US"}))
+        chunks = []
+        async for raw in ws:
+            ev = json.loads(raw)
+            if ev.get("type") == "response.audio":
+                chunks.append(base64.b64decode(ev["audio"]))
+                if ev.get("final"):
+                    break
+        return b"".join(chunks)
+```
+
+The STT-only socket is:
+
+```
+wss://<app-name>-<workspace-id>.aws.databricksapps.com/realtime/v1/speech-to-text
+```
 
 ## Capabilities
 
@@ -625,12 +764,20 @@ Server → client events:
 - `turn.started`
 - `transcript.final` (includes `stt_ms`)
 - `response.text` (includes `llm_ms`)
-- `response.audio` (streamed chunks; first carries `tts_first_ms`; last is `final`)
+- `response.audio` (streamed chunks; first carries `tts_first_ms`; progressive dual flags:
+  `segment_final` = this speech segment ended, `turn_final` = the whole turn is done;
+  legacy `final` mirrors `turn_final` during migration — STT/TTS-only routes unchanged)
+- `turn.final` (after answer audio; carries `committed_claims` for next-turn context)
 - `playback.stop`
 - `error`
+- `barge_in` (client → server) immediately cancels the current turn and increments the turn ID,
+  preventing late inference responses from reaching the client. Server replies with `playback.stop`.
 
-`barge_in` immediately cancels the current turn and increments the turn ID,
-preventing late inference responses from reaching the client.
+Capability note: only `/v1/speech-llm-toolassist-speech` has progressive turn semantics
+(`segment_final` / `turn_final`, same-turn synthesize inject, `turn.final` claims).
+`/v1/speech-to-text` and `/v1/text-to-speech` remain modality primitives.
+`progressive_runtime` is advertised on `session.ready` (config: `realtime_voice.progressive_runtime`).
+
 
 ## Tuning (config only)
 

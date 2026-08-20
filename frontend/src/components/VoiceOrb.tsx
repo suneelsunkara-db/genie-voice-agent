@@ -3,7 +3,7 @@ import "../styles/voice-orb.css";
 
 /**
  * Shared voice orb (framework primitive) — the SINGLE Genie icon used by every
- * voice surface (home, billing, card, healthcare). It carries the Genie brand
+ * voice surface (home, billing, card, knowledge). It carries the Genie brand
  * "voice feel": a purple gradient core with the Genie ◎ mark, pulsing halo rings,
  * and a speaking/listening glow that breathes with the live audio level. Every
  * page renders this so the on-screen presence is identical and stays true to the

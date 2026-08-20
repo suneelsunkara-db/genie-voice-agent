@@ -47,8 +47,23 @@ class AgentModeResult:
 
 
 class GenieAgentModeClient:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        workspace_client: Any | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
+        # OBO callers inject a per-session user client. Never cache it globally or
+        # silently fall back to the app service principal.
+        self._injected_workspace_client = workspace_client
+
+    def _workspace_client(self):
+        if self._injected_workspace_client is not None:
+            return self._injected_workspace_client
+        from genie_voice.databricks.client import get_workspace_client
+
+        return get_workspace_client(self.settings)
 
     def _host(self) -> str:
         host = self.settings.databricks_host.rstrip("/")
@@ -57,9 +72,7 @@ class GenieAgentModeClient:
         return host
 
     def _auth_headers(self) -> dict[str, str]:
-        from genie_voice.databricks.client import get_workspace_client
-
-        client = get_workspace_client(self.settings)
+        client = self._workspace_client()
         # Config.authenticate() yields the ready-to-use Authorization header for
         # whatever auth the SDK resolved (U2M OAuth locally, SP on the app).
         headers = dict(client.config.authenticate() or {})
@@ -69,11 +82,10 @@ class GenieAgentModeClient:
 
     def resolve_agent_id(self, name: str | None = None) -> str | None:
         """The Agent id IS the Genie space id (resolved by configured name)."""
-        from genie_voice.databricks.client import get_workspace_client
         from genie_voice.genie.space import find_space_ids
 
         name = name or self.settings.card_issuer.genie_space_name
-        client = get_workspace_client(self.settings)
+        client = self._workspace_client()
         matches = find_space_ids(client, name)
         return matches[0] if matches else None
 

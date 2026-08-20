@@ -39,13 +39,13 @@ class GenieClient:
             or "space" in msg and "exist" in msg
         )
 
-    def _resolve_space_id(self, force_refresh: bool = False) -> str | None:
+    def _resolve_space_id(
+        self, force_refresh: bool = False, *, access_token: str | None = None
+    ) -> str | None:
         if self._space_id and not force_refresh:
             return self._space_id
         try:
-            from genie_voice.databricks.client import get_workspace_client
-
-            client = get_workspace_client(self.settings)
+            client = self._workspace_client(access_token=access_token)
             matches = find_space_ids(client, self._space_name)
             if len(matches) > 1:
                 raise RuntimeError(
@@ -189,16 +189,20 @@ class GenieClient:
         conversation_id: str | None = None,
         *,
         language: str | None = None,
+        access_token: str | None = None,
     ) -> dict[str, Any]:
         """Ask Genie a question.
 
         When `conversation_id` is provided, the question is sent as a follow-up in
         that existing conversation (Genie retains context); otherwise a new
         conversation is started. Scope a conversation to a single session.
+
+        When ``access_token`` is set (Apps OBO / local U2M stand-in), Genie is
+        called as that user — never the app service principal.
         """
         language_code = normalize_language(language)
         genie_question = self._canonical_question(question, language_code)
-        space_id = self._resolve_space_id(force_refresh=False)
+        space_id = self._resolve_space_id(force_refresh=False, access_token=access_token)
         if not space_id:
             raise RuntimeError(
                 "No resolvable Genie space. Authenticate to Databricks and run "
@@ -206,9 +210,7 @@ class GenieClient:
             )
 
         try:
-            from genie_voice.databricks.client import get_workspace_client
-
-            client = get_workspace_client(self.settings)
+            client = self._workspace_client(access_token=access_token)
             if conversation_id:
                 msg = client.genie.create_message_and_wait(space_id, conversation_id, genie_question)
             else:
@@ -223,12 +225,12 @@ class GenieClient:
             # can become stale. Re-resolve by name once and retry (new conversation
             # only - a follow-up id is meaningless against a refreshed space).
             if self._looks_like_stale_space_error(exc) and not conversation_id:
-                retry_space = self._resolve_space_id(force_refresh=True)
+                retry_space = self._resolve_space_id(
+                    force_refresh=True, access_token=access_token
+                )
                 if retry_space and retry_space != space_id:
                     try:
-                        from genie_voice.databricks.client import get_workspace_client
-
-                        client = get_workspace_client(self.settings)
+                        client = self._workspace_client(access_token=access_token)
                         msg = client.genie.start_conversation_and_wait(retry_space, genie_question)
                         out = self._extract_message(client, retry_space, msg, question)
                         out["language"] = language_code
@@ -239,6 +241,18 @@ class GenieClient:
                         raise RuntimeError(f"Genie query failed after space refresh: {retry_exc}") from retry_exc
             raise RuntimeError(f"Genie query failed: {exc}") from exc
 
+    def _workspace_client(self, *, access_token: str | None = None):
+        """Prefer user OBO token when present; else process default (SP / U2M)."""
+        if access_token:
+            from databricks.sdk import WorkspaceClient
+
+            host = self.settings.databricks_host
+            if not host:
+                raise RuntimeError("Databricks host is not configured for OBO Genie client")
+            return WorkspaceClient(host=host, token=access_token)
+        from genie_voice.databricks.client import get_workspace_client
+
+        return get_workspace_client(self.settings)
     @staticmethod
     def _canonical_question(question: str, language: str | None = None) -> str:
         language_code = normalize_language(language)

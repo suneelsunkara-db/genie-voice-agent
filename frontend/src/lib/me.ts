@@ -19,7 +19,7 @@ export interface Me {
 const EMPTY_ME: Me = { email: "", username: "", name: "", authenticated: false };
 
 // Module-level cache so the SPA fetches `/me` once and shares it across every
-// page (home concierge, card, billing, healthcare) for the whole session.
+// page (home concierge, card, billing, knowledge) for the whole session.
 let mePromise: Promise<Me> | null = null;
 
 export function getMe(): Promise<Me> {

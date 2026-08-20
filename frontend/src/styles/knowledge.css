@@ -1,0 +1,623 @@
+/* Databricks Knowledge Agent — cited platform Q&A.
+   Genie-purple/blue on the same deep-navy field as every other voice surface, so
+   the page reads as part of the set while staying distinct from the card
+   assistant's lava accents. */
+
+.kb-root {
+  --kb-line: rgba(150, 160, 200, 0.16);
+  --kb-text: #eef1f8;
+  --kb-muted: #98a2be;
+  --kb-accent: #7c6cff;
+  --kb-accent-2: #4ea8ff;
+  position: relative;
+  min-height: 100vh;
+  color: var(--kb-text);
+  /* Background + flowing languages come from the shared <VoiceBackdrop />. */
+  background: transparent;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+.kb-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 26px;
+  border-bottom: 1px solid var(--kb-line);
+}
+.kb-back {
+  background: transparent;
+  border: 1px solid var(--kb-line);
+  color: var(--kb-muted);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.kb-back:hover { color: var(--kb-text); border-color: var(--kb-accent); }
+
+.kb-body {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 22px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* ---- voice rail -------------------------------------------------------- */
+.kb-rail {
+  border-radius: 20px;
+  border: 1px solid var(--kb-line);
+  background: linear-gradient(180deg, rgba(22, 24, 48, 0.7), rgba(10, 12, 26, 0.7));
+  padding: 26px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  height: fit-content;
+}
+/* Just a centering + spacing wrapper — the shared <VoiceOrb /> carries the Genie
+   icon, halo rings, and speaking glow. */
+.kb-orb {
+  display: grid;
+  place-items: center;
+  margin-bottom: 18px;
+}
+.kb-status {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--kb-accent-2);
+  min-height: 18px;
+}
+.kb-status-speaking { color: #b0a4ff; }
+.kb-caption {
+  margin: 12px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--kb-text);
+  opacity: 0.92;
+}
+.kb-langwrap { margin-top: 18px; }
+.kb-end {
+  margin-top: 18px;
+  padding: 11px 24px;
+  border-radius: 999px;
+  border: none;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.kb-end {
+  background: rgba(255, 120, 120, 0.14);
+  border: 1px solid rgba(255, 120, 120, 0.4);
+  color: #ffb3b3;
+}
+.kb-error { margin-top: 10px; color: #ff9d9d; font-size: 12px; }
+.kb-disclaimer {
+  margin-top: 18px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--kb-muted);
+  opacity: 0.85;
+}
+
+/* ---- knowledge canvas -------------------------------------------------- */
+.kb-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.kb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 22px;
+  border-radius: 16px;
+  border: 1px solid var(--kb-line);
+  background: linear-gradient(180deg, rgba(22, 24, 48, 0.6), rgba(10, 12, 26, 0.6));
+}
+.kb-head-title { font-size: 20px; font-weight: 800; }
+.kb-head-sub { color: var(--kb-muted); font-size: 13px; margin-top: 2px; }
+.kb-head-badge {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--kb-accent-2);
+  border: 1px solid rgba(78, 168, 255, 0.36);
+  background: rgba(78, 168, 255, 0.12);
+  border-radius: 999px;
+  padding: 5px 12px;
+}
+
+/* Each category is its own labelled block so the breadth of Genie One —
+   concepts, workspace data, ops, governance, analytics — reads at a glance. */
+.kb-cat { display: flex; flex-direction: column; gap: 10px; }
+.kb-cat-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kb-accent-2);
+  opacity: 0.9;
+}
+.kb-topics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.kb-topic {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--kb-line);
+  background: rgba(20, 23, 44, 0.55);
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease,
+    background 200ms ease;
+  /* Cards are buttons now — reset the native chrome and align content left. */
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.kb-topic:hover {
+  border-color: var(--kb-accent);
+  background: rgba(28, 31, 58, 0.7);
+  transform: translateY(-1px);
+}
+.kb-topic:focus-visible {
+  outline: none;
+  border-color: var(--kb-accent-2);
+  box-shadow: 0 0 0 2px rgba(78, 168, 255, 0.4);
+}
+/* The tapped card, showing what asking it will run. */
+.kb-topic.is-open {
+  border-color: var(--kb-accent-2);
+  background: rgba(24, 30, 56, 0.78);
+  box-shadow: 0 0 0 1px rgba(78, 168, 255, 0.3), 0 12px 30px rgba(10, 12, 26, 0.45);
+}
+/* The question is the headline, so it wraps to several lines — keep the toggle
+   pinned to the first line rather than vertically centred against the block. */
+.kb-topic-name {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+.kb-topic-toggle {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--kb-accent-2);
+  background: rgba(78, 168, 255, 0.14);
+}
+.kb-topic-answer {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--kb-text);
+  padding: 8px 0 2px;
+  border-top: 1px solid rgba(150, 160, 200, 0.14);
+}
+/* Footer names the Genie One surface the answer will come from. */
+.kb-topic-foot {
+  margin-top: auto;
+  padding-top: 8px;
+}
+.kb-topic-cite {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--kb-muted);
+}
+
+/* --- Live answer panel ---------------------------------------------------- */
+/* Sits above the questions and fills in while the agent speaks, so the answer can
+   be read and heard at the same time. */
+.kb-answer {
+  border-radius: 16px;
+  border: 1px solid var(--kb-line);
+  background: linear-gradient(180deg, rgba(22, 24, 48, 0.55), rgba(10, 12, 26, 0.55));
+  padding: 18px 20px;
+  transition: border-color 220ms ease, box-shadow 220ms ease;
+}
+.kb-answer.is-active {
+  border-color: rgba(124, 108, 255, 0.45);
+  box-shadow: 0 0 0 1px rgba(124, 108, 255, 0.22), 0 14px 34px rgba(10, 12, 26, 0.5);
+}
+.kb-section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+.kb-answer-status {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7ee0b8;
+  background: rgba(126, 224, 184, 0.12);
+  border: 1px solid rgba(126, 224, 184, 0.3);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.kb-asked {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: #b0a4ff;
+}
+.kb-answer-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--kb-text);
+  white-space: pre-wrap;
+}
+.kb-full-answer {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(150, 160, 200, 0.14);
+}
+.kb-full-answer > p:not(.kb-answer-pending) {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #c6d1ee;
+  white-space: pre-wrap;
+}
+.kb-full-answer .kb-answer-pending {
+  margin-top: 8px;
+}
+.kb-structured-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.kb-markdown {
+  color: #cbd5ef;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+.kb-markdown > :first-child { margin-top: 0; }
+.kb-markdown > :last-child { margin-bottom: 0; }
+.kb-markdown h1,
+.kb-markdown h2,
+.kb-markdown h3 {
+  color: #f4f6ff;
+  line-height: 1.25;
+  margin: 18px 0 8px;
+}
+.kb-markdown h1 { font-size: 20px; }
+.kb-markdown h2 { font-size: 17px; }
+.kb-markdown h3 { font-size: 15px; }
+.kb-markdown p { margin: 8px 0; }
+.kb-markdown ul,
+.kb-markdown ol { margin: 8px 0; padding-left: 22px; }
+.kb-markdown li { margin: 4px 0; }
+.kb-markdown strong { color: #f2f4ff; }
+.kb-markdown a { color: #71b8ff; text-decoration: none; }
+.kb-markdown a:hover { text-decoration: underline; }
+.kb-markdown blockquote {
+  margin: 12px 0;
+  padding: 8px 14px;
+  border-left: 3px solid var(--kb-accent-2);
+  background: rgba(78, 168, 255, 0.06);
+  color: #b9c8e7;
+}
+.kb-markdown code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(8, 10, 22, 0.7);
+  color: #a8c7f0;
+}
+.kb-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+.kb-markdown th,
+.kb-markdown td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(150, 160, 200, 0.15);
+  text-align: left;
+}
+.kb-analysis {
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(78, 168, 255, 0.22);
+  background:
+    radial-gradient(circle at 80% 0%, rgba(78, 168, 255, 0.09), transparent 40%),
+    rgba(9, 12, 27, 0.72);
+}
+.kb-analysis-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.kb-analysis-head h4 {
+  margin: 3px 0 0;
+  font-size: 15px;
+  color: #f4f6ff;
+}
+.kb-analysis-head > span {
+  font-size: 10.5px;
+  color: var(--kb-muted);
+}
+.kb-analysis-eyebrow {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--kb-accent-2);
+}
+.kb-analysis-chart {
+  width: 100%;
+  margin: 4px 0 14px;
+}
+.kb-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.kb-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(21, 26, 49, 0.72);
+  border: 1px solid rgba(150, 160, 200, 0.12);
+}
+.kb-kpi span {
+  font-size: 10px;
+  color: var(--kb-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.kb-kpi strong {
+  font-size: 18px;
+  color: #f4f6ff;
+  overflow-wrap: anywhere;
+}
+.kb-result-table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(150, 160, 200, 0.13);
+}
+.kb-result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+.kb-result-table th {
+  position: sticky;
+  top: 0;
+  padding: 9px 10px;
+  background: #151a31;
+  color: #aebddd;
+  text-align: left;
+  white-space: nowrap;
+}
+.kb-result-table td {
+  padding: 8px 10px;
+  border-top: 1px solid rgba(150, 160, 200, 0.1);
+  color: #d4dcf2;
+  white-space: nowrap;
+}
+.kb-result-table tbody tr:hover { background: rgba(78, 168, 255, 0.05); }
+.kb-result-note {
+  padding: 7px 10px;
+  font-size: 10px;
+  color: var(--kb-muted);
+  background: rgba(8, 10, 22, 0.45);
+}
+.kb-analysis-sql { margin-top: 12px; }
+.kb-analysis-sql summary {
+  cursor: pointer;
+  color: #91acd3;
+  font-size: 11px;
+}
+.kb-analysis-sql pre {
+  padding: 10px;
+  border-radius: 9px;
+  background: rgba(5, 7, 16, 0.8);
+  color: #9fc4ee;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.kb-answer-pending {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--kb-muted);
+}
+
+/* A governed workspace read runs for minutes. This panel is what makes that wait
+   legible: a live clock, the sentence being spoken, and the workspace's own steps
+   as they land. */
+.kb-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kb-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.kb-progress-spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 2px solid rgba(124, 108, 255, 0.25);
+  border-top-color: #7c6cff;
+  animation: kb-spin 0.9s linear infinite;
+}
+@keyframes kb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.kb-progress-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kb-muted);
+}
+.kb-progress-clock {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 700;
+  color: #c9b8ff;
+  background: rgba(124, 108, 255, 0.12);
+  border: 1px solid rgba(124, 108, 255, 0.28);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.kb-progress-said {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--kb-text);
+}
+.kb-progress-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 4px;
+  display: flex;
+  flex-direction: column;
+}
+.kb-progress-step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 5px 0 5px 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--kb-muted);
+}
+/* The connector is drawn per-row and suppressed on the last one, so the rail
+   always ends exactly at the final step. */
+.kb-progress-step::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 18px;
+  bottom: -5px;
+  width: 1px;
+  background: rgba(150, 160, 200, 0.2);
+}
+.kb-progress-step:last-child::before {
+  display: none;
+}
+.kb-progress-dot {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: rgba(150, 160, 200, 0.28);
+  box-shadow: 0 0 0 3px rgba(10, 12, 26, 0.9);
+}
+.kb-progress-step.is-done {
+  color: #9fb0d6;
+}
+.kb-progress-step.is-done .kb-progress-dot {
+  background: #7ee0b8;
+}
+.kb-progress-step.is-active {
+  color: var(--kb-text);
+  font-weight: 600;
+}
+.kb-progress-step.is-active .kb-progress-dot {
+  background: #7c6cff;
+  animation: kb-step-pulse 1.6s ease-in-out infinite;
+}
+@keyframes kb-step-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(10, 12, 26, 0.9), 0 0 0 4px rgba(124, 108, 255, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(10, 12, 26, 0.9), 0 0 0 9px rgba(124, 108, 255, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kb-progress-spinner,
+  .kb-progress-step.is-active .kb-progress-dot {
+    animation: none;
+  }
+}
+.kb-evidence {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(150, 160, 200, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kb-evidence-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kb-muted);
+}
+.kb-evidence-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kb-evidence-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.kb-evidence-source { font-size: 12.5px; font-weight: 700; color: #c6d1ee; }
+.kb-evidence-shape { font-size: 11px; color: var(--kb-muted); }
+.kb-evidence-flag {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffb4a2;
+  background: rgba(255, 180, 162, 0.12);
+  border: 1px solid rgba(255, 180, 162, 0.3);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.kb-evidence-cites { font-size: 11px; color: var(--kb-muted); }
+
+@media (max-width: 860px) {
+  .kb-body { grid-template-columns: 1fr; }
+}

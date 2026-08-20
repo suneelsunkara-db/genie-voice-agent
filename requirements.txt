@@ -19,3 +19,5 @@ onnxruntime>=1.17
 # FastMCP (mcp.server.fastmcp) that mcp_server/server.py builds on; 1.x still
 # ships FastMCP *and* the StreamableHTTPSessionManager the mount uses.
 mcp>=1.9,<2
+# Stateless in-process agent navigation; persistence and AgentOS remain disabled.
+langgraph>=1.2,<2

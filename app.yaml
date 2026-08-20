@@ -6,6 +6,14 @@
 # auth_type=default, so the SDK unified-auth chain picks up the platform-injected
 # DATABRICKS_CLIENT_ID/SECRET/HOST.
 #
+# User authorization (OBO): Genie / SQL workspace calls prefer the viewer's
+# `x-forwarded-access-token` (fail-closed without it). Request these scopes in
+# the App → Authorization UI (or via CLI) and restart so users re-consent:
+#   - genie  — Genie Space Conversation + Agent Mode as the signed-in user
+#   - sql    — warehouse reads when needed for query results
+# Platform also injects default iam.current-user:read / iam.access-control:read.
+# Local stand-in: set GENIE_OBO_LOCAL_TOKEN to a U2M/PAT token (see README).
+#
 # Notes:
 #   - `command` is an array; env vars are NOT expanded except via a /bin/sh -c
 #     wrapper. We also pin GENIE_CONFIG to an absolute path so the config loader
@@ -16,6 +24,14 @@
 #   - Secret values (DEEPGRAM/ELEVENLABS keys, warehouse id) come from declared
 #     app resources via `valueFrom` - never hardcode secrets here. deploy_app.sh
 #     attaches these resources to the app.
+
+# Requested user-authorization scopes (Apps OBO). app.yaml alone does not grant
+# them: deploy_app.sh also applies them through the Apps control plane and fails
+# the deploy unless `effective_user_api_scopes` contains both values.
+user_api_scopes:
+  - genie
+  - sql
+
 command:
   - "/bin/sh"
   - "-c"

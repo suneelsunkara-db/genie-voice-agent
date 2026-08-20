@@ -186,6 +186,7 @@ async def ask_voice_agent(
     audio_path: str,
     language: str = "auto",
     profile: str | None = None,
+    space_name: str | None = None,
     context: str | None = None,
     save_response_audio: bool = True,
 ) -> dict:
@@ -195,7 +196,9 @@ async def ask_voice_agent(
     Returns what the caller said (``transcript``), the agent's reply
     (``response_text``), any tools it invoked (``tools``), and — when
     ``save_response_audio`` is true — the path to the spoken reply WAV.
-    ``profile`` selects a registered assistant persona (e.g. "concierge", "card");
+    ``profile`` selects the Genie product (``billing`` = Space, ``card`` = Space
+    + Agent Mode, ``knowledge`` = Genie One). ``space_name`` retargets Space /
+    Agent Mode to a space the caller can run; Genie One ignores it.
     ``context`` injects extra textual grounding for the turn.
     """
     if not os.path.isfile(audio_path):
@@ -204,7 +207,9 @@ async def ask_voice_agent(
         pcm, rate = load_audio(audio_path)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"could not read WAV: {exc}"}
-    result = await _client().ask_agent(pcm, rate, language=language, profile=profile, context=context)
+    result = await _client().ask_agent(
+        pcm, rate, language=language, profile=profile, space_name=space_name, context=context
+    )
     if result.error and not (result.transcript or result.response_text):
         return {"error": result.error}
     out: dict[str, Any] = {

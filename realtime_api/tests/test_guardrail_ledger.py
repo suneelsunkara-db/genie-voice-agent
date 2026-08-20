@@ -7,7 +7,6 @@ everything was fine was indistinguishable from a turn where nothing was checked.
 """
 from __future__ import annotations
 
-from realtime_api.concierge_tools import resolve_industry
 from realtime_api.guardrails import GuardLedger, report
 from realtime_api.pipelines import speech_llm_toolassist_speech as pipeline
 from realtime_api.tracing import TurnTrace
@@ -23,58 +22,6 @@ def test_report_without_a_ledger_is_a_noop():
     # Guards also run on paths with no trace (warmup, tests); a check must not fail
     # just because nobody was listening.
     report(None, "selection_length", "passed")
-
-
-def test_successful_route_records_every_gate_as_passed():
-    ledger = GuardLedger()
-    assert resolve_industry("telco", ledger) == "telco"
-    assert _outcomes(ledger) == {
-        "selection_length": "passed",
-        "selection_allowlist": "passed",
-        "selection_ambiguity": "passed",
-    }
-    # "3 checks ran, none fired" is the compliance statement the UI needs.
-    assert ledger.summary() == {"passed": 3}
-
-
-def test_long_utterance_records_the_length_decline():
-    ledger = GuardLedger()
-    assert resolve_industry("could you tell me what healthcare actually means here", ledger) is None
-    entry = next(e for e in ledger.entries if e.guard_id == "selection_length")
-    assert entry.outcome == "fired"
-    assert entry.seam == "decision"
-    assert entry.stage == "routing"
-    assert "> 8" in (entry.reason or "")
-    # It short-circuits, so the later gates never claim to have run.
-    assert "selection_allowlist" not in _outcomes(ledger)
-
-
-def test_unmatched_utterance_records_the_allowlist_decline():
-    ledger = GuardLedger()
-    assert resolve_industry("hello there", ledger) is None
-    assert _outcomes(ledger) == {
-        "selection_length": "passed",
-        "selection_allowlist": "fired",
-    }
-
-
-def test_cross_domain_tie_records_the_ambiguity_decline():
-    ledger = GuardLedger()
-    assert resolve_industry("credit card health", ledger) is None
-    outcomes = _outcomes(ledger)
-    assert outcomes["selection_ambiguity"] == "fired"
-    reason = next(e.reason for e in ledger.entries if e.guard_id == "selection_ambiguity")
-    assert "fsi" in (reason or "") and "healthcare" in (reason or "")
-
-
-def test_reasons_never_carry_the_transcript():
-    # The roster is persisted to Lakebase and mirrored to Delta, so reasons hold
-    # counts and category names only.
-    secret = "my card number is four one one one"
-    ledger = GuardLedger()
-    resolve_industry(secret, ledger)
-    for entry in ledger.entries:
-        assert "four one one one" not in (entry.reason or "")
 
 
 def test_summary_excludes_internal_mechanics():
@@ -169,13 +116,27 @@ def test_language_gate_reports_not_evaluated_without_a_selection(monkeypatch):
 
 def test_trace_carries_the_roster_and_summary():
     trace = TurnTrace(session_id="s1", turn_id=1, capability="cap")
-    resolve_industry("card", trace.guards)
+    report(
+        trace.guards,
+        "navigation.semantic",
+        "delegated",
+        seam="decision",
+        stage="routing",
+        owner="qwen",
+    )
+    report(
+        trace.guards,
+        "navigation.policy",
+        "passed",
+        seam="decision",
+        stage="routing",
+        owner="us",
+    )
     out = trace.to_dict()
     assert [e["guard_id"] for e in out["guard_roster"]] == [
-        "selection_length",
-        "selection_allowlist",
-        "selection_ambiguity",
+        "navigation.semantic",
+        "navigation.policy",
     ]
-    assert out["guard_summary"] == {"passed": 3}
+    assert out["guard_summary"] == {"delegated": 1, "passed": 1}
     entry = out["guard_roster"][0]
-    assert entry["surface"] == "guardrail" and entry["owner"] == "us"
+    assert entry["surface"] == "guardrail" and entry["owner"] == "qwen"

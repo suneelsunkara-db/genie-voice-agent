@@ -1,15 +1,10 @@
 """Pluggable assistant profiles for the tool-assist voice loop.
 
 The realtime engine (STT → LLM+tools → TTS) is domain-agnostic. A *profile*
-supplies the only things that differ between assistants: the system prompt, the
-tool specs, the tool executor, and a per-turn tool context. The default (telco
-contact-center) behavior is the built-in fallback used when no profile is
-selected — see ``services.py``.
-
-Profiles self-register on import (e.g. ``card_tools`` registers "card"), so the
-core files (contracts/pipeline/session) never name a specific domain: they only
-look one up by the ``profile`` value on ``session.start``. This keeps the voice
-API free of any card- (or telco-) specific ``if`` checks.
+supplies the system prompt, tool specs, tool executor, and per-turn context.
+Capability IDs, owned tools, and selection signals live on the navigation
+catalog, not in English cue tables inside the engine. Unset profile falls back
+to the voice concierge — never an implicit billing pack.
 """
 from __future__ import annotations
 
@@ -70,6 +65,13 @@ class VoiceProfile:
     # (ambiguous / not a selection). Keeps the engine domain-agnostic — only the
     # profile knows what its intents are.
     resolve_intents: IntentResolver | None = None
+    # Optional deterministic lane resolver: given the utterance, return
+    # "workspace" when the question is outside this pack's own corpus and must
+    # escalate to the governed workspace lane (Genie One, OBO-gated), "pack" when
+    # this profile can cite the answer itself, or None when neither can. Keeps the
+    # engine domain-agnostic — only the profile knows what its pack actually covers,
+    # and only the engine knows whether a governed conversation is already open.
+    resolve_lane: Callable[[str], str | None] | None = None
 
 
 _PROFILES: dict[str, VoiceProfile] = {}

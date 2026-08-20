@@ -282,6 +282,129 @@ class DatabricksServing:
         )
         return _message_text(message).strip()
 
+    def classify_navigation(
+        self,
+        utterance: str,
+        *,
+        language: str,
+        capabilities: list[dict[str, Any]],
+        context: str = "",
+    ) -> dict[str, Any]:
+        """Classify one utterance onto a language-neutral capability contract.
+
+        This is not a conversational agent and cannot answer the caller.  A forced
+        function call gives the policy layer a strict object to validate; malformed
+        or absent calls fail closed rather than falling back to keyword routing.
+        """
+        capability_ids = [
+            str(item.get("id") or "")
+            for item in capabilities
+            if str(item.get("id") or "")
+        ]
+        if not capability_ids:
+            raise ValueError("navigation classifier requires at least one capability")
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "select_navigation_capability",
+                "description": (
+                    "Classify the caller's speech act. Do not answer the question. "
+                    "Choose only from the supplied language-neutral capability IDs."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "capability_id": {
+                            "type": "string",
+                            "enum": capability_ids,
+                        },
+                        "confidence": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                        "ambiguous": {"type": "boolean"},
+                        "confirmed": {
+                            "type": "boolean",
+                            "description": (
+                                "True only when this utterance explicitly confirms an "
+                                "account-changing action discussed in the supplied context."
+                            ),
+                        },
+                        "depth": {
+                            "type": "string",
+                            "enum": ["fact", "investigate"],
+                        },
+                    },
+                    "required": [
+                        "capability_id",
+                        "confidence",
+                        "ambiguous",
+                        "confirmed",
+                        "depth",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        system = (
+            "You are a silent multilingual navigation classifier. Classify the caller's "
+            "speech act by the purposes in the supplied capability catalog, not by topic "
+            "word overlap. Distinguish choosing an offered destination or topic from "
+            "asking it a question; distinguish a concrete fact from an investigation, "
+            "an analysis, and an account-changing action. Preserve the meaning and "
+            "conversational force of the original language. If more than one capability "
+            "fits, choose system.clarify with ambiguous=true. Never answer the caller. "
+            "Return exactly one select_navigation_capability function call.\n\n"
+            f"Turn language: {language}\n"
+            f"Allowed capabilities: {json.dumps(capabilities, ensure_ascii=False)}"
+            + (
+                f"\nRecent conversation context (for resolving replies such as "
+                f"confirmations): {context}"
+                if context
+                else ""
+            )
+        )
+        message = self._chat(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": utterance},
+            ],
+            tools=[tool],
+            tool_choice={
+                "type": "function",
+                "function": {"name": "select_navigation_capability"},
+            },
+            temperature=0.0,
+            max_tokens=180,
+        )
+        calls = message.get("tool_calls") or []
+        if not calls:
+            inline, _cleaned = _extract_inline_tool_calls(_message_text(message))
+            if not inline:
+                inline = _recover_bare_tool_call(_message_text(message), [tool])
+            calls = [
+                {
+                    "function": {
+                        "name": item.get("name"),
+                        "arguments": json.dumps(item.get("arguments") or {}),
+                    }
+                }
+                for item in inline
+            ]
+        if len(calls) != 1:
+            raise RuntimeError("navigation classifier did not return exactly one decision")
+        fn = calls[0].get("function") or {}
+        if fn.get("name") != "select_navigation_capability":
+            raise RuntimeError("navigation classifier returned an unknown function")
+        try:
+            arguments = json.loads(fn.get("arguments") or "{}")
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("navigation classifier returned malformed arguments") from exc
+        if not isinstance(arguments, dict):
+            raise RuntimeError("navigation classifier arguments were not an object")
+        return arguments
+
     def respond_with_tools(
         self, transcript: str, *, language: str, context: str | None = None,
         tool_ctx: Any | None = None, history: list[dict[str, str]] | None = None,
@@ -289,6 +412,8 @@ class DatabricksServing:
         system_prompt: str | None = None,
         tools_override: list[dict[str, Any]] | None = None,
         tool_runner: Any | None = None,
+        on_tool: Any | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> tuple[str, list[dict[str, Any]]]:
         """Like respond(), but also returns a list of tool invocations for UI emission.
 
@@ -297,11 +422,18 @@ class DatabricksServing:
         tool-calling bugs) and every tool call (arguments + result) is recorded as
         a span. Recording is in-memory only; persistence happens off the hot path.
 
+        Optional ``on_tool(phase, name, arguments=None, result=None)`` is called
+        live around each tool execution so AgentRuntime adapters can emit
+        ``action.started`` / ``action.completed`` before final text.
+
         The pipeline always passes ``system_prompt``, ``tools_override``, and
-        ``tool_runner`` from the resolved profile — the fallback to
-        ``tools_spec(profile="billing")`` is only a safety net for tests.
+        ``tool_runner`` from the resolved profile. Missing prompt falls back to a
+        neutral assistant shell — never a billing-specific prompt.
         """
-        from .tools import BILLING_SYSTEM_PROMPT as _DEFAULT_PROMPT
+        _DEFAULT_PROMPT = (
+            "You are a concise voice assistant. Reply in {language}. "
+            "Use tools when they help answer accurately. Keep spoken answers short."
+        )
         system = (system_prompt or _DEFAULT_PROMPT).format(language=language)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
@@ -312,10 +444,13 @@ class DatabricksServing:
         if tools_override is not None:
             tools = tools_override if self.llm_tools_enabled else None
         else:
-            tools = tools_spec(profile="billing") if self.llm_tools_enabled else None
+            # No implicit billing (or any) tool pack — callers must pass tools.
+            tools = None
         tool_names = [t["function"]["name"] for t in tools] if tools else []
         ctx = tool_ctx or ToolContext()
-        runner = tool_runner or (lambda n, a, c: run_tool(n, a, c, profile="billing"))
+        if tools and tool_runner is None:
+            raise RuntimeError("tool_runner is required when tools are provided")
+        runner = tool_runner
         tool_invocations: list[dict[str, Any]] = []
 
         for iteration in range(max(1, self.llm_max_tool_iterations)):
@@ -327,13 +462,17 @@ class DatabricksServing:
                     input={
                         "messages": [dict(m) for m in messages],
                         "tools_available": tool_names,
-                        "tool_choice": "auto" if tools else None,
+                        "tool_choice": (tool_choice if iteration == 0 else "auto") if tools else None,
                         "temperature": self.llm_temperature,
                         "max_tokens": self.llm_max_tokens,
                         "endpoint": self.llm_endpoint,
                     },
                 )
-            message = self._chat(messages, tools=tools)
+            message = self._chat(
+                messages,
+                tools=tools,
+                tool_choice=(tool_choice if iteration == 0 else "auto"),
+            )
             tool_calls = message.get("tool_calls") or []
             assistant_content = _message_text(message)
             # Some serving endpoints don't return the structured `tool_calls` field and
@@ -387,6 +526,11 @@ class DatabricksServing:
                 tool_span = None
                 if trace is not None:
                     tool_span = trace.span(f"tool.{name}", "TOOL", input=arguments)
+                if on_tool is not None:
+                    try:
+                        on_tool("started", name, arguments=arguments)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("on_tool(started) failed", exc_info=True)
                 _tt = time.perf_counter()
                 result = runner(name, arguments, ctx)
                 logger.info("tool %s: %dms", name, round((time.perf_counter() - _tt) * 1000))
@@ -395,6 +539,22 @@ class DatabricksServing:
                     parsed_result = json.loads(result)
                 except json.JSONDecodeError:
                     parsed_result = result
+                # A tool that fails inside its own error contract returns normally, so
+                # without this the log shows only a suspiciously fast success and the
+                # cause survives just as a refusal on screen.
+                if isinstance(parsed_result, dict) and (
+                    parsed_result.get("error") or parsed_result.get("denied")
+                ):
+                    logger.warning(
+                        "tool %s returned an error: %s",
+                        name,
+                        str(parsed_result.get("error") or "denied")[:300],
+                    )
+                if on_tool is not None:
+                    try:
+                        on_tool("completed", name, arguments=arguments, result=parsed_result)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("on_tool(completed) failed", exc_info=True)
                 if tool_span is not None:
                     tool_span.set_output(parsed_result).set_attribute(
                         "tool_call_id", call.get("id")
@@ -504,6 +664,7 @@ class DatabricksServing:
         messages: list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] = "auto",
         temperature: float | None = None,
         max_tokens: int | None = None,
         endpoint: str | None = None,
@@ -515,7 +676,7 @@ class DatabricksServing:
         }
         if tools:
             inputs["tools"] = tools
-            inputs["tool_choice"] = "auto"
+            inputs["tool_choice"] = tool_choice
         response = self.client.predict(endpoint=endpoint or self.llm_endpoint, inputs=inputs)
         payload = response if isinstance(response, dict) else dict(response)
         choices = payload.get("choices") or []
@@ -591,7 +752,7 @@ class DatabricksServing:
             return AudioResponse(
                 audio=base64.b64decode(encoded),
                 mime_type=str(custom.get("mime_type") or "audio/wav"),
-                sample_rate_hz=int(custom.get("sample_rate_hz") or 24_000),
+                sample_rate_hz=int(custom.get("sample_rate_hz") or 48_000),
             )
 
     def synthesize_stream(

@@ -2,13 +2,14 @@
 from our realtime API (WebSocket), end-to-end, and measure it.
 
 Drives the real FastAPI app (realtime_api.create_app + the shared serving) over
-the SAME route the billing UI uses (/realtime/v1/speech-llm-toolassist-speech,
-profile OMITTED = telco), runs a full STT -> LLM -> streaming-TTS turn, and
+the SAME route and explicit profile the billing UI uses
+(/realtime/v1/speech-llm-toolassist-speech, profile="billing"), runs a full
+STT -> LLM -> streaming-TTS turn, and
 reassembles the response.audio PCM the server sends to the browser. Reports the
 objective audio signals (sample rate, peak, RMS, crest, clipping) so we compare
 billing's real output against the card path on identical terms.
 
-    python scripts/diag/capture_billing_voice.py --profile telco
+    python scripts/diag/capture_billing_voice.py --profile billing
     python scripts/diag/capture_billing_voice.py --profile card
 """
 from __future__ import annotations
@@ -70,7 +71,12 @@ def prompt_16k_pcm(serving, text: str, language: str = "en-US") -> bytes:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", default="telco", choices=["telco", "card"])
+    parser.add_argument(
+        "--profile",
+        default="billing",
+        choices=["billing", "telco", "card"],
+        help="'telco' remains a CLI alias for the registered 'billing' profile",
+    )
     parser.add_argument(
         "--prompt",
         default="Why is my bill higher than last month?",
@@ -99,8 +105,7 @@ def main() -> None:
         "call_id": "diag-billing",
         "customer_id": "CUST-0001",
     }
-    if args.profile == "card":
-        start["profile"] = "card"
+    start["profile"] = "card" if args.profile == "card" else "billing"
 
     audio_chunks: list[bytes] = []
     sr_out = 0

@@ -153,7 +153,7 @@ What that means per surface, as wired today:
 | Home concierge (`HomePage.tsx:309`) | `language: "en-US"` (pinned) + `expected_language` | **No** — forced to English | Armed, but can't fire (detection is forced) |
 | Billing / telco (`CallList.tsx:1200`) | `language: "auto"` + `expected_language: <picker>` | **Yes** | **Yes** |
 | Card (`CardIssuerPage.tsx:538`) | `language: "auto"` + `expected_language: <picker>` | **Yes** | **Yes** |
-| Healthcare (`HlsPage.tsx:214`) | `language: "auto"` + `expected_language: <picker>` | **Yes** | **Yes** |
+| Knowledge Agent (`KnowledgeAgentPage.tsx`) | `language: "auto"` + `expected_language: <picker>` | **Yes** | **Yes** |
 
 `startRealtimeVoice` only pins STT when the caller passes `sttLanguage`
 (`frontend/src/lib/realtimeVoice.ts:234`); the picker value is sent as
@@ -674,8 +674,8 @@ constraint, not the URL.
 ## 9. Config schema (proposed)
 
 The previous flat `guards:` list could not express that the concierge needs **no PII
-guards** while billing and card do, and that a future healthcare profile needs a different
-(PHI) set. Guards are therefore **profile-scoped**: one *catalog* of definitions, plus
+guards** while billing and card do, and that a future regulated profile needs a different
+(e.g. PHI) set. Guards are therefore **profile-scoped**: one *catalog* of definitions, plus
 per-profile enable/override lists — mirroring how `tool_registry` keys on
 `(profile, name)` (`realtime_api/tool_registry.py:77`).
 
@@ -781,8 +781,9 @@ realtime_voice:
         override:
           policy_nuance:
             params: { rubric: <card-issuer-policy-ref> }
-      hls:
-        enable: [ ... PHI set, defined when the profile ships ... ]
+      knowledge:
+        enable: [prompt_injection, off_scope, reply_language, output_schema_leak]
+        # No PII guards: the knowledge agent never handles account data.
 
   # ---- Decision seam: still not guards, but no longer hardcoded (§0, Phase 0). ----
   profiles:
@@ -793,11 +794,11 @@ realtime_voice:
         cues:                           # was concierge_tools.py:85-89
           telco: [telco, telecom, telecoms, billing, "phone bill", phone, mobile, wireless, cellular]
           fsi:   [fsi, financial, finance, "credit card", credit-card, card, bank, banking, statement]
-          healthcare: [healthcare, health, clinical, clinic, patient, medical, claim, claims, coverage]
+          knowledge: [knowledge, databricks, platform, docs, documentation, lakehouse, "unity catalog", "delta lake"]
         confirm_labels:                 # was concierge_tools.py:92
           telco: "Telco billing support"
           fsi: "the credit-card assistant"
-          healthcare: "the healthcare assistant"
+          knowledge: "the Databricks Knowledge Agent"
 
   tracing:               # NEW — make observability configurable (§8.9)
     enabled: true
@@ -943,7 +944,7 @@ Genuinely open:
 - `frontend/src/components/CockpitPage.tsx` / `sentient/*` — live call UI.
 - `frontend/src/components/HomePage.tsx` — concierge; STT pinned to English (`:309`),
   language bar disabled (`:355`).
-- `frontend/src/components/CardIssuerPage.tsx` (`:538`), `HlsPage.tsx` (`:214`),
+- `frontend/src/components/CardIssuerPage.tsx` (`:538`), `KnowledgeAgentPage.tsx`,
   `CallList.tsx` (`:1200`) — all pass the picker as `expected_language`, leaving STT on
   auto.
 - `frontend/src/lib/realtimeVoice.ts` — `language` / `sttLanguage` (`:234`),

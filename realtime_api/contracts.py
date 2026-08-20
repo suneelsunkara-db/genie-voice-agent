@@ -8,6 +8,7 @@ from typing import Literal
 
 
 LANGUAGE_TAG_RE = re.compile(r"^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+VOICE_VARIANTS = ("female", "male")
 
 
 @dataclass(frozen=True)
@@ -17,13 +18,20 @@ class AudioResponse:
     sample_rate_hz: int
 
     def event(
-        self, turn_id: int, *, chunk_index: int = 0, final: bool = True, text: str | None = None
+        self, turn_id: int, *, chunk_index: int = 0, final: bool = True, text: str | None = None,
+        segment_final: bool | None = None, turn_final: bool | None = None,
     ) -> dict:
+        # Dual completion flags (Progressive Turn Runtime). During migration
+        # ``final`` mirrors ``turn_final`` so legacy clients keep working.
+        turn_done = turn_final if turn_final is not None else final
+        seg_done = segment_final if segment_final is not None else final
         payload = {
             "type": "response.audio",
             "turn_id": turn_id,
             "chunk_index": chunk_index,
-            "final": final,
+            "final": turn_done,
+            "segment_final": seg_done,
+            "turn_final": turn_done,
             "audio_b64": b64encode(self.audio).decode("ascii"),
             "mime_type": self.mime_type,
             "sample_rate_hz": self.sample_rate_hz,
@@ -49,13 +57,18 @@ class AudioChunk:
     server_gen_ms: float | None = None
 
     def event(
-        self, turn_id: int, *, chunk_index: int = 0, final: bool = False, text: str | None = None
+        self, turn_id: int, *, chunk_index: int = 0, final: bool = False, text: str | None = None,
+        segment_final: bool | None = None, turn_final: bool | None = None,
     ) -> dict:
+        turn_done = turn_final if turn_final is not None else final
+        seg_done = segment_final if segment_final is not None else final
         payload = {
             "type": "response.audio",
             "turn_id": turn_id,
             "chunk_index": chunk_index,
-            "final": final,
+            "final": turn_done,
+            "segment_final": seg_done,
+            "turn_final": turn_done,
             "audio_b64": b64encode(self.pcm).decode("ascii"),
             "mime_type": "audio/pcm",
             "encoding": "pcm_s16le",
@@ -72,6 +85,7 @@ class AudioChunk:
 
 # Upper bound on session-provided textual context, to keep the LLM prompt sane.
 _MAX_CONTEXT_CHARS = 8_000
+_MAX_SPACE_NAME_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -97,10 +111,17 @@ class SessionStart:
     # turn (``language`` stays "auto"); this is only used to warn the caller when
     # the detected speech doesn't match what they picked. None disables the check.
     expected_language: str | None = None
-    # Assistant profile name. None (default) runs the built-in telco contact-center
-    # behavior; any other value selects a registered VoiceProfile (see profiles.py).
-    # The engine stays domain-agnostic — it never names a specific profile here.
+    # Assistant profile name. None resolves to the concierge; product surfaces send
+    # their registered profile explicitly (billing, card, knowledge).
     profile: str | None = None
+    # Optional Genie space title for Space / Agent Mode. When omitted, those tools
+    # use this app's configured demo spaces. Genie One ignores this — it is the
+    # signed-in user's governed workspace. The name is resolved under the caller's
+    # OBO token, so they can only hit a space they already have CAN_RUN on.
+    space_name: str | None = None
+    # App-wide voice selected on the Home page. This is an allowlisted key, never
+    # a client-provided path: the server alone maps it to a committed WAV asset.
+    voice_variant: Literal["female", "male"] = "female"
 
     @classmethod
     def from_event(cls, payload: dict) -> "SessionStart":
@@ -127,6 +148,14 @@ class SessionStart:
             if profile not in known:
                 allowed = ", ".join(sorted(known)) or "(none registered)"
                 raise ValueError(f"unknown profile {profile!r}; registered profiles: {allowed}")
+        space_name = _optional_str(payload.get("space_name"))
+        if space_name is not None and len(space_name) > _MAX_SPACE_NAME_CHARS:
+            raise ValueError(f"space_name must be at most {_MAX_SPACE_NAME_CHARS} characters")
+        voice_variant = str(payload.get("voice_variant") or "female").strip().lower()
+        if voice_variant not in VOICE_VARIANTS:
+            raise ValueError(
+                f"voice_variant must be one of: {', '.join(VOICE_VARIANTS)}"
+            )
         return cls(
             language=language,
             sample_rate_hz=sample_rate_hz,
@@ -139,6 +168,8 @@ class SessionStart:
             customer_id=_optional_str(payload.get("customer_id")),
             expected_language=expected_language,
             profile=profile,
+            space_name=space_name,
+            voice_variant=voice_variant,  # type: ignore[arg-type]
         )
 
 

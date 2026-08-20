@@ -31,7 +31,7 @@ from .ws.handler import ROUTES, capabilities_payload, make_ws_handler
 from . import tools as _billing_tools  # noqa: F401  — registers "billing" profile
 from . import card_tools as _card_tools  # noqa: F401  — registers "card" profile
 from . import concierge_tools as _concierge_tools  # noqa: F401  — registers "concierge"
-from . import hls_tools as _hls_tools  # noqa: F401  — registers "hls" profile
+from . import knowledge_tools as _knowledge_tools  # noqa: F401  — registers "knowledge"
 
 logger = logging.getLogger("realtime_voice")
 

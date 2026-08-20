@@ -3,7 +3,7 @@ import { languageLabel } from "../i18n";
 
 /**
  * Framework-level language helpers, shared by every voice surface (home
- * concierge, card, healthcare). The supported set is fetched ONCE from the
+ * concierge, card, knowledge). The supported set is fetched ONCE from the
  * config-driven `/languages` endpoint (STT ∩ TTS), so no page hardcodes a list
  * and every language bar matches what the pipeline can actually speak.
  */

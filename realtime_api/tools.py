@@ -18,6 +18,9 @@ from typing import Any
 
 from .tool_registry import (  # noqa: F401
     ToolContext,
+    attach_session_identity,
+    genie_obo_or_refuse,
+    genie_space_name,
     register,
     run_tool,
     shape_genie_answer,
@@ -144,9 +147,20 @@ def _run_ask_genie(arguments: dict[str, Any], ctx: ToolContext) -> str:
     question = arguments.get("question", "").strip()
     if not question:
         return json.dumps({"error": "question is required"})
+    denied = genie_obo_or_refuse(ctx)
+    if denied is not None:
+        return denied
     try:
-        from api.app.deps import genie
-        result = genie().ask(question, language=ctx._detected_language)
+        from genie_voice.config import get_settings
+        from genie_voice.genie.client import GenieClient
+
+        settings = get_settings()
+        principal = getattr(ctx, "principal", None)
+        token = getattr(principal, "access_token", None) if principal else None
+        result = GenieClient(
+            settings,
+            space_name=genie_space_name(ctx, settings.databricks.genie_space_name),
+        ).ask(question, language=ctx._detected_language, access_token=token)
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"Genie query failed: {exc}"})
     return shape_genie_answer(result)
@@ -159,6 +173,7 @@ register(_ASK_GENIE_SPEC, _run_ask_genie, profile=_PROFILE)
 
 _APPLY_BILLING_SPEC = {
     "type": "function",
+    "x-effect_class": "confirm_mutate",
     "function": {
         "name": "apply_billing_action",
         "description": (
@@ -296,7 +311,7 @@ register(_APPLY_BILLING_SPEC, _run_apply_billing_action, profile=_PROFILE)
 # ---------------------------------------------------------------------------
 # Billing system prompt + profile registration
 # ---------------------------------------------------------------------------
-BILLING_SYSTEM_PROMPT = (
+BILLING_PROFILE_PROMPT = (
     "You are a live contact-center voice agent on a phone call with a customer. "
     "You MUST act, not narrate. Never say 'let me check' or 'let me look that up' — "
     "call the tool and respond with the answer in one turn.\n\n"
@@ -380,12 +395,15 @@ def _make_billing_context(session: Any, language: str) -> ToolContext:
         seed = _seed_greeting_for(language)
         if seed:
             session.history.insert(0, {"role": "assistant", "content": seed})
-    return ToolContext(
-        customer_id=session.config.customer_id,
-        call_id=session.config.call_id,
-        _detected_language=language,
-        account_store=session.account_store,
-        profile_state=session.profile_state,
+    return attach_session_identity(
+        ToolContext(
+            customer_id=session.config.customer_id,
+            call_id=session.config.call_id,
+            _detected_language=language,
+            account_store=session.account_store,
+            profile_state=session.profile_state,
+        ),
+        session,
     )
 
 
@@ -403,7 +421,7 @@ def register_profile() -> None:
     _register_profile(
         VoiceProfile(
             name=_PROFILE,
-            system_prompt=BILLING_SYSTEM_PROMPT,
+            system_prompt=BILLING_PROFILE_PROMPT,
             tools_spec=_billing_tools_spec,
             tool_runner=_billing_run_tool,
             make_context=_make_billing_context,

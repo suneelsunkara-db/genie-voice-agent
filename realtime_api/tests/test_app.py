@@ -72,6 +72,20 @@ def _drive_turn(ws) -> None:
     assert ws.receive_json()["type"] == "turn.started"
 
 
+def _next(ws, expected: str, *, limit: int = 20) -> dict:
+    """Next event of ``expected`` type, skipping runtime progress events.
+
+    ``turn.event`` is an open, ordered progress stream, so asserting on absolute
+    positions in the socket would make every new event kind a test failure.
+    """
+    for _ in range(limit):
+        msg = ws.receive_json()
+        if msg["type"] == expected:
+            return msg
+        assert msg["type"] == "turn.event", f"unexpected {msg['type']} before {expected}"
+    raise AssertionError(f"no {expected} within {limit} events")
+
+
 def test_root_returns_api_descriptor_not_html() -> None:
     with _app() as client:
         response = client.get("/")
@@ -114,6 +128,7 @@ def test_speech_llm_toolassist_speech_processes_a_finalized_turn() -> None:
         ready = ws.receive_json()
         assert ready["type"] == "session.ready"
         assert ready["capability"] == "speech-llm-toolassist-speech"
+        assert ready["voice_variant"] == "female"
 
         _drive_turn(ws)
 
@@ -121,15 +136,58 @@ def test_speech_llm_toolassist_speech_processes_a_finalized_turn() -> None:
         assert transcript["type"] == "transcript.final"
         assert transcript["text"] == "hello world"
 
-        response_text = ws.receive_json()
-        assert response_text["type"] == "response.text"
+        response_text = _next(ws, "response.text")
         assert response_text["text"] == "you said hello world"
 
-        audio = ws.receive_json()
-        assert audio["type"] == "response.audio"
+        audio = _next(ws, "response.audio")
         assert audio["audio_b64"]
         assert audio["chunk_index"] == 0
         assert audio["final"] is True
+
+
+def test_committed_speech_is_published_before_the_audio() -> None:
+    # A client that rendered `response.text` would show the model's display prose,
+    # which a tool turn never speaks. The committed speech is therefore published on
+    # its own event, before synthesis, so the page can show what is being heard.
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
+        assert ws.receive_json()["type"] == "session.ready"
+        _drive_turn(ws)
+        assert ws.receive_json()["type"] == "transcript.final"
+        _next(ws, "response.text")
+
+        before_audio: list[dict] = []
+        while True:
+            msg = ws.receive_json()
+            if msg["type"] == "response.audio":
+                break
+            before_audio.append(msg)
+
+        committed = [
+            e for e in before_audio if e.get("kind") == "speech.committed"
+        ]
+        assert len(committed) == 1
+        payload = committed[0]["payload"]
+        assert payload["text"] == "you said hello world"
+        # No tool ran, so this is a conversational reply rather than composed evidence.
+        assert payload["basis"] == "conversation"
+        assert committed[0]["seq"] >= 1
+
+
+def test_session_ready_echoes_the_selected_voice_variant() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language": "en-US",
+                "sample_rate_hz": 16000,
+                "voice_variant": "male",
+            }
+        )
+        ready = ws.receive_json()
+        assert ready["type"] == "session.ready"
+        assert ready["voice_variant"] == "male"
+        assert "voice_id" in ready
 
 
 def test_whole_utterance_transcribed_once_no_partials() -> None:
@@ -193,8 +251,8 @@ def test_legacy_voice_alias_routes_to_speech_llm_toolassist_speech() -> None:
         assert ready["capability"] == "speech-llm-toolassist-speech"
         _drive_turn(ws)
         assert ws.receive_json()["type"] == "transcript.final"
-        assert ws.receive_json()["type"] == "response.text"
-        assert ws.receive_json()["type"] == "response.audio"
+        _next(ws, "response.text")
+        _next(ws, "response.audio")
 
 
 def test_speech_to_text_emits_transcript_only() -> None:
@@ -308,9 +366,9 @@ def test_websocket_streams_one_audio_chunk_per_sentence() -> None:
 
         _drive_turn(ws)
         assert ws.receive_json()["type"] == "transcript.final"
-        assert ws.receive_json()["type"] == "response.text"
+        _next(ws, "response.text")
 
-        chunks = [ws.receive_json() for _ in range(3)]
+        chunks = [_next(ws, "response.audio") for _ in range(3)]
         assert [c["chunk_index"] for c in chunks] == [0, 1, 2]
         assert [c["final"] for c in chunks] == [False, False, True]
         assert all(c["type"] == "response.audio" for c in chunks)
@@ -342,9 +400,9 @@ def test_websocket_streams_pcm_audio_chunks_when_supported() -> None:
         assert ws.receive_json()["type"] == "session.ready"
         _drive_turn(ws)
         assert ws.receive_json()["type"] == "transcript.final"
-        assert ws.receive_json()["type"] == "response.text"
+        _next(ws, "response.text")
 
-        chunks = [ws.receive_json() for _ in range(3)]
+        chunks = [_next(ws, "response.audio") for _ in range(3)]
         assert all(c["type"] == "response.audio" for c in chunks)
         assert all(c["mime_type"] == "audio/pcm" and c["encoding"] == "pcm_s16le" for c in chunks)
         assert [c["chunk_index"] for c in chunks] == [0, 1, 2]
@@ -367,6 +425,8 @@ class FakeDeployClient:
 
 def test_respond_runs_tool_calling_loop_with_temperature() -> None:
     from realtime_api.services import DatabricksServing
+    from realtime_api.tool_registry import ToolContext, run_tool
+    from realtime_api.tools import tools_spec
 
     tool_call = {
         "choices": [
@@ -392,7 +452,14 @@ def test_respond_runs_tool_calling_loop_with_temperature() -> None:
     client = FakeDeployClient([tool_call, final])
     serving = DatabricksServing(client=client, stt_endpoint="s", llm_endpoint="llm", tts_endpoint="t")
 
-    text = serving.respond("what time is it in Bangkok?", language="en-US")
+    # Engine no longer injects a billing tool pack — callers pass tools explicitly.
+    text, _ = serving.respond_with_tools(
+        "what time is it in Bangkok?",
+        language="en-US",
+        tool_ctx=ToolContext(),
+        tools_override=tools_spec(profile="billing"),
+        tool_runner=lambda n, a, c: run_tool(n, a, c, profile="billing"),
+    )
 
     assert text == "It's just past nine in Bangkok."
     assert client.calls[0]["temperature"] == 0.4
@@ -486,11 +553,75 @@ def test_session_start_parses_turn_overrides_and_context() -> None:
     assert start.context == "Question: X"
 
 
+def test_session_start_billing_profile_exposes_lookup_account() -> None:
+    from realtime_api.profiles import get_profile
+    from realtime_api.tool_registry import tools_spec
+
+    start = SessionStart.from_event(
+        {
+            "language": "en-US",
+            "sample_rate_hz": 16000,
+            "profile": "billing",
+        }
+    )
+    assert start.profile == "billing"
+    names = {item["function"]["name"] for item in tools_spec(profile="billing")}
+    assert "lookup_account" in names
+    assert "lookup_account" in {
+        item["function"]["name"] for item in get_profile("billing").tools_spec()
+    }
+
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language": "en-US",
+                "sample_rate_hz": 16000,
+                "profile": "billing",
+            }
+        )
+        ready = ws.receive_json()
+        assert ready["type"] == "session.ready"
+
+
 def test_session_start_defaults_have_no_overrides() -> None:
     start = SessionStart.from_event({"language": "en-US", "sample_rate_hz": 16000})
     assert start.max_turn_seconds is None
     assert start.vad_silence_ms is None
     assert start.context is None
+    assert start.voice_variant == "female"
+    assert start.space_name is None
+
+
+def test_session_start_parses_caller_space_name() -> None:
+    start = SessionStart.from_event(
+        {
+            "language": "en-US",
+            "sample_rate_hz": 16000,
+            "profile": "card",
+            "space_name": "  Finance Analytics  ",
+        }
+    )
+    assert start.space_name == "Finance Analytics"
+
+
+def test_session_start_rejects_oversized_space_name() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="space_name"):
+        SessionStart.from_event({"space_name": "x" * 201})
+
+
+def test_session_start_accepts_allowlisted_voice_variants() -> None:
+    assert SessionStart.from_event({"voice_variant": "female"}).voice_variant == "female"
+    assert SessionStart.from_event({"voice_variant": "male"}).voice_variant == "male"
+
+
+def test_session_start_rejects_unknown_voice_variant() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="voice_variant must be one of"):
+        SessionStart.from_event({"voice_variant": "../../arbitrary.wav"})
 
 
 def test_session_start_rejects_nonpositive_turn_override() -> None:

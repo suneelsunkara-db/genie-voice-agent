@@ -6,7 +6,9 @@
 # Auto-authenticates to Databricks (runs `databricks auth login` on its own if
 # needed) so you don't configure it manually; if that's skipped/fails the app
 # still starts and Databricks-backed views (Lakebase/UC/Genie) degrade
-# gracefully. The Deepgram key check is also optional (only warns).
+# gracefully. Also exports GENIE_OBO_LOCAL_TOKEN from the CLI U2M cache so Genie
+# workspace tools have a principal without Apps' x-forwarded-access-token.
+# The Deepgram key check is also optional (only warns).
 # =============================================================================
 set -euo pipefail
 
@@ -28,7 +30,9 @@ source .venv/bin/activate
 # Public PyPI is not reachable from this network; install from the internal
 # Databricks PyPI proxy. Override by exporting PIP_INDEX_URL before running.
 export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi-proxy.cloud.databricks.com/simple}"
-if python -c "import genie_voice, fastapi, uvicorn, psycopg_pool" >/dev/null 2>&1; then
+# The guard lists one import per requirement group, INCLUDING mcp + langgraph: a
+# partial venv starts fine and then fails only when a governed/navigation turn runs.
+if python -c "import genie_voice, fastapi, uvicorn, psycopg_pool, mcp, langgraph" >/dev/null 2>&1; then
   :
 else
   log "installing backend + api deps (index: $PIP_INDEX_URL)"
@@ -130,6 +134,54 @@ PY
   return 0
 }
 ensure_databricks_auth
+
+# Progressive Genie OBO (local): bind a U2M access token so WS session.start can
+# populate session.principal without Apps' x-forwarded-access-token. Prefer an
+# explicit env/.env value; otherwise mint from the CLI profile used above.
+ensure_obo_local_token() {
+  if [[ -n "${GENIE_OBO_LOCAL_TOKEN:-}" ]]; then
+    log "GENIE_OBO_LOCAL_TOKEN already set (env/.env); using it for Genie OBO."
+    export GENIE_OBO_LOCAL_TOKEN
+    return 0
+  fi
+  if ! command -v databricks >/dev/null 2>&1; then
+    warn "GENIE_OBO_LOCAL_TOKEN unset and databricks CLI missing; Genie tools will fail-closed."
+    return 0
+  fi
+
+  local cfg profile host token
+  cfg="$(PYTHONPATH="$ROOT/backend" python - <<'PY' 2>/dev/null || true
+from genie_voice.config import get_settings
+get_settings.cache_clear()
+s = get_settings()
+print(s.databricks.profile or "")
+print(s.databricks_host or "")
+PY
+)"
+  profile="$(printf '%s\n' "$cfg" | sed -n 1p)"
+  host="$(printf '%s\n' "$cfg" | sed -n 2p)"
+
+  if [[ -n "$profile" ]]; then
+    token="$(databricks auth token --profile "$profile" -o json 2>/dev/null \
+      | PYTHONPATH="$ROOT/backend" python -c "import json,sys; print(json.load(sys.stdin).get('access_token') or '')" 2>/dev/null || true)"
+  elif [[ -n "$host" ]]; then
+    token="$(databricks auth token --host "$host" -o json 2>/dev/null \
+      | PYTHONPATH="$ROOT/backend" python -c "import json,sys; print(json.load(sys.stdin).get('access_token') or '')" 2>/dev/null || true)"
+  else
+    token="$(databricks auth token -o json 2>/dev/null \
+      | PYTHONPATH="$ROOT/backend" python -c "import json,sys; print(json.load(sys.stdin).get('access_token') or '')" 2>/dev/null || true)"
+  fi
+  token="$(printf '%s' "$token" | tr -d '[:space:]')"
+
+  if [[ -n "$token" ]]; then
+    export GENIE_OBO_LOCAL_TOKEN="$token"
+    log "exported GENIE_OBO_LOCAL_TOKEN from Databricks CLI (U2M stand-in for Genie OBO)."
+  else
+    warn "could not mint GENIE_OBO_LOCAL_TOKEN; Genie workspace tools will fail-closed until you"
+    warn "export GENIE_OBO_LOCAL_TOKEN or re-run 'databricks auth login'."
+  fi
+}
+ensure_obo_local_token
 
 # Stop previous API/UI if our pid files exist.
 stop_pid_file() {

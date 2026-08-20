@@ -2014,7 +2014,7 @@ html:has(.sentient-app) body {
 }
 
 /* Agent-initiated voice header — the Genie orb leads the conversation panel
-   (uniform with the card / healthcare / home surfaces), with the call status
+   (uniform with the card / knowledge / home surfaces), with the call status
    line and the aligned End Call + Reset Scenario actions beneath it. */
 .sentient-voicebar {
   display: flex;

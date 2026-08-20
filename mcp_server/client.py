@@ -261,7 +261,7 @@ class RealtimeVoiceAPI:
                 pcm, rate = _decode_chunk(data)
                 parts.append(pcm)
                 result.sample_rate = rate
-                if data.get("final"):
+                if data.get("turn_final") is True:
                     break
             elif etype == "error":
                 result.error = data.get("message") or "api error"
@@ -330,6 +330,7 @@ class RealtimeVoiceAPI:
         *,
         language: str = "auto",
         profile: str | None = None,
+        space_name: str | None = None,
         context: str | None = None,
     ) -> TurnResult:
         """Full voice turn: audio -> STT -> LLM(+tools) -> TTS."""
@@ -350,6 +351,8 @@ class RealtimeVoiceAPI:
                 }
                 if profile:
                     start["profile"] = profile
+                if space_name:
+                    start["space_name"] = space_name
                 if context:
                     start["context"] = context
                 await ws.send(json.dumps(start))

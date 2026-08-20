@@ -6,7 +6,7 @@ import "../styles/brand-lockup.css";
  * Shared Databricks + Genie brand lockup (framework primitive).
  *
  * The official logos have a dark wordmark, so they sit on a clean white pill that
- * reads correctly on ANY page background (home, card, healthcare). Every surface
+ * reads correctly on ANY page background (home, card, knowledge). Every surface
  * uses this same component so the branding is identical everywhere. (The billing
  * cockpit has its own equivalent via the Sentient shell and is intentionally left
  * as-is.)

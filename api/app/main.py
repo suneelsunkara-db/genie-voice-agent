@@ -38,7 +38,7 @@ from .routers import (
     concierge,
     genie,
     health,
-    hls,
+    knowledge,
     languages,
     me,
     mic_stream,
@@ -69,7 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(me.router)
     app.include_router(languages.router)
     app.include_router(concierge.router)
-    app.include_router(hls.router)
+    app.include_router(knowledge.router)
     app.include_router(agent_assist.router)
     app.include_router(mic_stream.router)
     app.include_router(accounts.router)

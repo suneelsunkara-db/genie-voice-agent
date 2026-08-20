@@ -17,7 +17,7 @@ const FALLBACK_LABELS = [
 /**
  * Shared page backdrop (framework primitive): the deep-navy field with lava-red +
  * Genie-purple glows and the supported languages drifting like water. Every voice
- * surface (home, billing, card, healthcare) mounts this behind its content so the
+ * surface (home, billing, card, knowledge) mounts this behind its content so the
  * background + language flow + color theme are IDENTICAL everywhere.
  *
  * Fixed + z-index:0; pages render their content in a `.gv-content` wrapper (or any

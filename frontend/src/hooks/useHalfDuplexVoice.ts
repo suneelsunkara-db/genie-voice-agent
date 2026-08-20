@@ -25,7 +25,11 @@ import {
 export interface UseHalfDuplexVoiceOptions {
   /** The live voice session (mic pause/resume target). */
   sessionRef: RefObject<RealtimeVoiceSession | null>;
-  /** Playback queue sample rate (Hz). Defaults to 24000. */
+  /**
+   * Optional pin for the playback {@link AudioContext} sample rate.
+   * Default: omit (device-native clock). Do not pass 24000 — VoxCPM2 content is
+   * 48 kHz and a lower context permanently truncates it.
+   */
   playbackSampleRate?: number;
   /** Extra silence after the queue drains before re-opening the mic. Defaults to 350ms. */
   resumeTailMs?: number;
@@ -36,7 +40,7 @@ export interface UseHalfDuplexVoiceOptions {
   onMicResume?: () => void;
   /** Called for each agent-audio chunk (page can flip UI to "speaking"). */
   onSpeaking?: () => void;
-  /** Called once when the final chunk of a response arrives. */
+  /** Called once when the final chunk of a response arrives (turn completion). */
   onFinal?: () => void;
   /** Ref holding the language the LIVE session is running in. {@link HalfDuplexVoice.switchLanguage}
    *  updates it before reopening, so page code (greeting fetch, synthesize calls)
@@ -60,6 +64,13 @@ export interface UseHalfDuplexVoiceOptions {
   clearConversation?: () => void;
 }
 
+export interface ResponseAudioMeta {
+  segmentFinal?: boolean;
+  turnFinal?: boolean;
+  /** Server speech generation; drop chunks older than the last playback.stop. */
+  speechEpoch?: number;
+}
+
 export interface HalfDuplexVoice {
   playbackRef: MutableRefObject<AudioPlaybackQueue | null>;
   micGatedRef: MutableRefObject<boolean>;
@@ -69,14 +80,26 @@ export interface HalfDuplexVoice {
   gateMic: () => void;
   /** Re-open the mic after `ms`, unless `shouldStayGated()` is true then. */
   ungateMicAfter: (ms: number) => void;
-  /** Handle one `response.audio` chunk: gate → enqueue → schedule resume on final. */
-  handleResponseAudio: (pcmB64: string, sampleRate: number, final: boolean) => void;
+  /**
+   * Handle one `response.audio` chunk: gate → enqueue → schedule resume on turn
+   * completion. Progressive: pass ``meta.turnFinal`` / ``meta.segmentFinal``;
+   * legacy callers pass only ``final`` (treated as turn completion).
+   */
+  handleResponseAudio: (
+    pcmB64: string,
+    sampleRate: number,
+    final: boolean,
+    meta?: ResponseAudioMeta
+  ) => void;
+  /** Server playback.stop. ``reason: "inject"`` flushes only (mic stays gated for
+   *  the replacement speech); ``barge_in`` (or omitted) may reopen the mic. */
+  handlePlaybackStop: (speechEpoch?: number, reason?: string) => void;
   /** Live on-device interim transcript (framework browser caption). "" when idle
    *  or once the turn is finalized. Any voice page renders this the same way. */
   interimText: string;
   /** Wire to the session's `onInterimTranscript`; updates {@link interimText}. */
   handleInterimTranscript: (text: string) => void;
-  /** Barge-in: stop playback immediately and re-open the mic now. */
+  /** Barge-in: stop playback, notify server, re-open the mic now. */
   interrupt: () => void;
   /** Move a call to `language`. Pre-call this just records the choice; mid-call it
    *  reopens the session, because the language is negotiated once at session.start. */
@@ -89,6 +112,10 @@ export function useHalfDuplexVoice(options: UseHalfDuplexVoiceOptions): HalfDupl
   const playbackRef = useRef<AudioPlaybackQueue | null>(null);
   const micGatedRef = useRef(false);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Server speech_epoch accepted after the last playback.stop / inject. Chunks
+  // stamped with an older epoch are dropped so late pre-inject audio cannot
+  // overlap the deep-dive summary.
+  const acceptedSpeechEpochRef = useRef<number | null>(null);
   // Live caption preview text (framework-driven). Held here so every voice page
   // renders it identically without re-implementing the state per UI.
   const [interimText, setInterimText] = useState("");
@@ -108,7 +135,9 @@ export function useHalfDuplexVoice(options: UseHalfDuplexVoiceOptions): HalfDupl
   const resetPlayback = useCallback(() => {
     playbackRef.current?.flush();
     playbackRef.current?.close();
-    const queue = new AudioPlaybackQueue(optsRef.current.playbackSampleRate ?? 24_000);
+    acceptedSpeechEpochRef.current = null;
+    // Device-native AudioContext unless a caller explicitly pins a rate (tests).
+    const queue = new AudioPlaybackQueue(optsRef.current.playbackSampleRate);
     playbackRef.current = queue;
     return queue;
   }, []);
@@ -130,26 +159,76 @@ export function useHalfDuplexVoice(options: UseHalfDuplexVoiceOptions): HalfDupl
     }, ms);
   }, [clearResumeTimer]);
 
-  const handleResponseAudio = useCallback((pcmB64: string, sampleRate: number, final: boolean) => {
+  const handleResponseAudio = useCallback((
+    pcmB64: string,
+    sampleRate: number,
+    final: boolean,
+    meta?: ResponseAudioMeta
+  ) => {
+    // Drop superseded speech (pre-inject / pre-barge-in chunks still on the wire).
+    if (
+      meta?.speechEpoch !== undefined &&
+      acceptedSpeechEpochRef.current !== null &&
+      meta.speechEpoch < acceptedSpeechEpochRef.current
+    ) {
+      return;
+    }
+    if (meta?.speechEpoch !== undefined) {
+      acceptedSpeechEpochRef.current = meta.speechEpoch;
+    }
     // Gate the mic ONCE for the whole response (not per chunk) so pause/resume
     // can't flap while the agent is mid-sentence.
     if (!micGatedRef.current) gateMic();
     optsRef.current.onSpeaking?.();
     const { samples } = decodePcmChunk(pcmB64, sampleRate);
     playbackRef.current?.enqueue(samples, sampleRate);
-    if (final) {
+    // turn_final (or legacy final) completes the turn and reopens mic.
+    // segment_final alone does not — progressive mid-turn speech stays gated
+    // while work continues unless the page opts into awaiting_user later.
+    const turnDone = meta?.turnFinal === true || (meta?.turnFinal !== false && final);
+    if (turnDone) {
       optsRef.current.onFinal?.();
       const tail = optsRef.current.resumeTailMs ?? 350;
       ungateMicAfter((playbackRef.current?.msUntilIdle() ?? 0) + tail);
     }
   }, [gateMic, ungateMicAfter]);
 
-  const interrupt = useCallback(() => {
-    if (!playbackRef.current) return;
-    playbackRef.current.flush();
+  const handlePlaybackStop = useCallback((speechEpoch?: number, reason?: string) => {
+    playbackRef.current?.flush();
+    if (typeof speechEpoch === "number") {
+      acceptedSpeechEpochRef.current = speechEpoch;
+    }
     clearResumeTimer();
-    micGatedRef.current = false;
     setInterimText("");
+    // Same-turn inject: agent is about to speak again — keep mic gated.
+    if (reason === "inject") {
+      micGatedRef.current = true;
+      optsRef.current.sessionRef.current?.pauseMic();
+      return;
+    }
+    if (optsRef.current.shouldStayGated?.()) {
+      micGatedRef.current = true;
+      optsRef.current.sessionRef.current?.pauseMic();
+      return;
+    }
+    micGatedRef.current = false;
+    optsRef.current.sessionRef.current?.resumeMic();
+    optsRef.current.onMicResume?.();
+  }, [clearResumeTimer]);
+
+  const interrupt = useCallback(() => {
+    if (!playbackRef.current && !optsRef.current.sessionRef.current) return;
+    playbackRef.current?.flush();
+    clearResumeTimer();
+    setInterimText("");
+    // Notify server FIRST so late audio is cancelled, then reopen mic locally.
+    optsRef.current.sessionRef.current?.bargeIn();
+    if (optsRef.current.shouldStayGated?.()) {
+      micGatedRef.current = true;
+      optsRef.current.sessionRef.current?.pauseMic();
+      return;
+    }
+    micGatedRef.current = false;
     optsRef.current.sessionRef.current?.resumeMic();
     optsRef.current.onMicResume?.();
   }, [clearResumeTimer]);
@@ -200,6 +279,7 @@ export function useHalfDuplexVoice(options: UseHalfDuplexVoiceOptions): HalfDupl
     gateMic,
     ungateMicAfter,
     handleResponseAudio,
+    handlePlaybackStop,
     interimText,
     handleInterimTranscript,
     interrupt,

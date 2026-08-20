@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ReactElement, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { RealtimeVoiceSession, startRealtimeVoice } from "../lib/realtimeVoice";
 import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
 import { getMe } from "../lib/me";
 import { useAppLanguage } from "../lib/appLanguage";
+import { AppVoice, useAppVoice } from "../lib/appVoice";
+import { emptyConversation, turnReducer } from "../lib/turnState";
 import {
   DEFAULT_LANGUAGE_OPTIONS,
   Lang,
@@ -19,24 +21,25 @@ import "../styles/home.css";
  * Landing page for "Genie Assisted Voice" (a Databricks demo).
  *
  * A voice concierge (the "concierge" realtime profile) greets the signed-in user
- * by name, gives a short spoken overview, and asks which industry to open. The
+ * by name, gives a short spoken overview, and asks which experience to open. The
  * user answers BY VOICE; the LLM calls `select_industry`, which arrives as
  * `tool.called` and drives hash navigation:
- *   telco -> #/telco (billing), fsi -> #/card, healthcare -> #/hls.
+ *   telco -> #/telco (billing), fsi -> #/card, knowledge -> #/knowledge.
  *
  * Everything routes through the FRAMEWORK: the shared voice stack
  * (startRealtimeVoice + useHalfDuplexVoice), the shared config-driven language
  * bar (lib/languages + LanguageBar), and the shared greeting mechanism. The
- * Genie ontology + deep-reasoning panels are illustrative concept visuals.
+ * sample-question + FSI-context panels are illustrative concept visuals.
  */
 
 type Industry = {
-  id: "telco" | "fsi" | "healthcare";
+  id: "telco" | "fsi" | "knowledge";
   hash: string;
   title: string;
   tag: string;
   blurb: string;
   cues: string[];
+  Icon: () => ReactElement;
 };
 
 const INDUSTRIES: Industry[] = [
@@ -47,6 +50,7 @@ const INDUSTRIES: Industry[] = [
     tag: "Billing Support",
     blurb: "Resolve charges, waive fees, and set up payment plans on a live call.",
     cues: ["“Telco”", "“billing”", "“my phone bill”"],
+    Icon: SignalIcon,
   },
   {
     id: "fsi",
@@ -55,46 +59,65 @@ const INDUSTRIES: Industry[] = [
     tag: "Credit-Card Assistant",
     blurb: "Understand statements and rewards, with deep “why” reasoning on demand.",
     cues: ["“Financial services”", "“credit card”", "“my statement”"],
+    Icon: CardIcon,
   },
   {
-    id: "healthcare",
-    hash: "#/hls",
-    title: "Healthcare",
-    tag: "Care & Claims",
-    blurb: "Explain claims, coverage, and visit summaries in plain language.",
-    cues: ["“Healthcare”", "“my claim”", "“coverage”"],
+    id: "knowledge",
+    hash: "#/knowledge",
+    title: "Databricks Knowledge Agent",
+    tag: "Cited Platform Q&A",
+    blurb: "Ask how the platform works and hear an answer grounded in governed docs.",
+    cues: ["“Knowledge”", "“Databricks”", "“the platform”"],
+    Icon: KnowledgeIcon,
   },
 ];
 
-const ONTOLOGY_NODES = [
-  { id: "customer", label: "Customer", x: 50, y: 18 },
-  { id: "account", label: "Account", x: 18, y: 46 },
-  { id: "statement", label: "Statement", x: 50, y: 50 },
-  { id: "claim", label: "Claim", x: 82, y: 46 },
-  { id: "charge", label: "Charge", x: 34, y: 82 },
-  { id: "reward", label: "Reward", x: 66, y: 82 },
-];
-const ONTOLOGY_EDGES: Array<[string, string]> = [
-  ["customer", "account"],
-  ["customer", "statement"],
-  ["customer", "claim"],
-  ["account", "charge"],
-  ["statement", "charge"],
-  ["statement", "reward"],
+// Three questions a caller can actually ask, one per surface — the concrete
+// version of "what is this for?". Illustrative copy; each surface answers live.
+type SampleQuestion = {
+  id: string;
+  surface: string;
+  question: string;
+  detail: string;
+  Icon: () => ReactElement;
+};
+
+const SAMPLE_QUESTIONS: SampleQuestion[] = [
+  {
+    id: "telco",
+    surface: "Telco",
+    question: "“Can you waive the late fee on my account?”",
+    detail: "Checks eligibility against policy, then applies the waiver on the call.",
+    Icon: SignalIcon,
+  },
+  {
+    id: "fsi",
+    surface: "Financial Services",
+    question: "“Which spend earned me the most rewards?”",
+    detail: "Ranks the cycle's categories from the statement and names the top driver.",
+    Icon: CardIcon,
+  },
+  {
+    id: "knowledge",
+    surface: "Knowledge Agent",
+    question: "“What is Unity Catalog for?”",
+    detail: "Answers from the governed knowledge base and attributes the source.",
+    Icon: KnowledgeIcon,
+  },
 ];
 
 // A concrete illustrative "why" investigation — this is what DEEP reasoning does
 // that a scripted bot can't: pull governed history, compare, isolate drivers,
 // and explain with evidence. (Illustrative content; the live version runs on the
 // card deep-dive page.)
-const REASONING_QUESTION = "“Why is my bill higher this month?”";
+const REASONING_QUESTION = "“Why is my card statement higher this month?”";
 const REASONING_HOPS = [
-  "Pulls 6 months of billing history",
-  "Compares charges line-by-line vs. the usual baseline",
+  "Pulls six months of statement history",
+  "Compares charges line-by-line against the usual baseline",
   "Isolates what actually changed this cycle",
 ];
 const REASONING_CONCLUSION =
-  "$41 of the $47 increase is a one-time device fee — next cycle returns to normal.";
+  "$41 of the $47 increase is a one-time annual fee — next cycle returns to normal.";
 // Last-resort route fallback if the confirmation TTS stream never reaches a
 // final audio chunk. Normal routing is driven by `onFinal` after audio drains.
 const ROUTE_FALLBACK_MS = 30_000;
@@ -102,6 +125,7 @@ const ROUTE_FALLBACK_MS = 30_000;
 type AgentState = "idle" | "greeting" | "listening" | "thinking" | "speaking";
 
 export function HomePage() {
+  const [, dispatchTurn] = useReducer(turnReducer, undefined, emptyConversation);
   const [phase, setPhase] = useState<"idle" | "connecting" | "live">("idle");
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [userName, setUserName] = useState<string>("");
@@ -114,6 +138,9 @@ export function HomePage() {
   // The one app language, chosen here on the home page and inherited (locked) by
   // every use-case page. The concierge greets AND listens in this language.
   const [appLanguage, setAppLanguage] = useAppLanguage();
+  // One persisted voice choice. startRealtimeVoice reads it automatically, so
+  // every destination page inherits the same speaker without per-page wiring.
+  const [appVoice, setAppVoice] = useAppVoice();
 
   const sessionRef = useRef<RealtimeVoiceSession | null>(null);
   const callIdRef = useRef<string>("");
@@ -134,8 +161,10 @@ export function HomePage() {
     gateMic,
     ungateMicAfter,
     handleResponseAudio,
+    handlePlaybackStop,
     interimText,
     handleInterimTranscript,
+    interrupt,
     teardownPlayback,
   } = useHalfDuplexVoice({
     sessionRef,
@@ -245,6 +274,8 @@ export function HomePage() {
   // When a response finishes streaming: if a route is pending (the caller just
   // picked an industry), navigate once the confirmation has actually drained
   // from the speakers — so we never cut it off mid-sentence.
+  // Navigate only after turn_final (half-duplex onFinal). Mid-turn segment_final
+  // must not route away while progressive speech is still in flight.
   onFinalRef.current = () => {
     const hash = pendingNavRef.current;
     if (!hash) return;
@@ -279,14 +310,22 @@ export function HomePage() {
           onInterimTranscript: (text) => handleInterimTranscript(text),
           onSpeechStarted: () => setAgentState("listening"),
           onTurnStarted: () => setAgentState((s) => (s === "speaking" ? s : "thinking")),
-          onTranscript: (text) => {
+          onTranscript: (text, _language, turnId) => {
+            dispatchTurn({ type: "user_transcript", turnId, text });
             if (text.trim()) setCaption(text);
           },
-          onResponseText: (text) => {
+          onResponseText: (text, turnId) => {
+            dispatchTurn({ type: "response_text", turnId, text });
             if (text.trim()) setCaption(text);
           },
-          onResponseAudio: (pcmB64, sampleRate, final) => {
-            handleResponseAudio(pcmB64, sampleRate, final);
+          onTurnEvent: ({ turnId, seq, kind, payload }) => {
+            dispatchTurn({ type: "turn_event", turnId, seq, kind, payload });
+          },
+          onResponseAudio: (pcmB64, sampleRate, final, _turnId, meta) => {
+            handleResponseAudio(pcmB64, sampleRate, final, meta);
+          },
+          onPlaybackStop: (_turnId, speechEpoch, reason) => {
+            handlePlaybackStop(speechEpoch, reason);
           },
           onToolCalled: (name, result) => {
             const r = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
@@ -306,9 +345,8 @@ export function HomePage() {
           },
         },
         language,
-        // Pin STT to the chosen app language so short replies ("Telco") are
-        // transcribed in that language and routed by the concierge's multilingual
-        // industry cues, rather than being mis-detected and dropped by the gate.
+        // Pin STT to the chosen app language so short destination replies are
+        // transcribed in that language before typed semantic navigation.
         { profile: "concierge", startMicPaused: true, sttLanguage: language }
       );
       sessionRef.current = session;
@@ -319,6 +357,7 @@ export function HomePage() {
       ungateMicAfter,
       handleInterimTranscript,
       handleResponseAudio,
+      handlePlaybackStop,
       navigateForIndustry,
       teardown,
     ]
@@ -371,8 +410,52 @@ export function HomePage() {
     [phase, setAppLanguage, teardown, resetPlayback, openSession]
   );
 
+  const changeVoice = useCallback(
+    (voice: AppVoice) => {
+      if (voice === appVoice) return;
+      setAppVoice(voice);
+      // A session's reference is immutable once speech begins. Restart a live
+      // concierge session so the next greeting already uses the selected voice;
+      // all later pages read the same persisted choice at session.start.
+      if (phase !== "idle") {
+        teardown();
+        setChosen(null);
+        setCaption("");
+        setError(null);
+        setPhase("connecting");
+        setAgentState("greeting");
+        callIdRef.current = `home-${Date.now()}`;
+        resetPlayback();
+        void openSession(callLanguageRef.current).catch((e) => {
+          setError(e instanceof Error ? e.message : String(e));
+          setPhase("idle");
+          setAgentState("idle");
+        });
+      }
+    },
+    [appVoice, setAppVoice, phase, teardown, resetPlayback, openSession]
+  );
+
   const orbLevel = agentState === "speaking" ? speakLevel : agentState === "listening" ? micLevel : 0;
   const liveCaption = interimText.trim() || caption;
+
+  // Barge-in via Escape / orb tap while the agent is speaking.
+  useEffect(() => {
+    if (agentState !== "speaking") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") interrupt();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [agentState, interrupt]);
+
+  const onOrbTap = useCallback(() => {
+    if (agentState === "speaking") {
+      interrupt();
+      return;
+    }
+    if (phase === "idle") void startCall();
+  }, [agentState, phase, interrupt, startCall]);
 
   return (
     <div className="home-root">
@@ -381,6 +464,22 @@ export function HomePage() {
       <header className="home-top">
         <BrandLockup product="Assisted Voice" />
         <div className="home-topright">
+          <div className="home-voice-choice" role="group" aria-label="Agent voice">
+            <span className="home-voice-label">Voice</span>
+            <div className="home-voice-toggle">
+              {(["female", "male"] as const).map((voice) => (
+                <button
+                  key={voice}
+                  type="button"
+                  className={appVoice === voice ? "is-active" : ""}
+                  aria-pressed={appVoice === voice}
+                  onClick={() => changeVoice(voice)}
+                >
+                  {voice === "female" ? "Female" : "Male"}
+                </button>
+              ))}
+            </div>
+          </div>
           {/* The single source of truth for language: chosen here, inherited and
               locked on every use-case page. Changing it re-greets in the new
               language (and restarts a live concierge call). */}
@@ -404,9 +503,15 @@ export function HomePage() {
             state={agentState}
             level={orbLevel}
             size="clamp(74px, 11vh, 112px)"
-            onClick={phase === "idle" ? () => void startCall() : undefined}
-            disabled={phase !== "idle"}
-            ariaLabel={phase === "idle" ? "Talk to Genie" : "Genie"}
+            onClick={onOrbTap}
+            disabled={phase !== "idle" && agentState !== "speaking"}
+            ariaLabel={
+              agentState === "speaking"
+                ? "Interrupt Genie"
+                : phase === "idle"
+                  ? "Talk to Genie"
+                  : "Genie"
+            }
           />
 
           <h1 className="home-title">
@@ -418,7 +523,7 @@ export function HomePage() {
           </h1>
           <p className="home-sub">
             One voice platform, {langOptions.length}{" "}
-            {langOptions.length === 1 ? "language" : "languages"}, three industries — powered by the
+            {langOptions.length === 1 ? "language" : "languages"}, three agents — powered by the
             Databricks Genie ontology and deep reasoning.
           </p>
 
@@ -430,7 +535,8 @@ export function HomePage() {
             ) : (
               <div className={`home-status home-status-${agentState}`}>
                 {agentState === "greeting" && "Genie is connecting…"}
-                {agentState === "listening" && "Listening — say Telco, Financial Services, or Healthcare"}
+                {agentState === "listening" &&
+                  "Listening — say Telco, Financial Services, or Knowledge"}
                 {agentState === "thinking" && "Thinking…"}
                 {agentState === "speaking" && "Genie is speaking…"}
                 {agentState === "idle" && "Ready"}
@@ -450,7 +556,12 @@ export function HomePage() {
               className={`home-card home-card-${ind.id}${chosen === ind.id ? " is-chosen" : ""}`}
               onClick={() => goTo(ind.hash)}
             >
-              <div className="home-card-tag">{ind.tag}</div>
+              <div className="home-card-head">
+                <span className="home-card-icon" aria-hidden="true">
+                  <ind.Icon />
+                </span>
+                <div className="home-card-tag">{ind.tag}</div>
+              </div>
               <div className="home-card-title">{ind.title}</div>
               <div className="home-card-blurb">{ind.blurb}</div>
               <div className="home-card-cues">
@@ -464,7 +575,7 @@ export function HomePage() {
         </section>
 
         <section className="home-genie">
-          <OntologyPanel />
+          <SampleQuestionsPanel />
           <ReasoningPanel />
         </section>
       </main>
@@ -476,38 +587,31 @@ export function HomePage() {
   );
 }
 
-function OntologyPanel() {
+function SampleQuestionsPanel() {
   return (
     <div className="home-panel">
-      <div className="home-panel-title">Genie Ontology</div>
+      <div className="home-panel-title">Ask Genie</div>
       <div className="home-panel-sub">
-        A governed semantic model — the entities and relationships Genie understands.
+        Say it out loud — each surface answers from its own governed data.
       </div>
-      <svg className="home-ontology" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-        {ONTOLOGY_EDGES.map(([a, b], i) => {
-          const na = ONTOLOGY_NODES.find((n) => n.id === a)!;
-          const nb = ONTOLOGY_NODES.find((n) => n.id === b)!;
-          return (
-            <line
-              key={i}
-              x1={na.x}
-              y1={na.y}
-              x2={nb.x}
-              y2={nb.y}
-              className="home-ontology-edge"
-              style={{ animationDelay: `${i * 0.25}s` }}
-            />
-          );
-        })}
-        {ONTOLOGY_NODES.map((n) => (
-          <g key={n.id} className="home-ontology-node">
-            <circle cx={n.x} cy={n.y} r={3.4} />
-            <text x={n.x} y={n.y - 5} textAnchor="middle">
-              {n.label}
-            </text>
-          </g>
+      <div className="home-samples">
+        {SAMPLE_QUESTIONS.map((s, i) => (
+          <div
+            key={s.id}
+            className={`home-sample home-sample-${s.id}`}
+            style={{ animationDelay: `${0.15 + i * 0.18}s` }}
+          >
+            <div className="home-sample-head">
+              <span className="home-sample-icon" aria-hidden="true">
+                <s.Icon />
+              </span>
+              <span className="home-sample-surface">{s.surface}</span>
+            </div>
+            <div className="home-sample-q">{s.question}</div>
+            <div className="home-sample-detail">{s.detail}</div>
+          </div>
         ))}
-      </svg>
+      </div>
     </div>
   );
 }
@@ -515,7 +619,7 @@ function OntologyPanel() {
 function ReasoningPanel() {
   return (
     <div className="home-panel">
-      <div className="home-panel-title">Genie Deep Reasoning</div>
+      <div className="home-panel-title">FSI context</div>
       <div className="home-panel-sub">
         Beyond quick answers — Genie investigates the “why”, grounded in your own data.
       </div>
@@ -535,5 +639,42 @@ function ReasoningPanel() {
         <div className="home-dr-foot">Grounded in governed data · with citations</div>
       </div>
     </div>
+  );
+}
+
+/* ---- surface icons ------------------------------------------------------- *
+ * Inline single-stroke glyphs rather than an icon dependency: they inherit
+ * `currentColor` from the card, so each surface tints its own icon and the set
+ * stays visually uniform across the home page. */
+
+function SignalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+      <path d="M12 20v-7" />
+      <path d="M8.4 10.4a5 5 0 0 1 7.2 0" />
+      <path d="M5.6 7.4a9 9 0 0 1 12.8 0" />
+      <circle cx="12" cy="12.6" r="1.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function CardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+      <rect x="3" y="6" width="18" height="12" rx="2.5" />
+      <path d="M3 10.5h18" />
+      <path d="M6.5 14.5h4" />
+    </svg>
+  );
+}
+
+function KnowledgeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+      <path d="M4 5.5A2 2 0 0 1 6 3.5h5V20H6a2 2 0 0 0-2 2z" />
+      <path d="M11 3.5h7a2 2 0 0 1 2 2V16" />
+      <circle cx="17.5" cy="19" r="2.5" />
+      <path d="M20 16v.5a2.5 2.5 0 0 1-2.5 2.5" />
+    </svg>
   );
 }

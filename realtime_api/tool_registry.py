@@ -36,6 +36,12 @@ class ToolContext:
     # Profile-specific state (use_case, facts_cache, etc.). Profiles read/write
     # freely; the engine never inspects this dict.
     profile_state: dict[str, Any] = field(default_factory=dict)
+    # OBO principal for Genie / workspace tools (fail-closed when token missing).
+    principal: Any | None = field(default=None, repr=False)
+    session_id: str | None = field(default=None, repr=False)
+    turn_id: int | None = field(default=None, repr=False)
+    # Optional override of the configured demo Genie space (Space / Agent Mode).
+    space_name: str | None = field(default=None, repr=False)
 
     def cached_account(self, customer_id: str) -> dict[str, Any] | None:
         if self.account_store is None:
@@ -69,16 +75,53 @@ def shape_genie_answer(result: dict[str, Any]) -> str:
     )
 
 
+def attach_session_identity(ctx: "ToolContext", session: Any) -> "ToolContext":
+    """Copy OBO principal + session ids onto a freshly built ToolContext."""
+    ctx.principal = getattr(session, "principal", None)
+    ctx.session_id = getattr(session, "session_id", None)
+    ctx.turn_id = getattr(session, "turn_id", None)
+    config = getattr(session, "config", None)
+    ctx.space_name = getattr(config, "space_name", None) if config is not None else None
+    return ctx
+
+
+def genie_space_name(ctx: "ToolContext", default: str) -> str:
+    """Space the caller named, else this app's configured demo space."""
+    override = str(getattr(ctx, "space_name", None) or "").strip()
+    return override or default
+
+
+def genie_obo_or_refuse(ctx: "ToolContext") -> str | None:
+    """Fail-closed Genie gate: return JSON refuse payload, or None if OBO ok."""
+    from .runtime.identity import require_obo_token, refuse_text_for_obo
+
+    err = require_obo_token(
+        getattr(ctx, "principal", None),
+        session_id=str(getattr(ctx, "session_id", None) or "unknown"),
+        turn_id=getattr(ctx, "turn_id", None),
+    )
+    if err is None:
+        return None
+    return json.dumps(
+        {
+            "error": err.message,
+            "error_evidence": err.as_dict(),
+            "refuse": refuse_text_for_obo(err, language=getattr(ctx, "_detected_language", None) or "en"),
+            "obo_deny": True,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Profile-scoped registry
 # ---------------------------------------------------------------------------
 # Key: (profile, tool_name) -> (spec_dict, executor_fn)
-# profile=None means "default" (telco billing).
+# profile=None is an unscoped legacy registration, not a session default.
 _REGISTRY: dict[tuple[str | None, str], tuple[dict[str, Any], ToolExecutor]] = {}
 
 
 def register(spec: dict[str, Any], fn: ToolExecutor, *, profile: str | None = None) -> None:
-    """Register a tool for a given profile (None = default/telco)."""
+    """Register a tool for a named profile (or an explicit unscoped caller)."""
     name = spec["function"]["name"]
     _REGISTRY[(profile, name)] = (spec, fn)
 
@@ -95,3 +138,13 @@ def run_tool(name: str, arguments: dict[str, Any], ctx: ToolContext, *, profile:
         return json.dumps({"error": f"unknown tool: {name}"})
     _, fn = entry
     return fn(arguments, ctx)
+
+
+def tool_effect(name: str, *, profile: str | None = None) -> str:
+    """Return the server-enforced effect class declared by a capability."""
+    entry = _REGISTRY.get((profile, name))
+    if not entry:
+        return "read"
+    spec, _ = entry
+    effect = str(spec.get("x-effect_class") or "read")
+    return effect if effect in {"read", "confirm_mutate", "mutate"} else "read"

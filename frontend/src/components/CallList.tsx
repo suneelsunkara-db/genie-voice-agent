@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useReducer, useRef, useState } from "react";
 import {
   AccountFacts,
   api,
@@ -23,6 +23,7 @@ import {
 } from "../lib/realtimeVoice";
 import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
 import { getMe } from "../lib/me";
+import { emptyConversation, turnReducer } from "../lib/turnState";
 import {
   languageLabel,
   localizedValue,
@@ -241,7 +242,7 @@ export function CockpitSession({
 
   // Agent-initiated voice presence. Rendered at the TOP of the conversation
   // panel so the Genie orb + call controls sit up-front and aligned, matching
-  // the card / healthcare / home surfaces (which all lead with the orb).
+  // the card / knowledge / home surfaces (which all lead with the orb).
   const liveAssistEl = (
     <LiveAssist
       callId={call.call_id}
@@ -1001,6 +1002,7 @@ function LiveAssist({
   onLanguageMismatch?: (expected: string, detected: string) => void;
   onAccountFacts?: (facts: any) => void;
 }) {
+  const [, dispatchTurn] = useReducer(turnReducer, undefined, emptyConversation);
   const copy = uiCopy(language);
   const [err, setErr] = useState<string | null>(null);
   const [inCall, setInCall] = useState(false);
@@ -1031,6 +1033,8 @@ function LiveAssist({
     gateMic,
     ungateMicAfter,
     handleResponseAudio,
+    handlePlaybackStop,
+    interrupt,
     switchLanguage,
     teardownPlayback,
   } = useHalfDuplexVoice({
@@ -1180,7 +1184,8 @@ function LiveAssist({
             micLevel: micLevelRef.current,
           });
         },
-        onTranscript: (transcriptText, lang) => {
+        onTranscript: (transcriptText, lang, turnId) => {
+          dispatchTurn({ type: "user_transcript", turnId, text: transcriptText });
           if (lang) {
             onLanguageDetected?.(lang);
           }
@@ -1189,14 +1194,21 @@ function LiveAssist({
           voicePhaseRef.current = "agent_reply";
           onVoiceUiChange({ phase: "agent_reply", source: "mic", processingLabel: copy.geniePreparing });
         },
-        onResponseText: (responseText) => {
+        onResponseText: (responseText, turnId) => {
+          dispatchTurn({ type: "response_text", turnId, text: responseText });
           onLocalTurn({ text: responseText, speaker: 0 });
         },
-        onResponseAudio: (pcmB64, sampleRate, final) => {
+        onTurnEvent: ({ turnId, seq, kind, payload }) => {
+          dispatchTurn({ type: "turn_event", turnId, seq, kind, payload });
+        },
+        onResponseAudio: (pcmB64, sampleRate, final, _turnId, meta) => {
           // Half-duplex playback + mic gating (shared with the card assistant):
           // mute the mic while the agent's audio plays so it isn't captured and
-          // re-transcribed, enqueue, and resume the mic after the final chunk drains.
-          handleResponseAudio(pcmB64, sampleRate, final);
+          // re-transcribed, enqueue, and resume the mic after turn completion.
+          handleResponseAudio(pcmB64, sampleRate, final, meta);
+        },
+        onPlaybackStop: (_turnId, speechEpoch, reason) => {
+          handlePlaybackStop(speechEpoch, reason);
         },
         onToolCalled: (name, result) => {
           if (name === "lookup_account" && result && typeof result === "object") {
@@ -1240,7 +1252,7 @@ function LiveAssist({
             onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
           }
         },
-      }, callLanguage, { startMicPaused: true });
+      }, callLanguage, { profile: "billing", startMicPaused: true });
       rtSessionRef.current = session;
       setInCall(true);
     } catch (e) {
@@ -1283,10 +1295,13 @@ function LiveAssist({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expectedLanguage, language, switchLanguage]);
 
-  // Tapping the Genie orb: pre-call it starts the call; in-call it resumes audio
-  // playback in case the browser suspended the context (auto-start with no prior
-  // gesture, e.g. a cold refresh directly on this page).
+  // Tapping the Genie orb: interrupt while the agent speaks; otherwise start or
+  // resume audio if the browser suspended the context.
   const onOrbTap = () => {
+    if (inCall && (voiceUi.phase === "agent_reply" || voiceUi.phase === "speaking")) {
+      interrupt();
+      return;
+    }
     if (inCall) {
       playbackRef.current?.resume();
       return;
@@ -1294,9 +1309,19 @@ function LiveAssist({
     void startVoice();
   };
 
+  // Barge-in via Escape while the agent is speaking.
+  useEffect(() => {
+    if (!inCall || (voiceUi.phase !== "agent_reply" && voiceUi.phase !== "speaking")) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") interrupt();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [inCall, voiceUi.phase, interrupt]);
+
   const orbState: VoiceOrbState = !inCall
     ? "idle"
-    : voiceUi.phase === "agent_reply"
+    : voiceUi.phase === "agent_reply" || voiceUi.phase === "speaking"
       ? "speaking"
       : voiceUi.phase === "transcribing"
         ? "thinking"

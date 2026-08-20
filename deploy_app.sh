@@ -22,7 +22,10 @@
 #
 # Config: edit the block below OR export the same vars before running.
 # Auth:   uses your Databricks CLI profile (U2M) to DEPLOY; the running app uses
-#         its own service principal.
+#         its own service principal for hosting / serving. Genie workspace Q&A
+#         prefers the viewer's OBO token (x-forwarded-access-token) when Apps
+#         user authorization is enabled with genie (+ sql) scopes — see app.yaml
+#         and README "User authorization (OBO)".
 # =============================================================================
 set -euo pipefail
 
@@ -70,11 +73,58 @@ log "deploying as: $ME  ->  app '$APP_NAME'  (source: $WORKSPACE_DIR)"
 
 # ---- 1. build the frontend for same-origin ---------------------------------
 log "building frontend (same-origin) -> api/app/static"
-( cd frontend && npm install --silent && VITE_API_BASE_URL="" npm run build )
+( cd frontend && npm ci --silent && npm test -- --run && VITE_API_BASE_URL="" npm run build )
 rm -rf api/app/static
 mkdir -p api/app/static
 cp -R frontend/dist/. api/app/static/
 [[ -f api/app/static/index.html ]] || die "frontend build missing index.html"
+
+log "running deploy-gate Python tests"
+"$PYBIN" -c "import pytest" >/dev/null 2>&1 \
+  || die "pytest is missing from $PYBIN; install the repo dev dependencies before deploy."
+PYTHONPATH="$ROOT/backend:$ROOT" "$PYBIN" -m pytest \
+  realtime_api/tests backend/tests/test_framework_seams.py -q
+
+# Databricks Apps rejects any single source file over 10 MiB. Check the exact
+# git-visible working tree plus the explicitly included generated SPA.
+log "checking Databricks Apps 10 MiB per-file limit"
+ROOT="$ROOT" "$PYBIN" - <<'PY'
+import os
+import pathlib
+import subprocess
+
+root = pathlib.Path(os.environ["ROOT"])
+listed = subprocess.check_output(
+    ["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=root
+).decode().split("\0")
+listed = [item for item in listed if item]
+# `git ls-files -c` includes tracked presentation files even when .gitignore
+# excludes them; `databricks sync` excludes those paths, so mirror that behavior.
+ignored_raw = subprocess.run(
+    ["git", "check-ignore", "--no-index", "-z", "--stdin"],
+    cwd=root,
+    input=("\0".join(listed) + "\0").encode(),
+    stdout=subprocess.PIPE,
+    check=False,
+).stdout.decode()
+ignored = {item for item in ignored_raw.split("\0") if item}
+paths = {root / item for item in listed if item not in ignored}
+static = root / "api" / "app" / "static"
+if static.exists():
+    paths.update(p for p in static.rglob("*") if p.is_file())
+limit = 10 * 1024 * 1024
+oversized = sorted((p.stat().st_size, p) for p in paths if p.is_file() and p.stat().st_size > limit)
+if oversized:
+    for size, path in oversized:
+        print(f"{path.relative_to(root)}: {size} bytes")
+    raise SystemExit("source contains files over the Databricks Apps 10 MiB limit")
+PY
+
+log "verifying warehouse and required serving endpoints"
+dbx warehouses get "$SQL_WAREHOUSE_ID" >/dev/null 2>&1 \
+  || die "SQL warehouse '$SQL_WAREHOUSE_ID' does not exist or is not accessible."
+dbx serving-endpoints get "$CLAUDE_ENDPOINT" >/dev/null 2>&1 \
+  || die "Required enrichment endpoint '$CLAUDE_ENDPOINT' does not exist or is not accessible."
 
 # ---- 2. vendor keys -> secret scope ----------------------------------------
 DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.deepgram_api_key)' 2>/dev/null || true)}"
@@ -122,9 +172,8 @@ PY
 fi
 ASR_ENDPOINTS="${ASR_ENDPOINTS:-$WHISPER_ENDPOINT}"
 
-# Drop any endpoint that does not actually exist so the app-resource attach (which
-# grants CAN_QUERY) can never fail on a phantom serving endpoint. Each attached
-# endpoint is a hard deploy dependency.
+# Every configured language route is a hard dependency. Silently dropping one
+# creates an app that deploys successfully but fails only for that language.
 _FILTERED=""
 IFS=',' read -ra _ASR_EPS <<< "$ASR_ENDPOINTS"
 for _ep in "${_ASR_EPS[@]}"; do
@@ -133,7 +182,7 @@ for _ep in "${_ASR_EPS[@]}"; do
   if dbx serving-endpoints get "$_ep" >/dev/null 2>&1; then
     _FILTERED="${_FILTERED:+$_FILTERED,}$_ep"
   else
-    warn "ASR endpoint '$_ep' not found - skipping (not attached as an app resource)."
+    die "Required ASR endpoint '$_ep' does not exist or is not accessible."
   fi
 done
 [[ -n "$_FILTERED" ]] || die "No valid ASR serving endpoints resolved to attach. Check config/config.yaml routes."
@@ -144,8 +193,8 @@ log "ASR endpoints to attach: $ASR_ENDPOINTS"
 # The Realtime Voice API is mounted at /realtime in the app; its Databricks
 # serving endpoints (from the realtime_voice: block in config/config.yaml) need
 # CAN_QUERY granted to the app service principal. Read from the DEPLOYED config
-# (never config.local.yaml, which is not synced). Missing endpoints are skipped
-# so a partial realtime rollout can't block the whole app deploy.
+# (never config.local.yaml, which is not synced). All configured endpoints are
+# required: a partial voice deployment is not a successful deployment.
 REALTIME_ENDPOINTS="${REALTIME_ENDPOINTS:-}"
 if [[ -z "$REALTIME_ENDPOINTS" ]]; then
   REALTIME_ENDPOINTS="$(
@@ -183,12 +232,12 @@ for _ep in "${_RT_EPS[@]}"; do
   if dbx serving-endpoints get "$_ep" >/dev/null 2>&1; then
     _RT_FILTERED="${_RT_FILTERED:+$_RT_FILTERED,}$_ep"
   else
-    warn "Realtime endpoint '$_ep' not found - skipping (realtime API will fail until it exists)."
+    die "Required realtime endpoint '$_ep' does not exist or is not accessible."
   fi
 done
 REALTIME_ENDPOINTS="$_RT_FILTERED"
-[[ -n "$REALTIME_ENDPOINTS" ]] && log "Realtime endpoints to attach: $REALTIME_ENDPOINTS" \
-  || warn "No realtime voice endpoints attached (deploy them, then re-run to grant CAN_QUERY)."
+[[ -n "$REALTIME_ENDPOINTS" ]] || die "No realtime voice endpoints resolved from config/config.yaml."
+log "Realtime endpoints to attach: $REALTIME_ENDPOINTS"
 
 APP_NAME="$APP_NAME" SECRET_SCOPE="$SECRET_SCOPE" SQL_WAREHOUSE_ID="$SQL_WAREHOUSE_ID" \
 CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" \
@@ -225,6 +274,9 @@ print(json.dumps({
     "name": os.environ["APP_NAME"],
     "description": "Genie Voice Agent - contact-center voice intelligence",
     "resources": res,
+    # app.yaml requests these at runtime; the Apps control plane must also grant
+    # them explicitly or x-forwarded-access-token contains only default IAM scopes.
+    "user_api_scopes": ["genie", "sql"],
 }))
 PY
 
@@ -305,7 +357,61 @@ dbx sync . "$WORKSPACE_DIR" --include "api/app/static/**"
 log "deploying app version"
 dbx apps deploy "$APP_NAME" --source-code-path "$WORKSPACE_DIR" --mode SNAPSHOT
 
-APP_URL="$(dbx apps get "$APP_NAME" -o json | python3 -c 'import sys,json;print(json.load(sys.stdin).get("url",""))' 2>/dev/null || true)"
+APP_STATE="$(dbx apps get "$APP_NAME" -o json)"
+APP_URL="$(printf '%s' "$APP_STATE" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("url",""))')"
+printf '%s' "$APP_STATE" | "$PYBIN" -c '
+import json, sys
+d = json.load(sys.stdin)
+effective = set(d.get("effective_user_api_scopes") or [])
+missing = {"genie", "sql"} - effective
+if missing:
+    raise SystemExit(
+        "deployed app is missing effective OBO scopes: "
+        + ", ".join(sorted(missing))
+        + ". Enable User Authorization in the workspace/app, then redeploy."
+    )
+status = (d.get("app_status") or {}).get("state")
+if status != "RUNNING":
+    raise SystemExit(f"deployed app is not RUNNING (status={status!r})")
+'
+[[ -n "$APP_URL" ]] || die "deployment succeeded but the app URL is empty."
+
+# Authenticated smoke test catches source-sync omissions, SPA catch-all masking a
+# missing API route, dependency/import failures, and a broken realtime mount.
+log "smoke-testing deployed HTTP surfaces"
+APP_URL="$APP_URL" APP_TOKEN="$(dbx auth token -o json | "$PYBIN" -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')" \
+  "$PYBIN" - <<'PY'
+import json
+import os
+import urllib.error
+import urllib.request
+
+base = os.environ["APP_URL"].rstrip("/")
+headers = {"Authorization": f"Bearer {os.environ['APP_TOKEN']}"}
+checks = {
+    "/health": lambda body: body.get("status") == "ok",
+    "/realtime/healthz": lambda body: body.get("status") == "ok",
+    "/knowledge/corpus": lambda body: isinstance(body.get("topics"), list),
+    "/realtime/v1/capabilities": lambda body: "speech-llm-toolassist-speech" in body,
+    "/me": lambda body: body.get("authenticated") is True,
+}
+for route, valid in checks.items():
+    request = urllib.request.Request(base + route, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            content_type = response.headers.get("content-type", "")
+            if response.status != 200 or "json" not in content_type:
+                raise RuntimeError(
+                    f"{route}: status={response.status}, content-type={content_type!r}"
+                )
+            body = json.load(response)
+    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"deployed smoke test failed for {route}: {exc}") from exc
+    if not valid(body):
+        raise SystemExit(f"deployed smoke test returned an invalid payload for {route}")
+    print(f"[app-deploy] smoke ok: {route}")
+PY
+
 log "------------------------------------------------------------------"
 log "deployed. app URL: ${APP_URL:-<see: databricks apps get $APP_NAME>}"
 if [[ -n "$APP_URL" ]]; then

@@ -3,3 +3,9 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 websockets>=12
 pydantic>=2
+# Genie One runs over MCP, so the API process (which hosts the realtime voice
+# runtime) needs the client SDK. Root requirements.txt declares it for the
+# deployed app; this declares it for the local venv start_app.sh builds.
+mcp>=1.9,<2
+# In-process navigation FSM only (no AgentOS, no checkpointer, no LangSmith sink).
+langgraph>=1.2,<2

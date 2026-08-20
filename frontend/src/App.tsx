@@ -8,7 +8,7 @@ import { CardIssuerPage } from "./components/CardIssuerPage";
 import { CockpitPage } from "./components/CockpitPage";
 import { GuardrailsPage } from "./components/GuardrailsPage";
 import { HomePage } from "./components/HomePage";
-import { HlsPage } from "./components/HlsPage";
+import { KnowledgeAgentPage } from "./components/KnowledgeAgentPage";
 import { TracesPage } from "./components/TracesPage";
 import { VoiceBenchmarksPage } from "./components/VoiceBenchmarksPage";
 import { SentientShell } from "./components/sentient/Sentient";
@@ -72,7 +72,7 @@ export default function App() {
   }, []);
 
   const showHome = page === "#/" || page === "#/home";
-  const showHls = page === "#/hls";
+  const showKnowledge = page === "#/knowledge";
   const showBenchmark = page === "#/asr-benchmark";
   // The Trace Explorer takes an optional ?trace=<id> so the Guardrails view can
   // deep-link a specific turn.
@@ -91,14 +91,14 @@ export default function App() {
     }
   }, [status?.languages, interactionLanguage]);
 
-  // Landing page: choose the app language and click into an industry
-  // (Telco -> #/telco, FSI -> #/card, Healthcare -> #/hls).
+  // Landing page: choose the app language and click into an experience
+  // (Telco -> #/telco, FSI -> #/card, Knowledge Agent -> #/knowledge).
   if (showHome) {
     return <HomePage />;
   }
-  // Healthcare voice assistant (its own clinical theme).
-  if (showHls) {
-    return <HlsPage />;
+  // Databricks Knowledge Agent: cited platform Q&A (its own theme).
+  if (showKnowledge) {
+    return <KnowledgeAgentPage />;
   }
   // Full-screen tool surfaces (their own dark theme), rendered outside the
   // Sentient shell like dedicated tools.

@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   DeepDiveReport,
   RealtimeVoiceSession,
   startRealtimeVoice,
-  streamDeepDive,
 } from "../lib/realtimeVoice";
 import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
 import { getMe, useMe } from "../lib/me";
@@ -22,6 +21,7 @@ import {
 } from "../lib/cardAnalytics";
 import { API_BASE_URL, WS_BASE_URL } from "../config";
 import { getAppLanguage } from "../lib/appLanguage";
+import { emptyConversation, turnReducer } from "../lib/turnState";
 import { languageLabel, uiCopy, useUiLocale, type UiCopy } from "../i18n";
 import "../styles/card.css";
 
@@ -46,17 +46,6 @@ const AGENT_NAME = "Genie Agent";
 // Shown while the DEEP lane (Genie Agent Mode) is actively investigating, to make
 // the shift from the fast conversational agent to the deep reasoning agent visible.
 const DEEP_AGENT_NAME = "Genie Deep Reasoning Agent";
-// The client stall-watchdog is single-sourced from the SERVER: the deep-dive SSE
-// leads with a `meta` event carrying the server's read timeout, and we wait that
-// + a small buffer so the client can never give up before the server does. This
-// fallback only applies until that meta arrives (it should be the first event);
-// it is set above the server default (420s) for the same reason.
-const DEEP_DIVE_FALLBACK_TIMEOUT_MS = 435_000;
-const DEEP_DIVE_WATCHDOG_BUFFER_MS = 15_000;
-// How long to hold the stream open after the report for the translated text. A
-// measured Hindi swap landed 20s after the spoken summary, so this is a leak guard
-// with margin, not a budget: if it never lands, the English report simply stays.
-const DEEP_DIVE_LOCALIZE_GRACE_MS = 90_000;
 const BRAND = "EveryCard";
 
 // The caller picks the call language. We pin it as the EXPECTED language (same
@@ -178,6 +167,7 @@ function mmss(total: number): string {
 // Main component
 // ===========================================================================
 export function CardIssuerPage() {
+  const [, dispatchTurn] = useReducer(turnReducer, undefined, emptyConversation);
   // Agent-initiated: land straight in the live call (no intro hero) and connect,
   // so arriving from the Home concierge drops the caller directly into the call.
   const [phase, setPhase] = useState<Phase>("connecting");
@@ -216,18 +206,11 @@ export function CardIssuerPage() {
   const sessionRef = useRef<RealtimeVoiceSession | null>(null);
   const turnKeyRef = useRef(0);
   const factKeyRef = useRef(0);
-  // Every in-flight deep dive registers its cancel fn here so teardown / a
-  // language restart can stop them all (a single ref would leak concurrent dives).
-  const deepDiveCancelsRef = useRef<Set<() => void>>(new Set());
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   // Stable call id (so a mid-call language restart keeps the same traced call) and
   // the live call language, both read from inside session callbacks.
   const callIdRef = useRef<string | null>(null);
   const callLanguageRef = useRef<string>(getAppLanguage());
-  // Count of in-flight Agent-Mode deep dives. While > 0 the mic stays CLOSED for
-  // the whole investigation window (tens of seconds) so speaker audio / ambient
-  // noise can't create phantom turns that surface as "random" TTS afterward.
-  const runningDeepDivesRef = useRef(0);
   // The caller's most recent sentence, read from inside session callbacks so a deep
   // dive can echo what they actually asked.
   const lastCustomerTextRef = useRef<string>("");
@@ -237,8 +220,7 @@ export function CardIssuerPage() {
   const greetingCacheRef = useRef<Map<string, string>>(new Map());
 
   // Shared half-duplex plumbing (playback queue + mic gating), identical to the
-  // billing cockpit. The mic stays closed for the whole Agent-Mode window and the
-  // orb/state flip to speaking/listening via these callbacks.
+  // billing cockpit. Orb/state flip to speaking/listening via these callbacks.
   const {
     playbackRef,
     micGatedRef,
@@ -246,6 +228,7 @@ export function CardIssuerPage() {
     gateMic,
     ungateMicAfter,
     handleResponseAudio,
+    handlePlaybackStop,
     interimText,
     handleInterimTranscript,
     interrupt,
@@ -253,17 +236,12 @@ export function CardIssuerPage() {
     teardownPlayback,
   } = useHalfDuplexVoice({
     sessionRef,
-    shouldStayGated: () => runningDeepDivesRef.current > 0,
+    shouldStayGated: () => false,
     onMicResume: () => setAgentState("listening"),
     onSpeaking: () => setAgentState("speaking"),
     callLanguageRef,
     isCallLive: () => phase !== "idle",
     closeSession: () => {
-      // Abandon in-flight Agent-Mode runs: their reports would arrive in the
-      // language we just left, and their cancels belong to the old session.
-      deepDiveCancelsRef.current.forEach((c) => c());
-      deepDiveCancelsRef.current.clear();
-      runningDeepDivesRef.current = 0;
       sessionRef.current?.close();
       sessionRef.current = null;
       setSessionId(null);
@@ -322,9 +300,6 @@ export function CardIssuerPage() {
   }, [agentState]);
 
   const teardown = useCallback(() => {
-    deepDiveCancelsRef.current.forEach((c) => c());
-    deepDiveCancelsRef.current.clear();
-    runningDeepDivesRef.current = 0;
     sessionRef.current?.close();
     sessionRef.current = null;
     // Stops scheduled buffers immediately (no lingering audio after End) + clears
@@ -333,11 +308,9 @@ export function CardIssuerPage() {
   }, [teardownPlayback]);
 
   // Speak agent text (greeting / deep-dive summary) through the SAME voice
-  // session via a synthesize turn, so it shares the session's locked voice
-  // reference — the caller hears ONE consistent voice for the whole call rather
-  // than a separate TTS-socket timbre. Audio returns as response.audio events,
-  // which handleResponseAudio plays and half-duplex mic-gates. We flush first so
-  // any stray/echo PCM can't play right before the clean line.
+  // session via synthesize. Progressive: if a turn is already working (Agent
+  // Mode), the server injects TTS on the same turn_id without cancelling work.
+  // Audio returns as response.audio; half-duplex mic-gates until turn_final.
   const speakViaTTS = useCallback((text: string) => {
     const session = sessionRef.current;
     if (!session || !text.trim()) return;
@@ -371,169 +344,6 @@ export function CardIssuerPage() {
     }
   }, [persona]);
 
-
-  const runDeepDive = useCallback(
-    (question: string, useCase: string | null) => {
-      const id = `inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      let stepKey = 0;
-      const newInv: Investigation = {
-        id, question, useCase,
-        // Echo the caller's own sentence rather than the English question the LLM
-        // wrote for Genie, which on a non-English call is the one line in the panel
-        // they didn't say and can't read.
-        spokenQuestion: lastCustomerTextRef.current || null,
-        status: "running", startedAt: Date.now(), elapsed: 0, steps: [],
-      };
-      setInvestigations((prev) => new Map(prev).set(id, newInv));
-      // Keep the mic CLOSED for the whole Agent-Mode run (can be tens of seconds).
-      runningDeepDivesRef.current += 1;
-      gateMic();
-
-      // Each dive settles EXACTLY once (report | error | done-without-report |
-      // watchdog timeout). Without this a stalled Agent-Mode stream — heartbeats
-      // keep the EventSource open but no `report` ever lands — left the box spinning
-      // forever and the mic gated, so follow-up questions "got stuck".
-      let settled = false;
-      let cancel = () => {};
-      let watchdog = 0;
-      const closeStream = () => {
-        window.clearTimeout(watchdog);
-        cancel();
-        deepDiveCancelsRef.current.delete(cancel);
-      };
-      // `keepStream` settles the VOICE while leaving the stream open for the
-      // translated report, which lands a few seconds after the spoken summary.
-      const settle = (spoken: string | null, keepStream = false) => {
-        if (settled) return;
-        settled = true;
-        if (keepStream) {
-          // Nothing else can rescue this dive now, so bound the extra wait rather
-          // than leaking an EventSource if the swap event never comes.
-          window.clearTimeout(watchdog);
-          watchdog = window.setTimeout(closeStream, DEEP_DIVE_LOCALIZE_GRACE_MS);
-        } else {
-          closeStream();
-        }
-        runningDeepDivesRef.current = Math.max(0, runningDeepDivesRef.current - 1);
-        // speakViaTTS re-opens the mic when it finishes (and only if no other deep
-        // dive is still running); if there's nothing to speak, re-open directly.
-        if (spoken) void speakViaTTS(spoken);
-        else ungateMicAfter(300);
-      };
-      const failInv = (message: string) => {
-        setInvestigations((prev) => {
-          const m = new Map(prev);
-          const inv = m.get(id);
-          if (inv && inv.status === "running") {
-            m.set(id, { ...inv, status: "error", errorMessage: message, elapsed: Date.now() - inv.startedAt });
-          }
-          return m;
-        });
-      };
-
-      const armWatchdog = (ms: number) => {
-        window.clearTimeout(watchdog);
-        watchdog = window.setTimeout(() => {
-          if (settled) return;
-          failInv("This is taking longer than usual — please ask the question again.");
-          settle(null);
-        }, ms);
-      };
-
-      cancel = streamDeepDive(API_BASE_URL, question, useCase, {
-        // Re-arm the watchdog off the server's single-source timeout (+ buffer)
-        // so client and server can't disagree on when a run has stalled.
-        onMeta: (timeoutMs) => armWatchdog(timeoutMs + DEEP_DIVE_WATCHDOG_BUFFER_MS),
-        onStep: (step, text) => {
-          if (settled || !text.trim()) return;
-          stepKey += 1;
-          const key = stepKey;
-          setInvestigations((prev) => {
-            const m = new Map(prev);
-            const inv = m.get(id);
-            if (inv && inv.status === "running") {
-              m.set(id, { ...inv, steps: [...inv.steps, { kind: step, text, key }], elapsed: Date.now() - inv.startedAt });
-            }
-            return m;
-          });
-        },
-        onReport: (report) => {
-          if (settled) return;
-          setInvestigations((prev) => {
-            const m = new Map(prev);
-            const inv = m.get(id);
-            if (inv) m.set(id, { ...inv, status: "done", report, elapsed: Date.now() - inv.startedAt });
-            return m;
-          });
-          // The spoken "why" is the backend LLM summary ONLY — it names the cause
-          // in the caller's language. If it's unavailable we stay silent (the full
-          // report is on screen) rather than speak an English-only heuristic.
-          settle(report.spokenSummary || null, report.localizationPending);
-        },
-        // Streamed translation chunks: append in order so the localized report
-        // paints progressively in the panel (which opened empty — no English
-        // flash). Each chunk is activity, so push back the grace watchdog.
-        onReportLocalizedDelta: (delta) => {
-          if (!delta) return;
-          window.clearTimeout(watchdog);
-          watchdog = window.setTimeout(closeStream, DEEP_DIVE_LOCALIZE_GRACE_MS);
-          setInvestigations((prev) => {
-            const m = new Map(prev);
-            const inv = m.get(id);
-            if (inv?.report) {
-              m.set(id, {
-                ...inv,
-                report: { ...inv.report, report: inv.report.report + delta },
-              });
-            }
-            return m;
-          });
-        },
-        // The authoritative full text in the caller's language: replace whatever
-        // the deltas built (correcting any loss) and clear the pending flag.
-        onReportLocalized: (text) => {
-          if (text.trim()) {
-            setInvestigations((prev) => {
-              const m = new Map(prev);
-              const inv = m.get(id);
-              if (inv?.report) {
-                m.set(id, {
-                  ...inv,
-                  report: { ...inv.report, report: text, localizationPending: false },
-                });
-              }
-              return m;
-            });
-          }
-          closeStream();
-        },
-        onError: (message) => {
-          if (settled) return;
-          failInv(message);
-          settle(null);
-        },
-        // A `done` with no preceding `report` means the stream ended empty — resolve
-        // the box instead of leaving it running.
-        onDone: () => {
-          if (settled) return;
-          failInv("The investigation ended without a result. Please ask again.");
-          settle(null);
-        },
-      }, {
-        callId: callIdRef.current,
-        sessionId: sessionRef.current?.sessionId ?? null,
-        customerId: persona.customerId,
-        language: callLanguageRef.current,
-      });
-      deepDiveCancelsRef.current.add(cancel);
-
-      // Fallback watchdog until the server's `meta` timeout arrives (first event);
-      // onMeta re-arms it to the server value + buffer.
-      armWatchdog(DEEP_DIVE_FALLBACK_TIMEOUT_MS);
-    },
-    [persona, speakViaTTS, gateMic, ungateMicAfter]
-  );
-
   useEffect(() => () => teardown(), [teardown]);
 
   const endCall = useCallback(() => {
@@ -546,7 +356,19 @@ export function CardIssuerPage() {
 
   const pushTurn = useCallback((role: "agent" | "customer", text: string, turnId: number) => {
     turnKeyRef.current += 1;
-    setTurns((prev) => [...prev, { role, text, turnId, key: turnKeyRef.current }]);
+    const key = turnKeyRef.current;
+    // Progressive: upsert one bubble per turn_id (agent text can refine in-place).
+    setTurns((prev) => {
+      if (role === "agent" && turnId > 0) {
+        const idx = prev.findIndex((t) => t.role === "agent" && t.turnId === turnId);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = { ...next[idx], text, key };
+          return next;
+        }
+      }
+      return [...prev, { role, text, turnId, key }];
+    });
   }, []);
 
   // Open (or re-open) the realtime voice session in `language`. Shared by the
@@ -587,6 +409,7 @@ export function CardIssuerPage() {
         onSpeechStarted: () => setAgentState("listening"),
         onTurnStarted: () => setAgentState((s) => (s === "speaking" ? s : "thinking")),
         onTranscript: (text, _language, turnId) => {
+          dispatchTurn({ type: "user_transcript", turnId, text });
           // A valid (on-language) transcript arrived — clear any prior warning.
           setLangMismatch(null);
           if (text.trim()) {
@@ -595,6 +418,7 @@ export function CardIssuerPage() {
           }
         },
         onResponseText: (text, turnId) => {
+          dispatchTurn({ type: "response_text", turnId, text });
           if (text.trim()) pushTurn("agent", text, turnId);
         },
         // Language gate fired: STT heard a different language than the call's.
@@ -602,10 +426,136 @@ export function CardIssuerPage() {
         onLanguageMismatch: (expected, detected) => {
           setLangMismatch({ expected, detected });
         },
-        onResponseAudio: (pcmB64, sampleRate, final) => {
+        onResponseAudio: (pcmB64, sampleRate, final, _turnId, meta) => {
           // Half-duplex playback + mic gating (shared with billing): gate once for
-          // the response, enqueue, and schedule mic resume when the final chunk lands.
-          handleResponseAudio(pcmB64, sampleRate, final);
+          // the response, enqueue, and schedule mic resume when the turn completes.
+          handleResponseAudio(pcmB64, sampleRate, final, meta);
+        },
+        onPlaybackStop: (_turnId, speechEpoch, reason) => {
+          handlePlaybackStop(speechEpoch, reason);
+        },
+        onTurnEvent: ({ turnId, seq, kind, payload }) => {
+          dispatchTurn({ type: "turn_event", turnId, seq, kind, payload });
+          const id = `turn-${turnId}`;
+          // Shared long-answer rendering: the same runtime events drive both FSI
+          // Agent Mode reports and Knowledge/Genie One answers. The short localized
+          // summary is what the voice speaks; the full translation paints below it.
+          if (kind === "answer.render.started") {
+            setInvestigations((prev) => {
+              const next = new Map(prev);
+              const current = next.get(id);
+              if (current?.report) {
+                next.set(id, {
+                  ...current,
+                  report: {
+                    ...current.report,
+                    report: typeof payload.report === "string" ? payload.report : "",
+                    spokenSummary:
+                      typeof payload.summary === "string" ? payload.summary : null,
+                    localizationPending: payload.localization_pending === true,
+                  },
+                });
+              }
+              return next;
+            });
+            return;
+          }
+          if (kind === "answer.render.delta") {
+            const delta = typeof payload.delta === "string" ? payload.delta : "";
+            if (delta) {
+              setInvestigations((prev) => {
+                const next = new Map(prev);
+                const current = next.get(id);
+                if (current?.report) {
+                  next.set(id, {
+                    ...current,
+                    report: {
+                      ...current.report,
+                      report: current.report.report + delta,
+                      localizationPending: true,
+                    },
+                  });
+                }
+                return next;
+              });
+            }
+            return;
+          }
+          if (kind === "answer.render.completed") {
+            setInvestigations((prev) => {
+              const next = new Map(prev);
+              const current = next.get(id);
+              if (current?.report) {
+                next.set(id, {
+                  ...current,
+                  report: { ...current.report, localizationPending: false },
+                });
+              }
+              return next;
+            });
+            return;
+          }
+          if (payload.name !== "start_deep_dive") return;
+          if (kind === "action.started") {
+            const args =
+              payload.arguments && typeof payload.arguments === "object"
+                ? (payload.arguments as Record<string, unknown>)
+                : {};
+            const question =
+              typeof args.question === "string"
+                ? args.question
+                : lastCustomerTextRef.current || "Deep investigation";
+            setInvestigations((prev) => {
+              const next = new Map(prev);
+              next.set(id, {
+                id,
+                question,
+                useCase: selectedUseCase,
+                spokenQuestion: lastCustomerTextRef.current || null,
+                status: "running",
+                startedAt: Date.now(),
+                elapsed: 0,
+                steps: [{ kind: "reasoning", text: "Genie Agent Mode is investigating", key: 1 }],
+              });
+              return next;
+            });
+          } else if (kind === "action.completed") {
+            const result =
+              payload.result && typeof payload.result === "object"
+                ? (payload.result as Record<string, unknown>)
+                : {};
+            const tables = Array.isArray(result.tables)
+              ? (result.tables as Array<Record<string, unknown>>)
+              : [];
+            const report: DeepDiveReport = {
+              useCase: typeof result.use_case === "string" ? result.use_case : null,
+              status: typeof result.status === "string" ? result.status : "completed",
+              report: typeof result.report === "string" ? result.report : "",
+              spokenSummary: null,
+              tables,
+              sql: Array.isArray(result.sql) ? (result.sql as string[]) : [],
+              reasoning: Array.isArray(result.reasoning) ? (result.reasoning as string[]) : [],
+              error: result.error ?? null,
+              localizationPending: false,
+            };
+            setInvestigations((prev) => {
+              const next = new Map(prev);
+              const current = next.get(id);
+              if (current) {
+                next.set(id, {
+                  ...current,
+                  status: result.error ? "error" : "done",
+                  report,
+                  errorMessage:
+                    result.error && typeof result.error === "object"
+                      ? String((result.error as Record<string, unknown>).message ?? "Investigation failed")
+                      : undefined,
+                  elapsed: Date.now() - current.startedAt,
+                });
+              }
+              return next;
+            });
+          }
         },
         onToolCalled: (name, result) => {
           const r = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
@@ -620,8 +570,6 @@ export function CardIssuerPage() {
               { id, question: null, answer: r.answer as string, rows: r.rows as unknown[][], columns: r.columns as string[] },
               ...prev,
             ].slice(0, 6));
-          } else if (name === "start_deep_dive" && typeof r.question === "string") {
-            runDeepDive(r.question, (r.use_case as string) ?? null);
           }
         },
         onError: (code, message) => {
@@ -637,7 +585,7 @@ export function CardIssuerPage() {
       { profile: "card", startMicPaused: true }
     );
     sessionRef.current = session;
-  }, [persona, endCall, pushTurn, speakViaTTS, runDeepDive, gateMic, ungateMicAfter, fetchGreeting, handleInterimTranscript]);
+  }, [persona, endCall, pushTurn, speakViaTTS, ungateMicAfter, fetchGreeting, handleInterimTranscript, handleResponseAudio, handlePlaybackStop, selectedUseCase]);
 
   const startCall = useCallback(async () => {
     setError(null);
@@ -651,7 +599,6 @@ export function CardIssuerPage() {
     setCallSeconds(0);
     setAgentState("greeting");
     setPhase("connecting");
-    runningDeepDivesRef.current = 0;
     callIdRef.current = `card-${persona.customerId}-${Date.now()}`;
 
     // Fast lane: fetch the 360 profile immediately so the canvas is never blank.

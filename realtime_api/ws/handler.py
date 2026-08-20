@@ -23,6 +23,7 @@ from ..pipelines import speech_llm_toolassist_speech as assist_pipeline
 from ..pipelines import speech_to_text as stt_pipeline
 from ..pipelines import text_to_speech as tts_pipeline
 from ..session import VoiceSession
+from ..voice_identity import load_voice_seed
 
 logger = logging.getLogger(__name__)
 
@@ -138,9 +139,26 @@ async def handle_voice_ws(
                         and not task.done()
                         and session.voiced_ms >= settings.barge_in_ms
                     ):
+                        parent_turn_id = session.turn_id
+                        parent_goal = ""
+                        active_meta = getattr(getattr(session, "active_turn", None), "meta", {})
+                        if isinstance(active_meta, dict):
+                            parent_goal = str(active_meta.get("utterance") or "")
                         task.cancel()
                         log_event("barge_in", session_id=session_id, turn_id=session.turn_id)
-                        await websocket.send_json({"type": "playback.stop", "turn_id": session.barge_in()})
+                        session.profile_state["_pending_barge"] = {
+                            "parent_turn_id": parent_turn_id,
+                            "parent_goal": parent_goal,
+                        }
+                        new_turn = session.barge_in(reserve_new_turn=False)
+                        await websocket.send_json(
+                            {
+                                "type": "playback.stop",
+                                "turn_id": new_turn,
+                                "speech_epoch": session.speech_epoch,
+                                "reason": "barge_in",
+                            }
+                        )
                     continue
                 if began:
                     log_event("speech.started", session_id=session_id, turn_id=session.turn_id + 1)
@@ -211,6 +229,31 @@ async def handle_voice_ws(
                     continue
                 session = VoiceSession(start)
                 session.session_id = session_id
+                # Pin the selected app-wide voice from a server-owned allowlist.
+                # Every page sends the same persisted variant key at session.start;
+                # it cannot supply a path. The legacy clip is only a deployment
+                # fallback until both committed variants are present.
+                variant_paths = {
+                    "female": settings.voice_reference_female_path,
+                    "male": settings.voice_reference_male_path,
+                }
+                voice_seed = load_voice_seed(variant_paths[start.voice_variant])
+                if voice_seed is None:
+                    voice_seed = load_voice_seed(settings.voice_reference_path)
+                if voice_seed is not None:
+                    session.voice_reference_b64 = voice_seed.reference_b64
+                    session.voice_id = voice_seed.voice_id
+                # Bind OBO principal from Apps forwarded access token (or local
+                # GENIE_OBO_LOCAL_TOKEN stand-in). Genie paths fail closed without it.
+                from ..runtime.identity import resolve_session_principal
+
+                session.principal = resolve_session_principal(websocket.headers)
+                # Who supplies conversational continuity for governed workspace
+                # turns. Once Genie One's own memory/recall does, this runtime stops
+                # carrying a conversation handle (see runtime.workspace_conversation).
+                session.workspace_conversation.upstream_memory = (
+                    settings.genie_one_upstream_memory
+                )
                 # Manual turn mode: the client explicitly took ownership of the
                 # end-of-turn boundary (``endpointing: false``), so the server does
                 # no automatic finalization and waits for ``audio.end``. Anything
@@ -228,11 +271,17 @@ async def handle_voice_ws(
                         min_speech_ms=settings.min_speech_ms,
                         expected_language=start.expected_language,
                     )
+                has_obo = bool(getattr(session.principal, "has_token", False))
                 log_event(
                     "session.start",
                     session_id=session_id,
                     language=session.config.language,
                     expected_language=session.config.expected_language,
+                    has_obo=has_obo,
+                    # Same id on every session is the signal that the fixed voice is
+                    # live; a null means this session will bootstrap its own.
+                    voice_id=session.voice_id,
+                    voice_variant=start.voice_variant,
                 )
                 await websocket.send_json(
                     {
@@ -242,6 +291,9 @@ async def handle_voice_ws(
                         "language": session.config.language,
                         "sample_rate_hz": session.config.sample_rate_hz,
                         "supported_languages": list(settings.supported_languages),
+                        "progressive_runtime": bool(settings.progressive_runtime),
+                        "voice_variant": start.voice_variant,
+                        "voice_id": session.voice_id,
                     }
                 )
                 # Pre-warm the spoken filler for the selected language while the
@@ -297,8 +349,22 @@ async def handle_voice_ws(
                     continue
                 if task and not task.done():
                     task.cancel()
+                if session.active_turn is not None:
+                    try:
+                        session.active_turn.cancel_turn()  # type: ignore[union-attr]
+                    except Exception:  # noqa: BLE001
+                        pass
+                session.set_idle()
                 log_event("barge_in", session_id=session_id, turn_id=session.turn_id)
-                await websocket.send_json({"type": "playback.stop", "turn_id": session.barge_in()})
+                new_turn = session.barge_in(reserve_new_turn=False)
+                await websocket.send_json(
+                    {
+                        "type": "playback.stop",
+                        "turn_id": new_turn,
+                        "speech_epoch": session.speech_epoch,
+                        "reason": "barge_in",
+                    }
+                )
             elif event_type == "session.stop":
                 if session is not None and session.audio and not session.busy:
                     task = await _start_audio_turn(
@@ -321,7 +387,14 @@ async def handle_voice_ws(
             # longer than one LLM turn budget (+5s buffer) — derived from the same
             # config value the pipeline enforces, so the two can't disagree.
             try:
-                await asyncio.wait_for(task, timeout=settings.llm_turn_timeout_s + 5)
+                await asyncio.wait_for(
+                    task,
+                    timeout=max(
+                        settings.llm_turn_timeout_s,
+                        settings.deep_dive_read_timeout_s,
+                    )
+                    + 5,
+                )
             except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
                 task.cancel()
         try:
@@ -385,7 +458,50 @@ async def _start_audio_turn(
     if previous_task and not previous_task.done():
         previous_task.cancel()
     turn_id, audio = finished
-    session.busy = True
+    pretranscribed: tuple[str, str | None, int] | None = None
+    pending_barge = session.profile_state.pop("_pending_barge", None)
+    if isinstance(pending_barge, dict):
+        from ..pipelines._shared import transcribe
+        from ..runtime import classify_barge_intent
+
+        pretranscribed = await transcribe(bundle, session, audio)
+        transcript = pretranscribed[0]
+        intent = classify_barge_intent(
+            transcript,
+            active_goal=str(pending_barge.get("parent_goal") or "") or None,
+        )
+        parent_turn_id = int(pending_barge.get("parent_turn_id") or max(0, turn_id - 1))
+        log_event(
+            f"barge.{intent}",
+            session_id=session_id,
+            turn_id=parent_turn_id,
+            metric=f"barge_{intent}",
+        )
+        if intent == "stop":
+            session.turn_id = parent_turn_id
+            session.set_completed()
+            await websocket.send_json(
+                {
+                    "type": "turn.event",
+                    "turn_id": parent_turn_id,
+                    "seq": 1,
+                    "kind": "turn.cancelled",
+                    "payload": {"reason": "user_stop"},
+                }
+            )
+            return previous_task
+        if intent == "amend":
+            # Same logical turn id; work is restarted with the original utterance
+            # already present in history plus this amendment.
+            session.turn_id = parent_turn_id
+            turn_id = parent_turn_id
+    session.set_working()
+    from ..runtime import SpeechScheduler, TurnState
+
+    session.active_turn = TurnState(turn_id=turn_id)
+    if pretranscribed is not None:
+        session.active_turn.meta["pretranscribed"] = pretranscribed
+    session.speech_scheduler = SpeechScheduler()
     if on_turn_audio is not None:
         on_turn_audio(audio, turn_id, session.config.sample_rate_hz, session_id)
     log_event(
@@ -414,17 +530,89 @@ async def _start_synthesize_turn(
     text: str,
     language: object,
 ) -> asyncio.Task | None:
+    """Speak ``text``.
+
+    Progressive rule: if a turn is already ``working``, inject TTS on the same
+    ``turn_id`` without cancelling the investigation or bumping the id. Idle
+    sessions open a fresh synthesize turn as before.
+    """
+    lang = str(language) if language else None
+    # Same-turn inject: active work must not be killed by spoken summaries.
+    if previous_task and not previous_task.done() and session.busy:
+        turn_id = session.turn_id
+        scheduler = session.speech_scheduler
+        if scheduler is not None:
+            from ..runtime import SpeechKind, SpeechRequest
+
+            if not scheduler.accept(SpeechRequest(kind=SpeechKind.INJECT, text=text)):
+                log_event(
+                    "speech.inject.skipped",
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    reason="budget",
+                )
+                return previous_task
+        log_event("speech.inject", session_id=session_id, turn_id=turn_id)
+        # Supersede any in-flight TTS for this turn (filler/progress/answer), tell
+        # the client to flush, then speak the inject under the new speech_epoch.
+        # Same turn_id is intentional (investigation continues); speech_epoch is
+        # what prevents two voices overlapping.
+        epoch = session.bump_speech_epoch()
+        try:
+            await websocket.send_json(
+                {
+                    "type": "playback.stop",
+                    "turn_id": turn_id,
+                    "speech_epoch": epoch,
+                    "reason": "inject",
+                }
+            )
+        except (WebSocketDisconnect, RuntimeError):
+            return previous_task
+        # Fire-and-forget inject; keep tracking the primary turn task.
+        asyncio.create_task(
+            _emit_synthesize_inject(websocket, bundle, session, turn_id, text, lang, session_id)
+        )
+        return previous_task
+
     if previous_task and not previous_task.done():
         previous_task.cancel()
     session.turn_id += 1
     turn_id = session.turn_id
-    session.busy = True
+    session.set_working()
     log_event("turn.started", session_id=session_id, turn_id=turn_id, capability=TEXT_TO_SPEECH)
     await websocket.send_json({"type": "turn.started", "turn_id": turn_id})
-    lang = str(language) if language else None
     return asyncio.create_task(
         _emit_synthesize_turn(websocket, bundle, session, turn_id, text, lang, session_id)
     )
+
+
+async def _emit_synthesize_inject(
+    websocket: WebSocket,
+    bundle: ServingBundle,
+    session: VoiceSession,
+    turn_id: int,
+    text: str,
+    language: str | None,
+    session_id: str,
+) -> None:
+    """Same-turn TTS: segment_final only — does not complete or cancel the turn."""
+    try:
+        async for event in tts_pipeline.process_turn(
+            bundle, session, turn_id, text, language=language, mark_final=False
+        ):
+            if turn_id != session.turn_id:
+                return
+            await websocket.send_json(event)
+    except asyncio.CancelledError:
+        log_event("speech.inject.cancelled", session_id=session_id, turn_id=turn_id)
+        raise
+    except (WebSocketDisconnect, RuntimeError):
+        log_event("speech.inject.aborted", session_id=session_id, turn_id=turn_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("synthesize inject turn %d failed", turn_id)
+        log_event("speech.inject.error", session_id=session_id, turn_id=turn_id, error=repr(exc))
+
 
 
 async def _emit_audio_turn(
@@ -491,7 +679,7 @@ async def _emit_audio_turn(
         except (RuntimeError, WebSocketDisconnect):
             pass
     finally:
-        session.busy = False
+        session.set_idle()
         session.discard_buffer()
 
 
@@ -534,7 +722,7 @@ async def _emit_synthesize_turn(
         except (RuntimeError, WebSocketDisconnect):
             pass
     finally:
-        session.busy = False
+        session.set_idle()
 
 
 async def _audio_pipeline(

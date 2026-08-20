@@ -20,9 +20,6 @@ class IndustryRoute:
     """One destination the voice concierge can route a caller to."""
 
     key: str
-    # Spoken cues that select this destination. Multi-word cues match as
-    # substrings, single words on a word boundary.
-    cues: tuple[str, ...]
     # Instruction (not a literal line) for the confirmation the agent speaks
     # before the UI navigates, rendered in the caller's language.
     confirm_label: str
@@ -32,20 +29,8 @@ class IndustryRoute:
 
 @dataclass(frozen=True)
 class ConciergeRouterConfig:
-    """The deterministic pre-router's thresholds and cue tables.
+    """Allowlisted Home destinations and their display/confirmation labels."""
 
-    These gate a *decision* — which industry a caller is sent to — so they belong
-    in config where a change is reviewable, not in literals inside the router.
-
-    ``languages`` declares the languages the cue table is authored for. It is
-    enforced at runtime, not just documented: the home page pins STT to English
-    today (short replies like "Telco" were being mis-detected as Hindi), and if
-    that pin is ever lifted the router must decline and defer to the model rather
-    than match English cues against a transcript in another language.
-    """
-
-    languages: tuple[str, ...]
-    max_selection_words: int
     industries: tuple[IndustryRoute, ...]
 
     def industry(self, key: str) -> IndustryRoute | None:
@@ -117,6 +102,15 @@ class RealtimeSettings:
     # (incl. Thai) at the lowest safe latency on GPU_MEDIUM.
     tts_inference_timesteps: int = 6
     tts_cfg_value: float = 2.0
+    # Allowlisted reference clips selected by ``SessionStart.voice_variant``.
+    # The chosen key persists in the browser and is sent by every page, while the
+    # server owns these paths so a client can never make it read an arbitrary file.
+    # Unset or unreadable clips fall back to the legacy reference below.
+    voice_reference_female_path: str = "realtime_api/assets/agent_voice_female.wav"
+    voice_reference_male_path: str = "realtime_api/assets/agent_voice_male.wav"
+    # Backward-compatible fallback while the two auditioned variants are being
+    # installed. It also keeps older deployments with one asset speaking.
+    voice_reference_path: str = "realtime_api/assets/agent_voice.wav"
     # --- Operator-tunable serving/turn timeouts (deploy-varying: cold-start +
     # provisioning differ per workspace/endpoint). Micro-timeouts (filler grace,
     # cooldowns) stay in code. All from realtime_voice.timeouts. -----------------
@@ -135,6 +129,16 @@ class RealtimeSettings:
     # tokens). Operator-tunable per the config policy (genie summarizer temp/tokens).
     deep_dive_summary_temperature: float = 0.3
     deep_dive_summary_max_tokens: int = 220
+    # Progressive Turn Runtime feature flag (per-process; packs may gate further).
+    progressive_runtime: bool = True
+    # Minimum confidence accepted from the multilingual semantic navigator.
+    # Lower-confidence or explicitly ambiguous proposals ask one clarification.
+    navigation_min_confidence: float = 0.80
+    # Set once Genie One supplies conversational continuity itself (Recall past
+    # conversations / Memory). This runtime then stops carrying a conversation
+    # handle between turns and asks every question standalone, letting Genie One
+    # resolve follow-ups from its own memory. See runtime.workspace_conversation.
+    genie_one_upstream_memory: bool = False
     # Token ceiling for translating the on-screen report into the caller's
     # language. It has to fit a WHOLE report (headings, tables, citations), so it
     # is an order of magnitude larger than the spoken summary's cap; too small and
@@ -168,9 +172,17 @@ class RealtimeSettings:
         llm_defaults = rv.get("llm_defaults") or {}
         tt = _turn_taking(rv)
         deep = rv.get("deep_dive") or {}
+        navigation = rv.get("navigation") or {}
         timeouts = rv.get("timeouts") or {}
         # Defaults come from the dataclass so config keys are optional overrides.
         d = cls(stt_endpoint=stt, llm_endpoint=llm, tts_endpoint=tts)
+        navigation_min_confidence = float(
+            navigation.get("min_confidence", d.navigation_min_confidence)
+        )
+        if not 0 <= navigation_min_confidence <= 1:
+            raise RuntimeError(
+                "realtime_voice.navigation.min_confidence must be between 0 and 1"
+            )
         return cls(
             stt_endpoint=stt,
             llm_endpoint=llm,
@@ -202,6 +214,18 @@ class RealtimeSettings:
             deep_dive_localize_max_tokens=int(
                 deep.get("localize_max_tokens", d.deep_dive_localize_max_tokens)
             ),
+            progressive_runtime=bool(rv.get("progressive_runtime", d.progressive_runtime)),
+            navigation_min_confidence=navigation_min_confidence,
+            genie_one_upstream_memory=bool(
+                rv.get("genie_one_upstream_memory", d.genie_one_upstream_memory)
+            ),
+            voice_reference_female_path=str(
+                rv.get("voice_reference_female_path", d.voice_reference_female_path)
+            ),
+            voice_reference_male_path=str(
+                rv.get("voice_reference_male_path", d.voice_reference_male_path)
+            ),
+            voice_reference_path=str(rv.get("voice_reference_path", d.voice_reference_path)),
             stt_languages=tuple(_first_supported(rv.get("stt_candidates"))),
             tts_languages=tuple(_first_supported(rv.get("tts_candidates"))),
             supported_languages=_supported_languages(rv),
@@ -260,27 +284,13 @@ def concierge_router_config(config_dir: str | Path | None = None) -> ConciergeRo
     if not block:
         raise RuntimeError("realtime_voice.concierge_router is not configured")
 
-    languages = tuple(str(x).strip().lower() for x in (block.get("languages") or ()) if str(x).strip())
-    if not languages:
-        raise RuntimeError("realtime_voice.concierge_router.languages must list at least one language")
-
-    try:
-        max_words = int(block.get("max_selection_words"))
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(
-            "realtime_voice.concierge_router.max_selection_words must be an integer"
-        ) from exc
-    if max_words < 1:
-        raise RuntimeError("realtime_voice.concierge_router.max_selection_words must be >= 1")
-
     industries: list[IndustryRoute] = []
     for key, spec in (block.get("industries") or {}).items():
-        cues = tuple(str(c).strip().lower() for c in (spec or {}).get("cues") or () if str(c).strip())
         confirm_label = str((spec or {}).get("confirm_label") or "").strip()
         label = str((spec or {}).get("label") or "").strip()
         missing = [
             name
-            for name, value in (("cues", cues), ("confirm_label", confirm_label), ("label", label))
+            for name, value in (("confirm_label", confirm_label), ("label", label))
             if not value
         ]
         if missing:
@@ -288,26 +298,16 @@ def concierge_router_config(config_dir: str | Path | None = None) -> ConciergeRo
                 f"realtime_voice.concierge_router.industries.{key} is missing: {', '.join(missing)}"
             )
         industries.append(
-            IndustryRoute(key=str(key).strip().lower(), cues=cues, confirm_label=confirm_label, label=label)
+            IndustryRoute(
+                key=str(key).strip().lower(),
+                confirm_label=confirm_label,
+                label=label,
+            )
         )
     if not industries:
         raise RuntimeError("realtime_voice.concierge_router.industries must define at least one industry")
 
-    # A cue matching two destinations can never route (the ambiguity gate declines
-    # it), so an overlap is a silent dead cue rather than a visible error.
-    seen: dict[str, str] = {}
-    for route in industries:
-        for cue in route.cues:
-            if cue in seen:
-                raise RuntimeError(
-                    f"realtime_voice.concierge_router: cue {cue!r} is claimed by both "
-                    f"{seen[cue]!r} and {route.key!r}; it could never route either"
-                )
-            seen[cue] = route.key
-
-    return ConciergeRouterConfig(
-        languages=languages, max_selection_words=max_words, industries=tuple(industries)
-    )
+    return ConciergeRouterConfig(industries=tuple(industries))
 
 
 def databricks_profile(config_dir: str | Path | None = None) -> str | None:

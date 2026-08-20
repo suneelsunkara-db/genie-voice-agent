@@ -15,9 +15,12 @@ async def process_turn(
     text: str,
     *,
     language: str | None = None,
+    mark_final: bool = True,
 ) -> AsyncIterator[dict]:
     lang = language or session.config.language
     if not lang or lang == "auto":
         lang = "en-US"
-    async for event in stream_tts(bundle, session, turn_id, text, lang):
+    async for event in stream_tts(
+        bundle, session, turn_id, text, lang, mark_final=mark_final
+    ):
         yield event

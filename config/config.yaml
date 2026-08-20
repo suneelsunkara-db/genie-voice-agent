@@ -263,6 +263,13 @@ realtime_voice:
     # delivery also destabilizes VoxCPM and garbles the audio, so keep it at 2.0
     # and address voice "tone" via a pinned reference clip instead of this knob.
     cfg_value: 2.0
+  # Two pinned, app-wide voice variants. The Home selection persists in the
+  # browser and every page sends only the allowlisted key ("female" or "male");
+  # the server owns these paths. Both clips are loudness-normalized at install.
+  voice_reference_female_path: realtime_api/assets/agent_voice_female.wav
+  voice_reference_male_path: realtime_api/assets/agent_voice_male.wav
+  # Legacy fallback while either variant has not yet been auditioned/installed.
+  voice_reference_path: realtime_api/assets/agent_voice.wav
   # Turn-taking / VAD timing knobs (previously code-only defaults). These tune how
   # the server decides a caller's turn is over and when a talk-over counts as a
   # barge-in. All optional — omitting a key keeps the built-in default shown here.
@@ -279,7 +286,26 @@ realtime_voice:
     predict_s: 45            # synchronous STT/LLM predict request timeout
     tts_stream_s: 180        # streaming TTS read timeout (a full reply can run long)
     llm_turn_s: 50           # budget for one LLM turn (cold-start + tool rounds)
-  # Async deep-dive (Genie Agent Mode) settings. `read_timeout_s` is the single
+  # Progressive Turn Runtime (segment_final/turn_final, same-turn inject, claims).
+  # Advertised on session.ready; packs may still gate adapters further.
+  progressive_runtime: true
+  # Multilingual semantic navigation. The model proposes one language-neutral
+  # capability ID; policy rejects lower-confidence/ambiguous proposals and asks
+  # one clarification. This is not keyword relevance and applies across languages.
+  navigation:
+    min_confidence: 0.80
+  # Who remembers a governed workspace conversation between turns. False: this
+  # runtime carries the Genie One conversation id forward, so a follow-up reaches the
+  # conversation that asked. True: Genie One supplies continuity itself (Recall past
+  # conversations / Memory) and every question is asked standalone. Flip this once
+  # that feature is enabled in the workspace — it is the only change required.
+  # https://docs.databricks.com/aws/en/genie-one/chat#add-to-genie-ones-memory
+  genie_one_upstream_memory: false
+  # Genie One shares `deep_dive.read_timeout_s` below. Measured workspace answers
+  # land between two and three and a half minutes, so a separate shorter cap only
+  # turns correct answers into timeouts; the caller is kept engaged by spoken
+  # progress instead. See realtime_api.runtime.engagement.
+  # Long-running deep-dive (Genie Agent Mode) settings. `read_timeout_s` is the single
   # source of truth for BOTH the server SSE read timeout and the client stall
   # watchdog (the client waits this + a small buffer), so they can't disagree.
   # `summary_*` tune the short spoken "why" summarizer (factual → low temp, capped).
@@ -310,29 +336,18 @@ realtime_voice:
   # to be reviewable. The router reports every gate — including the ones that
   # decline — to the turn's guardrail ledger.
   concierge_router:
-    # Languages the cue table below is authored for. ENFORCED, not documentation:
-    # the home page pins STT to English because short replies like "Telco" were
-    # being mis-detected as Hindi, and if that pin is ever lifted the router
-    # declines and defers to the model rather than matching English cues against
-    # another language. Adding a language here means translating every cue.
-    languages: [en]
-    # Only short, selection-style replies route deterministically; a longer
-    # utterance is a question ("what is healthcare?"), not a choice, so it goes to
-    # the model instead of being routed on a keyword.
-    max_selection_words: 8
+    # Allowlisted destinations only. Spoken selection is classified semantically
+    # against typed capability purposes; there is no language-specific cue table.
     industries:
       telco:
         label: "Telco — Billing Support"
         confirm_label: "Telco billing support"
-        cues: [telco, telecom, telecoms, billing, phone bill, phone, mobile, wireless, cellular]
       fsi:
         label: "Financial Services — Credit Card"
         confirm_label: "the credit-card assistant"
-        cues: [fsi, financial, finance, credit card, credit-card, card, bank, banking, statement]
-      healthcare:
-        label: "Healthcare"
-        confirm_label: "the healthcare assistant"
-        cues: [healthcare, health, clinical, clinic, patient, medical, claim, claims, coverage]
+      knowledge:
+        label: "Databricks Knowledge Agent"
+        confirm_label: "the Databricks Knowledge Agent"
   # Multilingual voice benchmark job targets this app's realtime WebSocket API and
   # writes scores to ``volume.multilingual_voice_benchmark_path``.
   benchmark:

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import io
 import re
 import time
@@ -13,6 +12,7 @@ from typing import AsyncIterator
 from ..languages import CATALOG, canonical_base, canonical_tag
 from ..session import VoiceSession
 from ..tracing import TurnTrace
+from ..voice_identity import voice_id_for
 from . import ServingBundle
 
 _SENTENCE_RE = re.compile(r"[^.!?。！？…\n]+(?:[.!?。！？…]+|\n|$)", re.UNICODE)
@@ -119,12 +119,24 @@ async def stream_tts(
     site, so every path that speaks reports the same latency metric. primary=False
     marks latency-covering audio (a filler), which ends the dead air without being
     the reply the caller is waiting for.
+
+    Captures ``session.speech_epoch`` at entry. If the epoch advances (barge-in or
+    same-turn inject), this generator stops and stamped events from the old epoch
+    are dropped by the client — so two voices never overlap.
     """
     reference_b64 = session.voice_reference_b64
     voice_id = session.voice_id
+    speech_epoch = session.speech_epoch
     # Capture this turn's audio only until the session has a locked-in voice.
     capture: bytearray | None = bytearray() if reference_b64 is None else None
     capture_sr = 48_000
+
+    def _stamp(event: dict) -> dict:
+        event["speech_epoch"] = speech_epoch
+        return event
+
+    def _superseded() -> bool:
+        return turn_id != session.turn_id or session.speech_epoch != speech_epoch
 
     if hasattr(bundle.tts, "synthesize_stream"):
         start = time.perf_counter()
@@ -143,7 +155,7 @@ async def stream_tts(
         tts_first_ms = None
         while True:
             chunk = await asyncio.to_thread(_next)
-            if turn_id != session.turn_id:
+            if _superseded():
                 stream.close()
                 return
             if chunk is None:
@@ -156,7 +168,16 @@ async def stream_tts(
                     capture.extend(chunk.pcm)
             if pending is not None:
                 first_text = text if (emit_text and index == 0) else None
-                event = pending.event(turn_id, chunk_index=index, final=False, text=first_text)
+                event = _stamp(
+                    pending.event(
+                        turn_id,
+                        chunk_index=index,
+                        final=False,
+                        segment_final=False,
+                        turn_final=False,
+                        text=first_text,
+                    )
+                )
                 if index == 0:
                     event["tts_first_ms"] = tts_first_ms
                 if trace is not None:
@@ -165,8 +186,21 @@ async def stream_tts(
                 index += 1
             pending = chunk
         if pending is not None:
+            if _superseded():
+                return
             first_text = text if (emit_text and index == 0) else None
-            event = pending.event(turn_id, chunk_index=index, final=mark_final, text=first_text)
+            # Last chunk of this TTS call: always segment_final; turn_final only
+            # when mark_final (answer complete). final mirrors turn_final.
+            event = _stamp(
+                pending.event(
+                    turn_id,
+                    chunk_index=index,
+                    final=mark_final,
+                    segment_final=True,
+                    turn_final=mark_final,
+                    text=first_text,
+                )
+            )
             if index == 0:
                 event["tts_first_ms"] = tts_first_ms
             if trace is not None:
@@ -178,6 +212,8 @@ async def stream_tts(
     sentences = split_sentences(text)
     total = len(sentences)
     for index, sentence in enumerate(sentences):
+        if _superseded():
+            return
         audio_response = await asyncio.to_thread(
             bundle.tts.synthesize,
             sentence,
@@ -185,40 +221,40 @@ async def stream_tts(
             reference_audio_b64=reference_b64,
             voice_id=voice_id,
         )
-        if turn_id != session.turn_id:
+        if _superseded():
             return
         # The non-streaming path already returns a full WAV; lock it as-is.
         if session.voice_reference_b64 is None and audio_response.audio:
             session.voice_reference_b64 = base64.b64encode(audio_response.audio).decode("ascii")
-            session.voice_id = _voice_id_for(audio_response.audio)
+            session.voice_id = voice_id_for(audio_response.audio)
             reference_b64 = session.voice_reference_b64
             voice_id = session.voice_id
         is_last = index == total - 1
-        event = audio_response.event(
-            turn_id,
-            chunk_index=index,
-            final=is_last and mark_final,
-            text=sentence if emit_text else None,
+        event = _stamp(
+            audio_response.event(
+                turn_id,
+                chunk_index=index,
+                final=is_last and mark_final,
+                segment_final=is_last,
+                turn_final=is_last and mark_final,
+                text=sentence if emit_text else None,
+            )
         )
         if trace is not None:
             trace.note_audio(event, primary=primary)
         yield event
 
 
-def _voice_id_for(wav_bytes: bytes) -> str:
-    """Stable cache key for a reference clip, derived from its own bytes.
-
-    Content-addressed rather than session-scoped so the same voice reuses one
-    cache entry, and a changed clip can never collide with the previous one.
-    """
-    return hashlib.sha256(wav_bytes).hexdigest()[:32]
-
-
 def _lock_voice_reference(session: VoiceSession, pcm: bytes, sample_rate_hz: int) -> None:
     """Wrap the first turn's PCM as a WAV and store it as the session's voice.
 
-    No-op once a reference exists (locked once, reused for the whole call) or
-    when the turn produced no audio (retry on the next turn).
+    Fallback path only: sessions are normally seeded at ``session.start`` from the
+    committed reference clip (see ``voice_identity``), which makes this a no-op via
+    the guard below. It still matters when no clip is configured or readable —
+    the voice is then at least stable for the rest of the call, instead of drifting
+    turn to turn.
+
+    Also a no-op when the turn produced no audio (retry on the next turn).
     """
     if session.voice_reference_b64 is not None or not pcm:
         return
@@ -230,4 +266,4 @@ def _lock_voice_reference(session: VoiceSession, pcm: bytes, sample_rate_hz: int
         handle.writeframes(pcm)
     wav_bytes = buffer.getvalue()
     session.voice_reference_b64 = base64.b64encode(wav_bytes).decode("ascii")
-    session.voice_id = _voice_id_for(wav_bytes)
+    session.voice_id = voice_id_for(wav_bytes)
