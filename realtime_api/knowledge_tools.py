@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from .tool_registry import ToolContext, attach_session_identity, register, run_tool, tools_spec
@@ -530,23 +532,91 @@ def search_knowledge(query: str, limit: int = 3) -> list[dict[str, Any]]:
     ]
 
 
-def knowledge_topics() -> list[dict[str, Any]]:
-    """The questions the page publishes, in display order — all Genie One.
+_TOPIC_LOCALES_PATH = Path(__file__).resolve().parent / "phrases" / "knowledge_topics.json"
+
+
+@lru_cache(maxsize=1)
+def _topic_locales() -> dict[str, Any]:
+    """Offline-reviewed display translations keyed by BCP-47 language tag."""
+    try:
+        loaded = json.loads(_TOPIC_LOCALES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _topic_locale(language: str | None) -> dict[str, Any]:
+    """Resolve one display catalog without ever making localization a runtime call."""
+    from genie_voice.i18n import content_language
+
+    try:
+        tag = content_language(language)
+    except ValueError:
+        tag = "en-US"
+    catalog = _topic_locales()
+    localized = catalog.get(tag)
+    if isinstance(localized, dict):
+        return localized
+    base = tag.split("-", 1)[0].lower()
+    return next(
+        (
+            value
+            for key, value in catalog.items()
+            if key.split("-", 1)[0].lower() == base and isinstance(value, dict)
+        ),
+        {},
+    )
+
+
+def knowledge_categories(language: str = "en-US") -> list[str]:
+    """Category headings in stable order, localized for display."""
+    locale = _topic_locale(language)
+    labels = locale.get("categories")
+    if not isinstance(labels, dict):
+        labels = {}
+    return [str(labels.get(category) or category) for category in KNOWLEDGE_CATEGORIES]
+
+
+def knowledge_topics(language: str = "en-US") -> list[dict[str, Any]]:
+    """The localized questions the page publishes, in display order — all Genie One.
 
     Only the workspace lane is published: every card is a live round-trip against
     the caller's own governed workspace. ``preview`` says what asking will DO, and
     there is deliberately no canned answer — the answer only exists once Genie One
     runs, so the page can never show a number the workspace did not produce. The
     docs corpus stays behind the spoken concept lane, not on screen.
+
+    Display text is selected from a committed offline catalog. The canonical English
+    question travels separately as ``canonical_question`` for stable content identity
+    and auditing; ``question`` is the caller-language version and is the one a future
+    click-to-ask interaction should send.
     """
+    locale = _topic_locale(language)
+    category_labels = locale.get("categories")
+    topic_labels = locale.get("topics")
+    if not isinstance(category_labels, dict):
+        category_labels = {}
+    if not isinstance(topic_labels, dict):
+        topic_labels = {}
+
     return [
         {
             "id": prompt["id"],
-            "category": prompt["category"],
-            "topic": prompt["topic"],
-            "question": prompt["question"],
-            "preview": prompt["preview"],
-            "source": prompt["source"],
+            "category": str(category_labels.get(prompt["category"]) or prompt["category"]),
+            "topic": str(
+                (topic_labels.get(prompt["id"]) or {}).get("topic") or prompt["topic"]
+            ),
+            "question": str(
+                (topic_labels.get(prompt["id"]) or {}).get("question")
+                or prompt["question"]
+            ),
+            "canonical_question": prompt["question"],
+            "preview": str(
+                (topic_labels.get(prompt["id"]) or {}).get("preview") or prompt["preview"]
+            ),
+            "source": str(
+                (topic_labels.get(prompt["id"]) or {}).get("source") or prompt["source"]
+            ),
             "lane": "workspace",
         }
         for prompt in WORKSPACE_PROMPTS

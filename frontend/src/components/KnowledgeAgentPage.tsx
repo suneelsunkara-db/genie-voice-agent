@@ -58,6 +58,8 @@ type Topic = {
   category: string;
   topic: string;
   question: string;
+  /** Stable English source identity for auditing; never shown to the caller. */
+  canonical_question: string;
   source: string;
   lane: string;
   preview: string;
@@ -219,9 +221,15 @@ export function KnowledgeAgentPage() {
 
   useEffect(() => {
     let active = true;
+    // Never leave the previous language's cards under newly localized chrome
+    // while the static catalog request is in flight.
+    setTopics([]);
+    setCategories([]);
     void (async () => {
       try {
-        const r = await fetch(`${API_BASE_URL}/knowledge/corpus`);
+        const r = await fetch(
+          `${API_BASE_URL}/knowledge/corpus?language=${encodeURIComponent(callLanguage)}`
+        );
         const data = (await r.json()) as { topics?: Topic[]; categories?: string[] };
         if (active) {
           setTopics(data.topics ?? []);
@@ -238,7 +246,7 @@ export function KnowledgeAgentPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [callLanguage]);
 
   const fetchGreeting = useCallback(async (language: string): Promise<string> => {
     const cached = greetingRef.current.get(language);

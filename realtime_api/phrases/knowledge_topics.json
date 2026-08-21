@@ -1,0 +1,3218 @@
+{
+  "ar-SA": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "التغطية والنطاق",
+      "Data & Trust": "البيانات والثقة",
+      "Answers & Explainability": "الإجابات وقابلية التفسير",
+      "Documents & Connectors": "المستندات والموصلات",
+      "Actions & Automation": "الإجراءات والأتمتة",
+      "Limits & Boundaries": "الحدود والقيود",
+      "Platform & Concepts": "المنصة والمفاهيم"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "ما يمكنني الإجابة عنه",
+        "question": "ما أنواع أسئلة الأعمال التي يمكنك الإجابة عنها باستخدام البيانات التي أستطيع الوصول إليها؟",
+        "preview": "يعرض Genie One أنواع الأسئلة التي يمكنه التعامل معها من البيانات التي تصل إليها صلاحياتك — ضمن نطاقك أنت، وليس الكتالوج بالكامل.",
+        "source": "Genie One · المجالات المتاحة"
+      },
+      "domain-inventory": {
+        "topic": "ما المتاح لي",
+        "question": "ما مجالات الأعمال وGenie Agents وdashboard وmetric view والاستعلامات المتاحة لي؟",
+        "preview": "يعرض الأصول المحكومة التي يمكنك استخدامها فعليًا: مجالات الأعمال وGenie Agents وdashboard وmetric view والاستعلامات المحفوظة.",
+        "source": "Genie One · جرد المجالات والأصول"
+      },
+      "analysis-types": {
+        "topic": "التحليل المدعوم",
+        "question": "ما أنواع التحليل المدعومة عبر هذه المجالات؟",
+        "preview": "يصف التحليلات التي يدعمها لكل مجال — التجميع، والاتجاهات، والمقارنة، والترتيب، والمجموعات — بدلاً من تقديم وعود عامة.",
+        "source": "Genie One · إمكانات التحليل"
+      },
+      "combine-domains": {
+        "topic": "دمج المجالات",
+        "question": "ما المجالات التي يمكنك دمجها عند الإجابة عن سؤال؟",
+        "preview": "يحدد المجالات التي يمكنه ربطها في إجابة واحدة، وأين توجد علاقة محكومة يمكن استخدامها للربط بينها.",
+        "source": "Genie One · عمليات الربط بين المجالات"
+      },
+      "sources-and-trust": {
+        "topic": "المصادر التي يثق بها",
+        "question": "ما مصادر البيانات التي تستخدمها للإجابة عن الأسئلة، وكيف تقرر أي مصدر تثق به؟",
+        "preview": "يوضح المصادر التي تستند إليها إجاباته، والأولوية التي يطبقها عند اختلاف مصدرين — وهو ما يميز الإجابة عن التخمين.",
+        "source": "Genie One · اختيار المصدر"
+      },
+      "business-terms": {
+        "topic": "المصطلحات التي يفهمها",
+        "question": "ما مصطلحات الأعمال والمقاييس والعلاقات التي تفهمها؟",
+        "preview": "يعرض المفردات التي تم تعليمه إياها: مصطلحات الأعمال، وتعريفات المقاييس، والعلاقات بين الكيانات.",
+        "source": "Genie One · النموذج الدلالي"
+      },
+      "certified-metrics": {
+        "topic": "المقاييس المعتمدة",
+        "question": "أي المقاييس لديها تعريفات محكومة أو معتمدة؟",
+        "preview": "يفصل المقاييس ذات التعريف المحكوم والمعتمد عن المقاييس المحسوبة عند الطلب، لتعرف أي الأرقام يمكن الاستشهاد بها بأمان.",
+        "source": "Genie One · تعريفات المقاييس المعتمدة"
+      },
+      "visualizations": {
+        "topic": "المرئيات",
+        "question": "ما المرئيات التي يمكنك إنشاؤها من الأسئلة التحليلية؟",
+        "preview": "يوضح أنواع المخططات التي يمكنه إنتاجها من سؤال تحليلي، ومتى تكون قراءة النتيجة كجدول أفضل.",
+        "source": "Genie One · دعم المرئيات"
+      },
+      "explainability": {
+        "topic": "اعرض منهجية الإجابة",
+        "question": "هل يمكنك شرح الاستدلال، وSQL، والافتراضات، والمصادر وراء الإجابة؟",
+        "preview": "يطلب مسار التدقيق: الاستدلال الذي اتبعه، وSQL الذي شغّله، والافتراضات التي وضعها، والمصادر التي قرأها.",
+        "source": "Genie One · مصدر الإجابة"
+      },
+      "follow-ups": {
+        "topic": "أسئلة المتابعة",
+        "question": "ما أنواع أسئلة المتابعة التي يمكنني طرحها بعد الإجابة الأولية؟",
+        "preview": "يوضح ما الذي يحتفظ به في السياق بين المحادثات، لتعرف ما يمكنك تحسينه دون إعادة صياغة السؤال بالكامل.",
+        "source": "Genie One · سياق المحادثة"
+      },
+      "ambiguity": {
+        "topic": "متى يحتاج إلى السؤال",
+        "question": "ما الأسئلة التي تتطلب توضيحًا لأن البيانات أو المصطلحات غامضة؟",
+        "preview": "يذكر الحالات التي سيطرح فيها سؤالًا للتوضيح بدلًا من التخمين — مصطلحات غامضة، مقاييس متداخلة، نطاقات بلا تواريخ.",
+        "source": "Genie One · التعامل مع الغموض"
+      },
+      "structured-vs-documents": {
+        "topic": "البيانات مقابل المستندات",
+        "question": "ما الأسئلة التي يمكنك الإجابة عنها من بيانات Databricks المنظمة مقارنة بالمستندات المتصلة؟",
+        "preview": "يوضح الحد الفاصل بين ما يجيب عنه من الجداول الخاضعة للحوكمة وما يجيب عنه من المستندات المتصلة.",
+        "source": "Genie One · تغطية البيانات المنظمة وغير المنظمة"
+      },
+      "connectors": {
+        "topic": "المصادر المتصلة",
+        "question": "هل يمكنك استخدام مصادر متصلة مثل Google Drive، أو SharePoint، أو Slack، أو Glean، أو Jira، أو Confluence؟",
+        "preview": "يعرض المصادر الخارجية المتصلة لك فعليًا، بدلًا من المصادر المدعومة نظريًا.",
+        "source": "Genie One · المصادر المتصلة"
+      },
+      "file-with-data": {
+        "topic": "ملف + بياناتك",
+        "question": "هل يمكنك تحليل ملف مع بياناتي في Databricks؟",
+        "preview": "يتناول ما إذا كان يمكن تحليل ملف تم تحميله إلى جانب الجداول الخاضعة للحوكمة، وما الحوكمة المطبقة عند ذلك.",
+        "source": "Genie One · تحليل الملفات"
+      },
+      "create-agent": {
+        "topic": "وكيل قابل لإعادة الاستخدام",
+        "question": "هل يمكنك إنشاء Genie Agent قابل لإعادة الاستخدام من هذه المحادثة؟",
+        "preview": "يسأل ما إذا كان يمكن تحويل هذه المحادثة إلى Genie Agent قابل لإعادة الاستخدام يمكن للآخرين تشغيله.",
+        "source": "Genie One · تأليف الوكلاء"
+      },
+      "scheduled-briefing": {
+        "topic": "إحاطة مجدولة",
+        "question": "هل يمكنك إنشاء إحاطة مجدولة أو تقرير متكرر؟",
+        "preview": "يتناول تحويل الإجابة إلى إحاطة أو تقرير متكرر وفق جدول زمني، ومن يتلقاها.",
+        "source": "Genie One · الجدولة"
+      },
+      "draft-document": {
+        "topic": "صياغة مستند",
+        "question": "هل يمكنك صياغة مستند بناءً على تحليل?",
+        "preview": "يتناول تحويل التحليل إلى مستند، مع نقل الأرقام والمصادر كما هي بدلاً من إعادة كتابتها.",
+        "source": "Genie One · إنشاء المستندات"
+      },
+      "external-actions": {
+        "topic": "اتخاذ إجراءات في أنظمة أخرى",
+        "question": "هل يمكنك اتخاذ إجراءات في أنظمة خارجية، وما الأذونات أو الموافقات المطلوبة?",
+        "preview": "سؤال التأثير: ما الإجراءات التي يمكنه اتخاذها خارج Databricks، وما الأذونات أو الموافقات التي يتطلبها كل إجراء أولاً.",
+        "source": "Genie One · أذونات الإجراءات"
+      },
+      "limitations": {
+        "topic": "القيود المعروفة",
+        "question": "ما القيود المعروفة، وقيود حداثة البيانات، وحدود الأذونات?",
+        "preview": "يسأل عن الحدود بوضوح: ما الذي لا يمكنه فعله، ومدى احتمال تقادم البيانات، وأين تمنع أذوناتك الوصول إلى الإجابة.",
+        "source": "Genie One · حدود الإمكانات"
+      },
+      "avoid-questions": {
+        "topic": "ما الذي لا ينبغي سؤاله",
+        "question": "ما الأسئلة التي ينبغي تجنبها لأن البيانات المتاحة لا يمكنها الإجابة عنها بموثوقية?",
+        "preview": "عكس السؤال الأول: ما الأسئلة التي لا تدعمها البيانات المتاحة، كي لا تتصرف بناءً على رقم غير موثوق.",
+        "source": "Genie One · حدود الموثوقية"
+      }
+    }
+  },
+  "da-DK": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Dækning & omfang",
+      "Data & Trust": "Data & tillid",
+      "Answers & Explainability": "Svar & forklarbarhed",
+      "Documents & Connectors": "Dokumenter & connectors",
+      "Actions & Automation": "Handlinger & automatisering",
+      "Limits & Boundaries": "Grænser & afgrænsninger",
+      "Platform & Concepts": "Platform & begreber"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Hvad du kan svare på",
+        "question": "Hvilke typer forretningsspørgsmål kan du besvare med de data, jeg har adgang til?",
+        "preview": "Genie One viser de spørgsmålstyper, den kan håndtere ud fra de data, som dine egne tilladelser giver adgang til — afgrænset til dig, ikke til hele kataloget.",
+        "source": "Genie One · tilgængelige domæner"
+      },
+      "domain-inventory": {
+        "topic": "Hvad der er tilgængeligt for mig",
+        "question": "Hvilke forretningsdomæner, Genie Agents, dashboards, metric views og forespørgsler er tilgængelige for mig?",
+        "preview": "Viser de styrede aktiver, du faktisk kan bruge: forretningsdomæner, Genie Agents, dashboards, metric views og gemte forespørgsler.",
+        "source": "Genie One · domæne- & aktivoversigt"
+      },
+      "analysis-types": {
+        "topic": "Understøttet analyse",
+        "question": "Hvilke typer analyse understøttes på tværs af disse domæner?",
+        "preview": "Beskriver den analyse, den understøtter pr. domæne — aggregering, trend, sammenligning, rangering, kohorte — i stedet for at love noget generelt.",
+        "source": "Genie One · analysefunktioner"
+      },
+      "combine-domains": {
+        "topic": "Kombinering af domæner",
+        "question": "Hvilke domæner kan du kombinere, når du besvarer et spørgsmål?",
+        "preview": "Angiver de domæner, den kan samle i ét svar, og hvor der findes en styret relation at forbinde dem på.",
+        "source": "Genie One · joins på tværs af domæner"
+      },
+      "sources-and-trust": {
+        "topic": "Kilder, den har tillid til",
+        "question": "Hvilke datakilder bruger du til at besvare spørgsmål, og hvordan afgør du, hvilken kilde du har tillid til?",
+        "preview": "Forklarer, hvilke kilder der ligger bag svarene, og hvilken rækkefølge den bruger, når to kilder er uenige — forskellen på et svar og et gæt.",
+        "source": "Genie One · kildevalg"
+      },
+      "business-terms": {
+        "topic": "Begreber, den forstår",
+        "question": "Hvilke forretningsbegreber, nøgletal og relationer forstår du?",
+        "preview": "Viser det ordforråd, den er oplært i: forretningsbegreber, definitioner af nøgletal og relationerne mellem enheder.",
+        "source": "Genie One · semantisk model"
+      },
+      "certified-metrics": {
+        "topic": "Certificerede nøgletal",
+        "question": "Hvilke nøgletal har styrede eller certificerede definitioner?",
+        "preview": "Adskiller nøgletal med en styret, certificeret definition fra dem, der beregnes ad hoc, så du ved, hvilke tal der er sikre at citere.",
+        "source": "Genie One · certificerede definitioner af nøgletal"
+      },
+      "visualizations": {
+        "topic": "Visualiseringer",
+        "question": "Hvilke visualiseringer kan du generere ud fra analytiske spørgsmål?",
+        "preview": "Beskriver de diagramtyper, den kan producere ud fra et analytisk spørgsmål, og hvornår et resultat er bedre at læse som en tabel.",
+        "source": "Genie One · visualiseringsunderstøttelse"
+      },
+      "explainability": {
+        "topic": "Vis grundlaget",
+        "question": "Kan du forklare ræsonnementet, SQL, antagelserne og kilderne bag et svar?",
+        "preview": "Beder om revisionssporet: det ræsonnement, den fulgte, den SQL, den kørte, de antagelser, den gjorde, og de kilder, den læste.",
+        "source": "Genie One · svarproveniens"
+      },
+      "follow-ups": {
+        "topic": "Opfølgende spørgsmål",
+        "question": "Hvilke typer opfølgende spørgsmål kan jeg stille efter et første svar?",
+        "preview": "Forklarer, hvad den bevarer som kontekst mellem beskeder, så du ved, hvad du kan præcisere uden at gentage hele spørgsmålet.",
+        "source": "Genie One · samtalekontekst"
+      },
+      "ambiguity": {
+        "topic": "Når den skal spørge",
+        "question": "Hvilke spørgsmål kræver afklaring, fordi data eller terminologi er tvetydige?",
+        "preview": "Angiver de tilfælde, hvor den stiller et afklarende spørgsmål i stedet for at gætte — tvetydige termer, overlappende målepunkter, intervaller uden datoer.",
+        "source": "Genie One · håndtering af tvetydighed"
+      },
+      "structured-vs-documents": {
+        "topic": "Data kontra dokumenter",
+        "question": "Hvilke spørgsmål kan du besvare ud fra strukturerede Databricks-data kontra tilknyttede dokumenter?",
+        "preview": "Trækker grænsen mellem det, den besvarer fra styrede tabeller, og det, den besvarer fra tilknyttede dokumenter.",
+        "source": "Genie One · dækning af struktureret & ustruktureret"
+      },
+      "connectors": {
+        "topic": "Tilknyttede kilder",
+        "question": "Kan du bruge tilknyttede kilder som Google Drive, SharePoint, Slack, Glean, Jira eller Confluence?",
+        "preview": "Oplyser, hvilke eksterne kilder der faktisk er tilknyttet for dig, i stedet for hvilke der teoretisk understøttes.",
+        "source": "Genie One · tilknyttede kilder"
+      },
+      "file-with-data": {
+        "topic": "Fil + dine data",
+        "question": "Kan du analysere en fil sammen med mine Databricks-data?",
+        "preview": "Dækker, om en uploadet fil kan analyseres sammen med styrede tabeller, og hvilken governance der gælder, når den gør.",
+        "source": "Genie One · filanalyse"
+      },
+      "create-agent": {
+        "topic": "Genanvendelig agent",
+        "question": "Kan du oprette en genanvendelig Genie Agent ud fra denne samtale?",
+        "preview": "Spørger, om denne samtale kan fremmes til en genanvendelig Genie Agent, som andre kan køre.",
+        "source": "Genie One · agentoprettelse"
+      },
+      "scheduled-briefing": {
+        "topic": "Planlagt briefing",
+        "question": "Kan du oprette en planlagt briefing eller tilbagevendende rapport?",
+        "preview": "Dækker, hvordan et svar gøres til en tilbagevendende briefing eller rapport efter en tidsplan, og hvem der modtager den.",
+        "source": "Genie One · planlægning"
+      },
+      "draft-document": {
+        "topic": "Udarbejd et dokument",
+        "question": "Kan du udarbejde et dokument baseret på en analyse?",
+        "preview": "Handler om at omsætte en analyse til et dokument, hvor figurer og kilder føres med frem for at blive indtastet igen.",
+        "source": "Genie One · dokumentgenerering"
+      },
+      "external-actions": {
+        "topic": "Handle i andre systemer",
+        "question": "Kan du udføre handlinger i eksterne systemer, og hvilke tilladelser eller godkendelser kræver det?",
+        "preview": "Effektspørgsmålet: hvilke handlinger den kan udføre uden for Databricks, og hvilke tilladelser eller godkendelser hver enkelt først kræver.",
+        "source": "Genie One · handlingstilladelser"
+      },
+      "limitations": {
+        "topic": "Kendte begrænsninger",
+        "question": "Hvilke kendte begrænsninger, dataaktualitetsbegrænsninger og tilladelsesgrænser gælder?",
+        "preview": "Spørger efter de ærlige grænser: hvad den ikke kan gøre, hvor forældede data kan være, og hvor dine tilladelser stopper svaret.",
+        "source": "Genie One · funktionsgrænser"
+      },
+      "avoid-questions": {
+        "topic": "Hvad du ikke bør spørge om",
+        "question": "Hvilke spørgsmål bør jeg undgå at stille, fordi de tilgængelige data ikke kan besvare dem pålideligt?",
+        "preview": "Det omvendte af det første spørgsmål: hvilke spørgsmål de tilgængelige data ikke kan understøtte, så du ikke handler på et usikkert tal.",
+        "source": "Genie One · pålidelighedsgrænser"
+      }
+    }
+  },
+  "de-DE": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Abdeckung & Umfang",
+      "Data & Trust": "Daten & Vertrauen",
+      "Answers & Explainability": "Antworten & Erklärbarkeit",
+      "Documents & Connectors": "Dokumente & Konnektoren",
+      "Actions & Automation": "Aktionen & Automatisierung",
+      "Limits & Boundaries": "Limits & Grenzen",
+      "Platform & Concepts": "Plattform & Konzepte"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Was Sie beantworten können",
+        "question": "Welche Arten von Geschäftsfragen kannst du mit den Daten beantworten, auf die ich Zugriff habe?",
+        "preview": "Genie One nennt die Fragetypen, die es mit den Daten bedienen kann, die Ihre eigenen Berechtigungen abdecken — auf Sie beschränkt, nicht auf den gesamten Katalog.",
+        "source": "Genie One · zugängliche Domänen"
+      },
+      "domain-inventory": {
+        "topic": "Was mir zur Verfügung steht",
+        "question": "Welche Geschäftsdomänen, Genie Agents, dashboards, metric views und Abfragen stehen mir zur Verfügung?",
+        "preview": "Listet die verwalteten Assets auf, die Sie tatsächlich nutzen können: Geschäftsdomänen, Genie Agents, dashboards, metric views und gespeicherte Abfragen.",
+        "source": "Genie One · Domänen- & Asset-Bestand"
+      },
+      "analysis-types": {
+        "topic": "Unterstützte Analysen",
+        "question": "Welche Arten von Analysen werden in diesen Domänen unterstützt?",
+        "preview": "Beschreibt die unterstützten Analysen je Domäne — Aggregation, Trend, Vergleich, Ranking, Kohorte — statt pauschale Aussagen zu machen.",
+        "source": "Genie One · Analysefunktionen"
+      },
+      "combine-domains": {
+        "topic": "Domänen kombinieren",
+        "question": "Welche Domänen kannst du beim Beantworten einer Frage kombinieren?",
+        "preview": "Nennt die Domänen, die es in einer Antwort verbinden kann, und wo eine verwaltete Beziehung für die Verknüpfung besteht.",
+        "source": "Genie One · domänenübergreifende Joins"
+      },
+      "sources-and-trust": {
+        "topic": "Vertrauenswürdige Quellen",
+        "question": "Welche Datenquellen verwendest du zum Beantworten von Fragen, und wie entscheidest du, welcher Quelle du vertraust?",
+        "preview": "Erklärt, welche Quellen seinen Antworten zugrunde liegen und welche Priorität gilt, wenn zwei Quellen voneinander abweichen — der Unterschied zwischen einer Antwort und einer Vermutung.",
+        "source": "Genie One · Quellenauswahl"
+      },
+      "business-terms": {
+        "topic": "Begriffe, die es versteht",
+        "question": "Welche Geschäftsbegriffe, Metriken und Beziehungen verstehst du?",
+        "preview": "Berichtet über das Vokabular, das ihm beigebracht wurde: Geschäftsbegriffe, Metrikdefinitionen und die Beziehungen zwischen Entitäten.",
+        "source": "Genie One · semantisches Modell"
+      },
+      "certified-metrics": {
+        "topic": "Zertifizierte Metriken",
+        "question": "Welche Metriken haben verwaltete oder zertifizierte Definitionen?",
+        "preview": "Trennt Metriken mit verwalteter, zertifizierter Definition von ad hoc berechneten Metriken, damit Sie wissen, welche Zahlen zitierfähig sind.",
+        "source": "Genie One · zertifizierte Metrikdefinitionen"
+      },
+      "visualizations": {
+        "topic": "Visualisierungen",
+        "question": "Welche Visualisierungen kannst du aus analytischen Fragen erstellen?",
+        "preview": "Beschreibt die Diagrammtypen, die aus einer analytischen Frage entstehen können, und wann ein Ergebnis besser als Tabelle gelesen wird.",
+        "source": "Genie One · Visualisierungsunterstützung"
+      },
+      "explainability": {
+        "topic": "Vorgehen anzeigen",
+        "question": "Kannst du die Begründung, das SQL, die Annahmen und die Quellen hinter einer Antwort erklären?",
+        "preview": "Fragt nach dem Prüfpfad: der angewendeten Begründung, dem ausgeführten SQL, den getroffenen Annahmen und den gelesenen Quellen.",
+        "source": "Genie One · Antwortnachweis"
+      },
+      "follow-ups": {
+        "topic": "Folgefragen",
+        "question": "Welche Arten von Folgefragen kann ich nach einer ersten Antwort stellen?",
+        "preview": "Erklärt, was zwischen Gesprächsrunden im Kontext bleibt, damit du weißt, was du verfeinern kannst, ohne die ganze Frage erneut zu stellen.",
+        "source": "Genie One · Gesprächskontext"
+      },
+      "ambiguity": {
+        "topic": "Wenn Rückfragen nötig sind",
+        "question": "Welche Fragen erfordern eine Klarstellung, weil Daten oder Begriffe mehrdeutig sind?",
+        "preview": "Nennt die Fälle, in denen eine klärende Frage gestellt wird, statt zu raten — mehrdeutige Begriffe, überlappende Kennzahlen, Datumsbereiche ohne Datum.",
+        "source": "Genie One · Umgang mit Mehrdeutigkeit"
+      },
+      "structured-vs-documents": {
+        "topic": "Daten und Dokumente",
+        "question": "Welche Fragen kannst du aus strukturierten Databricks Daten im Vergleich zu verbundenen Dokumenten beantworten?",
+        "preview": "Zeigt die Grenze zwischen Antworten aus verwalteten Tabellen und Antworten aus verbundenen Dokumenten auf.",
+        "source": "Genie One · Abdeckung strukturierter und unstrukturierter Daten"
+      },
+      "connectors": {
+        "topic": "Verbundene Quellen",
+        "question": "Kannst du verbundene Quellen wie Google Drive, SharePoint, Slack, Glean, Jira oder Confluence verwenden?",
+        "preview": "Gibt an, welche externen Quellen für dich tatsächlich verbunden sind, statt nur theoretisch unterstützt zu werden.",
+        "source": "Genie One · verbundene Quellen"
+      },
+      "file-with-data": {
+        "topic": "Datei + deine Daten",
+        "question": "Kannst du eine Datei zusammen mit meinen Databricks Daten analysieren?",
+        "preview": "Behandelt, ob eine hochgeladene Datei zusammen mit verwalteten Tabellen analysiert werden kann und welche Governance dabei gilt.",
+        "source": "Genie One · Dateianalyse"
+      },
+      "create-agent": {
+        "topic": "Wiederverwendbarer Agent",
+        "question": "Kannst du aus diesem Gespräch einen wiederverwendbaren Genie Agent erstellen?",
+        "preview": "Fragt, ob dieses Gespräch zu einem wiederverwendbaren Genie Agent gemacht werden kann, den andere ausführen können.",
+        "source": "Genie One · Agent-Erstellung"
+      },
+      "scheduled-briefing": {
+        "topic": "Geplantes Briefing",
+        "question": "Kannst du ein geplantes Briefing oder einen wiederkehrenden Bericht erstellen?",
+        "preview": "Behandelt, wie eine Antwort in ein wiederkehrendes Briefing oder einen Bericht nach Zeitplan umgewandelt wird und wer sie erhält.",
+        "source": "Genie One · Planung"
+      },
+      "draft-document": {
+        "topic": "Dokument entwerfen",
+        "question": "Kannst du auf Basis einer Analyse ein Dokument entwerfen?",
+        "preview": "Umfasst das Ausformulieren einer Analyse als Dokument, wobei Abbildungen und Quellen übernommen statt erneut eingegeben werden.",
+        "source": "Genie One · Dokumenterstellung"
+      },
+      "external-actions": {
+        "topic": "Aktionen in anderen Systemen",
+        "question": "Kannst du Aktionen in externen Systemen ausführen, und welche Berechtigungen oder Genehmigungen wären dafür erforderlich?",
+        "preview": "Fragt nach der Wirkung: welche Aktionen es außerhalb von Databricks ausführen kann und welche Berechtigungen oder Genehmigungen jeweils zuerst erforderlich sind.",
+        "source": "Genie One · Aktionsberechtigungen"
+      },
+      "limitations": {
+        "topic": "Bekannte Einschränkungen",
+        "question": "Welche bekannten Einschränkungen, Grenzen der Datenaktualität und Berechtigungsgrenzen gibt es?",
+        "preview": "Fragt nach den ehrlichen Grenzen: was nicht möglich ist, wie veraltet die Daten sein können und wo deine Berechtigungen die Antwort begrenzen.",
+        "source": "Genie One · Funktionsgrenzen"
+      },
+      "avoid-questions": {
+        "topic": "Was du nicht fragen solltest",
+        "question": "Welche Fragen sollte ich vermeiden, weil die verfügbaren Daten sie nicht zuverlässig beantworten können?",
+        "preview": "Das Gegenstück zur ersten Frage: welche Fragen die verfügbaren Daten nicht stützen können, damit du nicht nach einer unsicheren Zahl handelst.",
+        "source": "Genie One · Zuverlässigkeitsgrenzen"
+      }
+    }
+  },
+  "el-GR": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Κάλυψη και εύρος",
+      "Data & Trust": "Δεδομένα και εμπιστοσύνη",
+      "Answers & Explainability": "Απαντήσεις και επεξηγησιμότητα",
+      "Documents & Connectors": "Έγγραφα και connectors",
+      "Actions & Automation": "Ενέργειες και αυτοματοποίηση",
+      "Limits & Boundaries": "Όρια και περιορισμοί",
+      "Platform & Concepts": "Πλατφόρμα και έννοιες"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Σε τι μπορεί να απαντήσει",
+        "question": "Σε τι είδους επιχειρηματικές ερωτήσεις μπορείς να απαντήσεις χρησιμοποιώντας τα δεδομένα στα οποία έχω πρόσβαση;",
+        "preview": "Το Genie One αναφέρει τους τύπους ερωτήσεων που μπορεί να καλύψει με βάση τα δεδομένα στα οποία σας δίνουν πρόσβαση τα δικά σας δικαιώματα — με εύρος για εσάς, όχι για ολόκληρο τον κατάλογο.",
+        "source": "Genie One · προσβάσιμοι τομείς"
+      },
+      "domain-inventory": {
+        "topic": "Τι είναι διαθέσιμο σε εμένα",
+        "question": "Ποιοι επιχειρηματικοί τομείς, Genie Agents, dashboard, metric views και ερωτήματα είναι διαθέσιμα σε εμένα;",
+        "preview": "Παραθέτει τα στοιχεία με διακυβέρνηση που μπορείτε πράγματι να χρησιμοποιήσετε: επιχειρηματικούς τομείς, Genie Agents, dashboard, metric views και αποθηκευμένα ερωτήματα.",
+        "source": "Genie One · απογραφή τομέων και στοιχείων"
+      },
+      "analysis-types": {
+        "topic": "Υποστηριζόμενη ανάλυση",
+        "question": "Ποιοι τύποι ανάλυσης υποστηρίζονται σε αυτούς τους τομείς;",
+        "preview": "Περιγράφει την ανάλυση που υποστηρίζει ανά τομέα — συνάθροιση, τάση, σύγκριση, κατάταξη, κοόρτη — αντί να υπόσχεται κάτι γενικό.",
+        "source": "Genie One · δυνατότητες ανάλυσης"
+      },
+      "combine-domains": {
+        "topic": "Συνδυασμός τομέων",
+        "question": "Ποιους τομείς μπορείς να συνδυάσεις όταν απαντάς σε μια ερώτηση;",
+        "preview": "Αναφέρει τους τομείς που μπορεί να συνδυάσει σε μία απάντηση, και πού υπάρχει σχέση με διακυβέρνηση βάσει της οποίας μπορεί να τους συνδέσει.",
+        "source": "Genie One · συνδέσεις μεταξύ τομέων"
+      },
+      "sources-and-trust": {
+        "topic": "Πηγές που εμπιστεύεται",
+        "question": "Ποιες πηγές δεδομένων χρησιμοποιείς για να απαντάς σε ερωτήσεις και πώς αποφασίζεις ποια πηγή να εμπιστευτείς;",
+        "preview": "Εξηγεί ποιες πηγές στηρίζουν τις απαντήσεις του και ποια προτεραιότητα εφαρμόζει όταν δύο πηγές διαφωνούν — η διαφορά ανάμεσα σε μια απάντηση και μια εικασία.",
+        "source": "Genie One · επιλογή πηγής"
+      },
+      "business-terms": {
+        "topic": "Όροι που κατανοεί",
+        "question": "Ποιους επιχειρηματικούς όρους, μετρικές και σχέσεις κατανοείς;",
+        "preview": "Αναφέρει το λεξιλόγιο που έχει διδαχθεί: επιχειρηματικούς όρους, ορισμούς μετρικών και τις σχέσεις μεταξύ οντοτήτων.",
+        "source": "Genie One · σημασιολογικό μοντέλο"
+      },
+      "certified-metrics": {
+        "topic": "Πιστοποιημένες μετρικές",
+        "question": "Ποιες μετρικές έχουν ορισμούς με διακυβέρνηση ή πιστοποίηση;",
+        "preview": "Διαχωρίζει τις μετρικές με ορισμό που έχει διακυβέρνηση και πιστοποίηση από εκείνες που υπολογίζονται ad hoc, ώστε να ξέρετε ποιοι αριθμοί είναι ασφαλείς για αναφορά.",
+        "source": "Genie One · πιστοποιημένοι ορισμοί μετρικών"
+      },
+      "visualizations": {
+        "topic": "Οπτικοποιήσεις",
+        "question": "Τι οπτικοποιήσεις μπορείς να δημιουργήσεις από αναλυτικές ερωτήσεις?",
+        "preview": "Περιγράφει τους τύπους γραφημάτων που μπορεί να παράγει από μια αναλυτική ερώτηση, και πότε ένα αποτέλεσμα διαβάζεται καλύτερα ως πίνακας.",
+        "source": "Genie One · υποστήριξη οπτικοποιήσεων"
+      },
+      "explainability": {
+        "topic": "Εμφάνιση συλλογιστικής",
+        "question": "Μπορείς να εξηγήσεις τη συλλογιστική, το SQL, τις παραδοχές και τις πηγές πίσω από μια απάντηση?",
+        "preview": "Ζητά το ιστορικό ελέγχου: τη συλλογιστική που ακολούθησε, το SQL που εκτέλεσε, τις παραδοχές που έκανε και τις πηγές που διάβασε.",
+        "source": "Genie One · προέλευση απάντησης"
+      },
+      "follow-ups": {
+        "topic": "Συμπληρωματικές ερωτήσεις",
+        "question": "Τι είδους συμπληρωματικές ερωτήσεις μπορώ να κάνω μετά από μια αρχική απάντηση?",
+        "preview": "Εξηγεί τι διατηρεί στο πλαίσιο μεταξύ των ερωτήσεων, ώστε να γνωρίζετε τι μπορείτε να βελτιώσετε χωρίς να επαναλάβετε ολόκληρη την ερώτηση.",
+        "source": "Genie One · πλαίσιο συνομιλίας"
+      },
+      "ambiguity": {
+        "topic": "Όταν χρειάζεται να ρωτήσει",
+        "question": "Ποιες ερωτήσεις θα απαιτούσαν διευκρίνιση επειδή τα δεδομένα ή η ορολογία είναι ασαφή?",
+        "preview": "Αναφέρει τις περιπτώσεις όπου θα κάνει διευκρινιστική ερώτηση αντί να μαντέψει — ασαφείς όροι, επικαλυπτόμενες μετρικές, εύρη χωρίς ημερομηνίες.",
+        "source": "Genie One · διαχείριση ασάφειας"
+      },
+      "structured-vs-documents": {
+        "topic": "Δεδομένα ή έγγραφα",
+        "question": "Ποιες ερωτήσεις μπορείς να απαντήσεις από δομημένα δεδομένα Databricks σε σχέση με συνδεδεμένα έγγραφα?",
+        "preview": "Ξεχωρίζει τι απαντά από πίνακες με διακυβέρνηση και τι απαντά από συνδεδεμένα έγγραφα.",
+        "source": "Genie One · κάλυψη δομημένων και μη δομημένων δεδομένων"
+      },
+      "connectors": {
+        "topic": "Συνδεδεμένες πηγές",
+        "question": "Μπορείς να χρησιμοποιήσεις συνδεδεμένες πηγές όπως Google Drive, SharePoint, Slack, Glean, Jira ή Confluence?",
+        "preview": "Αναφέρει ποιες εξωτερικές πηγές είναι πραγματικά συνδεδεμένες για εσάς, αντί για ποιες υποστηρίζονται θεωρητικά.",
+        "source": "Genie One · συνδεδεμένες πηγές"
+      },
+      "file-with-data": {
+        "topic": "Αρχείο + τα δεδομένα σας",
+        "question": "Μπορείς να αναλύσεις ένα αρχείο μαζί με τα δεδομένα μου στο Databricks?",
+        "preview": "Καλύπτει αν ένα μεταφορτωμένο αρχείο μπορεί να αναλυθεί μαζί με πίνακες με διακυβέρνηση, και ποια διακυβέρνηση εφαρμόζεται όταν συμβαίνει αυτό.",
+        "source": "Genie One · ανάλυση αρχείων"
+      },
+      "create-agent": {
+        "topic": "Επαναχρησιμοποιήσιμος agent",
+        "question": "Μπορείς να δημιουργήσεις έναν επαναχρησιμοποιήσιμο Genie Agent από αυτήν τη συνομιλία?",
+        "preview": "Ρωτά αν αυτή η συνομιλία μπορεί να προωθηθεί σε έναν επαναχρησιμοποιήσιμο Genie Agent που μπορούν να εκτελούν άλλοι.",
+        "source": "Genie One · δημιουργία agent"
+      },
+      "scheduled-briefing": {
+        "topic": "Προγραμματισμένη ενημέρωση",
+        "question": "Μπορείς να δημιουργήσεις μια προγραμματισμένη ενημέρωση ή μια επαναλαμβανόμενη αναφορά?",
+        "preview": "Καλύπτει τη μετατροπή μιας απάντησης σε επαναλαμβανόμενη ενημέρωση ή αναφορά βάσει προγράμματος, και ποιοι τη λαμβάνουν.",
+        "source": "Genie One · προγραμματισμός"
+      },
+      "draft-document": {
+        "topic": "Σύνταξη εγγράφου",
+        "question": "Μπορείς να συντάξεις ένα έγγραφο με βάση μια ανάλυση;",
+        "preview": "Καλύπτει τη μετατροπή μιας ανάλυσης σε έγγραφο, με διατήρηση των γραφημάτων και των πηγών αντί για εκ νέου πληκτρολόγηση.",
+        "source": "Genie One · δημιουργία εγγράφων"
+      },
+      "external-actions": {
+        "topic": "Ενέργειες σε άλλα συστήματα",
+        "question": "Μπορείς να εκτελείς ενέργειες σε εξωτερικά συστήματα, και ποιες άδειες ή εγκρίσεις θα απαιτούνταν;",
+        "preview": "Η ερώτηση για το αποτέλεσμα: ποιες ενέργειες μπορεί να εκτελεί εκτός Databricks, και ποιες άδειες ή εγκρίσεις απαιτεί πρώτα η καθεμία.",
+        "source": "Genie One · δικαιώματα ενεργειών"
+      },
+      "limitations": {
+        "topic": "Γνωστοί περιορισμοί",
+        "question": "Ποιοι είναι οι γνωστοί περιορισμοί, οι περιορισμοί επικαιρότητας των δεδομένων και τα όρια δικαιωμάτων;",
+        "preview": "Ζητά τα πραγματικά όρια: τι δεν μπορεί να κάνει, πόσο παλιά μπορεί να είναι τα δεδομένα, και πού τα δικαιώματά σας περιορίζουν την απάντηση.",
+        "source": "Genie One · όρια δυνατοτήτων"
+      },
+      "avoid-questions": {
+        "topic": "Τι να μην ρωτάτε",
+        "question": "Ποιες ερωτήσεις πρέπει να αποφεύγω επειδή τα διαθέσιμα δεδομένα δεν μπορούν να τις απαντήσουν αξιόπιστα;",
+        "preview": "Το αντίστροφο της πρώτης ερώτησης: ποιες ερωτήσεις δεν υποστηρίζονται από τα διαθέσιμα δεδομένα, ώστε να μην βασιστείτε σε έναν ασταθή αριθμό.",
+        "source": "Genie One · όρια αξιοπιστίας"
+      }
+    }
+  },
+  "en-US": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Coverage & Scope",
+      "Data & Trust": "Data & Trust",
+      "Answers & Explainability": "Answers & Explainability",
+      "Documents & Connectors": "Documents & Connectors",
+      "Actions & Automation": "Actions & Automation",
+      "Limits & Boundaries": "Limits & Boundaries",
+      "Platform & Concepts": "Platform & Concepts"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "What you can answer",
+        "question": "What kinds of business questions can you answer using the data I can access?",
+        "preview": "Genie One reports the question types it can serve from the data your own permissions reach — scoped to you, not to the catalog at large.",
+        "source": "Genie One · accessible domains"
+      },
+      "domain-inventory": {
+        "topic": "What is available to me",
+        "question": "Which business domains, Genie Agents, dashboards, metric views, and queries are available to me?",
+        "preview": "Lists the governed assets you can actually use: business domains, Genie Agents, dashboards, metric views, and saved queries.",
+        "source": "Genie One · domain & asset inventory"
+      },
+      "analysis-types": {
+        "topic": "Supported analysis",
+        "question": "What types of analysis are supported across these domains?",
+        "preview": "Describes the analysis it supports per domain — aggregation, trend, comparison, ranking, cohort — rather than promising anything generic.",
+        "source": "Genie One · analysis capabilities"
+      },
+      "combine-domains": {
+        "topic": "Combining domains",
+        "question": "Which domains can you combine when answering a question?",
+        "preview": "Names the domains it can join in one answer, and where a governed relationship exists to join them on.",
+        "source": "Genie One · cross-domain joins"
+      },
+      "sources-and-trust": {
+        "topic": "Sources it trusts",
+        "question": "What data sources do you use to answer questions, and how do you decide which source to trust?",
+        "preview": "Explains which sources back its answers and the precedence it applies when two sources disagree — the difference between an answer and a guess.",
+        "source": "Genie One · source selection"
+      },
+      "business-terms": {
+        "topic": "Terms it understands",
+        "question": "What business terms, metrics, and relationships do you understand?",
+        "preview": "Reports the vocabulary it has been taught: business terms, metric definitions, and the relationships between entities.",
+        "source": "Genie One · semantic model"
+      },
+      "certified-metrics": {
+        "topic": "Certified metrics",
+        "question": "Which metrics have governed or certified definitions?",
+        "preview": "Separates metrics with a governed, certified definition from ones computed ad hoc, so you know which numbers are safe to quote.",
+        "source": "Genie One · certified metric definitions"
+      },
+      "visualizations": {
+        "topic": "Visualizations",
+        "question": "What visualizations can you generate from analytical questions?",
+        "preview": "Describes the chart types it can produce from an analytical question, and when a result is better read as a table.",
+        "source": "Genie One · visualization support"
+      },
+      "explainability": {
+        "topic": "Show your work",
+        "question": "Can you explain the reasoning, SQL, assumptions, and sources behind an answer?",
+        "preview": "Asks for the audit trail: the reasoning it followed, the SQL it ran, the assumptions it made, and the sources it read.",
+        "source": "Genie One · answer provenance"
+      },
+      "follow-ups": {
+        "topic": "Follow-up questions",
+        "question": "What kinds of follow-up questions can I ask after an initial answer?",
+        "preview": "Explains what it keeps in context between turns, so you know what you can refine without restating the whole question.",
+        "source": "Genie One · conversational context"
+      },
+      "ambiguity": {
+        "topic": "When it must ask",
+        "question": "Which questions would require clarification because the data or terminology is ambiguous?",
+        "preview": "Names the cases where it will ask a clarifying question instead of guessing — ambiguous terms, overlapping metrics, undated ranges.",
+        "source": "Genie One · ambiguity handling"
+      },
+      "structured-vs-documents": {
+        "topic": "Data vs documents",
+        "question": "What questions can you answer from structured Databricks data versus connected documents?",
+        "preview": "Draws the line between what it answers from governed tables and what it answers from connected documents.",
+        "source": "Genie One · structured & unstructured coverage"
+      },
+      "connectors": {
+        "topic": "Connected sources",
+        "question": "Can you use connected sources such as Google Drive, SharePoint, Slack, Glean, Jira, or Confluence?",
+        "preview": "Reports which external sources are actually connected for you, rather than which ones are theoretically supported.",
+        "source": "Genie One · connected sources"
+      },
+      "file-with-data": {
+        "topic": "File + your data",
+        "question": "Can you analyze a file together with my Databricks data?",
+        "preview": "Covers whether an uploaded file can be analysed alongside governed tables, and what governance applies when it is.",
+        "source": "Genie One · file analysis"
+      },
+      "create-agent": {
+        "topic": "Reusable agent",
+        "question": "Can you create a reusable Genie Agent from this conversation?",
+        "preview": "Asks whether this conversation can be promoted into a reusable Genie Agent others can run.",
+        "source": "Genie One · agent authoring"
+      },
+      "scheduled-briefing": {
+        "topic": "Scheduled briefing",
+        "question": "Can you create a scheduled briefing or recurring report?",
+        "preview": "Covers turning an answer into a recurring briefing or report on a schedule, and who receives it.",
+        "source": "Genie One · scheduling"
+      },
+      "draft-document": {
+        "topic": "Draft a document",
+        "question": "Can you draft a document based on an analysis?",
+        "preview": "Covers writing an analysis up as a document, with the figures and sources carried through rather than retyped.",
+        "source": "Genie One · document generation"
+      },
+      "external-actions": {
+        "topic": "Acting in other systems",
+        "question": "Can you take actions in external systems, and what permissions or approvals would be required?",
+        "preview": "The effect question: which actions it can take outside Databricks, and the permissions or approvals each one demands first.",
+        "source": "Genie One · action permissions"
+      },
+      "limitations": {
+        "topic": "Known limits",
+        "question": "What are the known limitations, data freshness constraints, and permission boundaries?",
+        "preview": "Asks for the honest edges: what it cannot do, how stale the data may be, and where your permissions stop the answer.",
+        "source": "Genie One · capability boundaries"
+      },
+      "avoid-questions": {
+        "topic": "What not to ask",
+        "question": "Which questions should I avoid asking because the available data cannot answer them reliably?",
+        "preview": "The inverse of the first question: which questions the available data cannot support, so you do not act on a shaky number.",
+        "source": "Genie One · reliability boundaries"
+      }
+    }
+  },
+  "es-ES": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Cobertura y alcance",
+      "Data & Trust": "Datos y confianza",
+      "Answers & Explainability": "Respuestas y explicabilidad",
+      "Documents & Connectors": "Documentos y conectores",
+      "Actions & Automation": "Acciones y automatización",
+      "Limits & Boundaries": "Límites y fronteras",
+      "Platform & Concepts": "Plataforma y conceptos"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Qué puedes responder",
+        "question": "¿Qué tipos de preguntas de negocio puedes responder con los datos a los que tengo acceso?",
+        "preview": "Genie One indica los tipos de preguntas que puede atender con los datos a los que llegan tus propios permisos — acotados a ti, no al catálogo en general.",
+        "source": "Genie One · dominios accesibles"
+      },
+      "domain-inventory": {
+        "topic": "Qué tengo disponible",
+        "question": "¿Qué dominios de negocio, Genie Agents, dashboards, metric views y consultas tengo disponibles?",
+        "preview": "Enumera los activos gobernados que puedes usar realmente: dominios de negocio, Genie Agents, dashboards, metric views y consultas guardadas.",
+        "source": "Genie One · inventario de dominios y activos"
+      },
+      "analysis-types": {
+        "topic": "Análisis admitidos",
+        "question": "¿Qué tipos de análisis se admiten en estos dominios?",
+        "preview": "Describe los análisis que admite por dominio — agregación, tendencia, comparación, clasificación, cohorte — en lugar de prometer algo genérico.",
+        "source": "Genie One · capacidades de análisis"
+      },
+      "combine-domains": {
+        "topic": "Combinar dominios",
+        "question": "¿Qué dominios puedes combinar al responder una pregunta?",
+        "preview": "Indica los dominios que puede unir en una sola respuesta, y dónde existe una relación gobernada sobre la que unirlos.",
+        "source": "Genie One · uniones entre dominios"
+      },
+      "sources-and-trust": {
+        "topic": "Fuentes en las que confía",
+        "question": "¿Qué fuentes de datos usas para responder preguntas y cómo decides en qué fuente confiar?",
+        "preview": "Explica qué fuentes respaldan sus respuestas y la precedencia que aplica cuando dos fuentes no coinciden — la diferencia entre una respuesta y una suposición.",
+        "source": "Genie One · selección de fuentes"
+      },
+      "business-terms": {
+        "topic": "Términos que entiende",
+        "question": "¿Qué términos de negocio, métricas y relaciones entiendes?",
+        "preview": "Informa del vocabulario que se le ha enseñado: términos de negocio, definiciones de métricas y relaciones entre entidades.",
+        "source": "Genie One · modelo semántico"
+      },
+      "certified-metrics": {
+        "topic": "Métricas certificadas",
+        "question": "¿Qué métricas tienen definiciones gobernadas o certificadas?",
+        "preview": "Separa las métricas con una definición gobernada y certificada de las calculadas ad hoc, para que sepas qué cifras puedes citar con seguridad.",
+        "source": "Genie One · definiciones de métricas certificadas"
+      },
+      "visualizations": {
+        "topic": "Visualizaciones",
+        "question": "¿Qué visualizaciones puedes generar a partir de preguntas analíticas?",
+        "preview": "Describe los tipos de gráfico que puede producir a partir de una pregunta analítica, y cuándo es mejor leer un resultado como tabla.",
+        "source": "Genie One · compatibilidad con visualizaciones"
+      },
+      "explainability": {
+        "topic": "Muestra cómo lo has hecho",
+        "question": "¿Puedes explicar el razonamiento, el SQL, las suposiciones y las fuentes que hay detrás de una respuesta?",
+        "preview": "Solicita el rastro de auditoría: el razonamiento que ha seguido, el SQL que ha ejecutado, las suposiciones que ha hecho y las fuentes que ha leído.",
+        "source": "Genie One · procedencia de las respuestas"
+      },
+      "follow-ups": {
+        "topic": "Preguntas de seguimiento",
+        "question": "¿Qué tipo de preguntas de seguimiento puedo hacer después de una respuesta inicial?",
+        "preview": "Explica qué mantiene en contexto entre turnos, para que sepas qué puedes refinar sin repetir toda la pregunta.",
+        "source": "Genie One · contexto conversacional"
+      },
+      "ambiguity": {
+        "topic": "Cuándo debe preguntar",
+        "question": "¿Qué preguntas requerirían aclaración porque los datos o la terminología son ambiguos?",
+        "preview": "Indica los casos en los que hará una pregunta de aclaración en lugar de adivinar — términos ambiguos, métricas solapadas, rangos sin fecha.",
+        "source": "Genie One · gestión de ambigüedad"
+      },
+      "structured-vs-documents": {
+        "topic": "Datos frente a documentos",
+        "question": "¿Qué preguntas puedes responder con datos estructurados de Databricks frente a documentos conectados?",
+        "preview": "Delimita qué responde a partir de tablas gobernadas y qué responde a partir de documentos conectados.",
+        "source": "Genie One · cobertura estructurada y no estructurada"
+      },
+      "connectors": {
+        "topic": "Fuentes conectadas",
+        "question": "¿Puedes usar fuentes conectadas como Google Drive, SharePoint, Slack, Glean, Jira o Confluence?",
+        "preview": "Informa de qué fuentes externas tienes realmente conectadas, no de cuáles se admiten en teoría.",
+        "source": "Genie One · fuentes conectadas"
+      },
+      "file-with-data": {
+        "topic": "Archivo + tus datos",
+        "question": "¿Puedes analizar un archivo junto con mis datos de Databricks?",
+        "preview": "Cubre si un archivo cargado se puede analizar junto con tablas gobernadas, y qué gobernanza se aplica cuando se hace.",
+        "source": "Genie One · análisis de archivos"
+      },
+      "create-agent": {
+        "topic": "Agente reutilizable",
+        "question": "¿Puedes crear un Genie Agent reutilizable a partir de esta conversación?",
+        "preview": "Pregunta si esta conversación se puede convertir en un Genie Agent reutilizable que otros puedan ejecutar.",
+        "source": "Genie One · creación de agentes"
+      },
+      "scheduled-briefing": {
+        "topic": "Resumen programado",
+        "question": "¿Puedes crear un resumen programado o un informe periódico?",
+        "preview": "Cubre cómo convertir una respuesta en un resumen o informe periódico con una programación, y quién lo recibe.",
+        "source": "Genie One · programación"
+      },
+      "draft-document": {
+        "topic": "Redactar un documento",
+        "question": "¿Puedes redactar un documento a partir de un análisis?",
+        "preview": "Cubre la redacción de un análisis en forma de documento, conservando los gráficos y las fuentes sin volver a introducirlos.",
+        "source": "Genie One · generación de documentos"
+      },
+      "external-actions": {
+        "topic": "Actuar en otros sistemas",
+        "question": "¿Puedes realizar acciones en sistemas externos, y qué permisos o aprobaciones harían falta?",
+        "preview": "Se centra en el efecto: qué acciones puede realizar fuera de Databricks y qué permisos o aprobaciones requiere cada una antes.",
+        "source": "Genie One · permisos de acción"
+      },
+      "limitations": {
+        "topic": "Límites conocidos",
+        "question": "¿Cuáles son las limitaciones conocidas, las restricciones sobre la actualidad de los datos y los límites de permisos?",
+        "preview": "Pregunta por los límites reales: qué no puede hacer, hasta qué punto pueden estar desactualizados los datos y dónde tus permisos impiden responder.",
+        "source": "Genie One · límites de capacidades"
+      },
+      "avoid-questions": {
+        "topic": "Qué no preguntar",
+        "question": "¿Qué preguntas debería evitar porque los datos disponibles no pueden responderlas de forma fiable?",
+        "preview": "El reverso de la primera pregunta: qué preguntas no pueden respaldar los datos disponibles, para que no actúes basándote en una cifra poco fiable.",
+        "source": "Genie One · límites de fiabilidad"
+      }
+    }
+  },
+  "fi-FI": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Kattavuus ja laajuus",
+      "Data & Trust": "Data ja luottamus",
+      "Answers & Explainability": "Vastaukset ja selitettävyys",
+      "Documents & Connectors": "Dokumentit ja yhdistimet",
+      "Actions & Automation": "Toiminnot ja automaatio",
+      "Limits & Boundaries": "Rajat ja reunaehdot",
+      "Platform & Concepts": "Alusta ja käsitteet"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Mihin voit vastata",
+        "question": "Millaisiin liiketoimintakysymyksiin voit vastata sen datan avulla, johon minulla on pääsy?",
+        "preview": "Genie One kertoo, millaisia kysymystyyppejä se voi käsitellä sen datan perusteella, johon omat käyttöoikeutesi ulottuvat — rajattuna sinuun, ei koko katalogiin.",
+        "source": "Genie One · käytettävissä olevat alueet"
+      },
+      "domain-inventory": {
+        "topic": "Mitä minulle on saatavilla",
+        "question": "Mitkä liiketoiminta-alueet, Genie Agents, koontinäytöt, metric view -näkymät ja kyselyt ovat minun käytettävissäni?",
+        "preview": "Listaa hallinnoidut resurssit, joita voit todella käyttää: liiketoiminta-alueet, Genie Agents, koontinäytöt, metric view -näkymät ja tallennetut kyselyt.",
+        "source": "Genie One · alue- ja resurssiluettelo"
+      },
+      "analysis-types": {
+        "topic": "Tuettu analyysi",
+        "question": "Millaisia analyysityyppejä näillä alueilla tuetaan?",
+        "preview": "Kuvaa aluekohtaisesti tuetun analyysin — aggregoinnin, trendin, vertailun, sijoituksen ja kohortin — sen sijaan, että lupaisi mitään yleistä.",
+        "source": "Genie One · analyysiominaisuudet"
+      },
+      "combine-domains": {
+        "topic": "Alueiden yhdistäminen",
+        "question": "Mitä alueita voit yhdistää vastatessasi kysymykseen?",
+        "preview": "Nimeää alueet, jotka se voi yhdistää yhteen vastaukseen, ja kertoo, missä niiden yhdistämiseen on hallinnoitu suhde.",
+        "source": "Genie One · alueiden väliset liitokset"
+      },
+      "sources-and-trust": {
+        "topic": "Luotetut lähteet",
+        "question": "Mitä datalähteitä käytät kysymyksiin vastaamiseen, ja miten päätät, mihin lähteeseen luotat?",
+        "preview": "Selittää, mitkä lähteet ovat vastausten taustalla ja mitä etusijajärjestystä se käyttää, kun kaksi lähdettä on ristiriidassa — eron vastauksen ja arvauksen välillä.",
+        "source": "Genie One · lähteen valinta"
+      },
+      "business-terms": {
+        "topic": "Termit, jotka se ymmärtää",
+        "question": "Mitä liiketoimintatermejä, mittareita ja suhteita ymmärrät?",
+        "preview": "Kertoo sille opetetun sanaston: liiketoimintatermit, mittarimääritelmät ja entiteettien väliset suhteet.",
+        "source": "Genie One · semanttinen malli"
+      },
+      "certified-metrics": {
+        "topic": "Sertifioidut mittarit",
+        "question": "Millä mittareilla on hallinnoidut tai sertifioidut määritelmät?",
+        "preview": "Erottaa hallinnoidun ja sertifioidun määritelmän sisältävät mittarit ad hoc -lasketuista mittareista, jotta tiedät, mihin lukuihin voi turvallisesti viitata.",
+        "source": "Genie One · sertifioidut mittarimääritelmät"
+      },
+      "visualizations": {
+        "topic": "Visualisoinnit",
+        "question": "Mitä visualisointeja voit luoda analyyttisistä kysymyksistä?",
+        "preview": "Kuvaa kaaviotyypit, joita se voi tuottaa analyyttisestä kysymyksestä, ja milloin tulos on parempi lukea taulukkona.",
+        "source": "Genie One · visualisointituki"
+      },
+      "explainability": {
+        "topic": "Näytä päättelysi",
+        "question": "Voitko selittää vastauksen taustalla olevan päättelyn, SQL:n, oletukset ja lähteet?",
+        "preview": "Pyytää tarkastuspolun: noudatetun päättelyn, suoritetun SQL:n, tehdyt oletukset ja luetut lähteet.",
+        "source": "Genie One · vastausten alkuperä"
+      },
+      "follow-ups": {
+        "topic": "Jatkokysymykset",
+        "question": "Millaisia jatkokysymyksiä voin esittää ensimmäisen vastauksen jälkeen?",
+        "preview": "Selittää, mitä se säilyttää kontekstissa keskusteluvuorojen välillä, jotta tiedät, mitä voit tarkentaa toistamatta koko kysymystä.",
+        "source": "Genie One · keskustelukonteksti"
+      },
+      "ambiguity": {
+        "topic": "Milloin sen täytyy kysyä",
+        "question": "Mitkä kysymykset vaatisivat tarkennusta, koska data tai terminologia on monitulkintaista?",
+        "preview": "Nimeää tapaukset, joissa se esittää tarkentavan kysymyksen arvaamisen sijaan — monitulkintaiset termit, päällekkäiset mittarit, päivämäärättömät aikavälit.",
+        "source": "Genie One · monitulkintaisuuden käsittely"
+      },
+      "structured-vs-documents": {
+        "topic": "Data ja dokumentit",
+        "question": "Mihin kysymyksiin voit vastata rakenteisen Databricks-datan perusteella ja mihin yhdistetyistä dokumenteista?",
+        "preview": "Erottaa, mihin se vastaa hallinnoiduista tauluista ja mihin yhdistetyistä dokumenteista.",
+        "source": "Genie One · rakenteisen & rakenteettoman datan kattavuus"
+      },
+      "connectors": {
+        "topic": "Yhdistetyt lähteet",
+        "question": "Voitko käyttää yhdistettyjä lähteitä, kuten Google Drive, SharePoint, Slack, Glean, Jira tai Confluence?",
+        "preview": "Raportoi, mitkä ulkoiset lähteet on oikeasti yhdistetty käyttöösi, eikä vain mitkä ovat teoriassa tuettuja.",
+        "source": "Genie One · yhdistetyt lähteet"
+      },
+      "file-with-data": {
+        "topic": "Tiedosto + oma data",
+        "question": "Voitko analysoida tiedoston yhdessä Databricks-datani kanssa?",
+        "preview": "Käsittelee, voidaanko ladattua tiedostoa analysoida hallinnoitujen taulujen rinnalla ja mitä hallintakäytäntöjä silloin sovelletaan.",
+        "source": "Genie One · tiedostoanalyysi"
+      },
+      "create-agent": {
+        "topic": "Uudelleenkäytettävä agentti",
+        "question": "Voitko luoda tästä keskustelusta uudelleenkäytettävän Genie Agentin?",
+        "preview": "Kysyy, voidaanko tämä keskustelu muuntaa uudelleenkäytettäväksi Genie Agentiksi, jota muut voivat suorittaa.",
+        "source": "Genie One · agenttien luonti"
+      },
+      "scheduled-briefing": {
+        "topic": "Ajastettu katsaus",
+        "question": "Voitko luoda ajastetun katsauksen tai toistuvan raportin?",
+        "preview": "Käsittelee vastauksen muuttamista aikataulun mukaiseksi toistuvaksi katsaukseksi tai raportiksi sekä sitä, ketkä sen saavat.",
+        "source": "Genie One · ajoitus"
+      },
+      "draft-document": {
+        "topic": "Luonnostele asiakirja",
+        "question": "Voitko luonnostella asiakirjan analyysin pohjalta?",
+        "preview": "Kattaa analyysin kirjoittamisen asiakirjaksi niin, että kuviot ja lähteet siirtyvät mukana eikä niitä kirjoiteta uudelleen.",
+        "source": "Genie One · asiakirjojen luonti"
+      },
+      "external-actions": {
+        "topic": "Toimiminen muissa järjestelmissä",
+        "question": "Voitko tehdä toimia ulkoisissa järjestelmissä, ja mitä käyttöoikeuksia tai hyväksyntöjä tarvitaan?",
+        "preview": "Kysyy vaikutuksista: mitä toimia se voi tehdä Databricksin ulkopuolella ja mitä käyttöoikeuksia tai hyväksyntöjä kukin niistä ensin vaatii.",
+        "source": "Genie One · toimintojen käyttöoikeudet"
+      },
+      "limitations": {
+        "topic": "Tunnetut rajoitukset",
+        "question": "Mitkä ovat tunnetut rajoitukset, datan tuoreuden rajoitteet ja käyttöoikeuksien rajat?",
+        "preview": "Kysyy rehelliset rajat: mitä se ei voi tehdä, kuinka vanhentunutta data voi olla ja missä kohtaa käyttöoikeutesi estävät vastauksen.",
+        "source": "Genie One · kyvykkyyksien rajat"
+      },
+      "avoid-questions": {
+        "topic": "Mitä ei kannata kysyä",
+        "question": "Mitä kysymyksiä minun kannattaa välttää, koska saatavilla oleva data ei pysty vastaamaan niihin luotettavasti?",
+        "preview": "Ensimmäisen kysymyksen kääntöpuoli: mitä kysymyksiä saatavilla oleva data ei tue, jotta et toimi epävarman luvun perusteella.",
+        "source": "Genie One · luotettavuuden rajat"
+      }
+    }
+  },
+  "fil-PH": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Coverage at Saklaw",
+      "Data & Trust": "Data at Tiwala",
+      "Answers & Explainability": "Mga Sagot at Pagpapaliwanag",
+      "Documents & Connectors": "Mga Dokumento at Connector",
+      "Actions & Automation": "Mga Aksyon at Automation",
+      "Limits & Boundaries": "Mga Limitasyon at Hangganan",
+      "Platform & Concepts": "Platform at Mga Konsepto"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Mga kaya mong sagutin",
+        "question": "Anong uri ng mga tanong sa negosyo ang kaya mong sagutin gamit ang data na maa-access ko?",
+        "preview": "Iniuulat ng Genie One ang mga uri ng tanong na kaya nitong sagutin mula sa data na naaabot ng sarili mong mga pahintulot — naka-scope sa iyo, hindi sa buong catalog.",
+        "source": "Genie One · mga naa-access na domain"
+      },
+      "domain-inventory": {
+        "topic": "Ano ang available sa akin",
+        "question": "Aling mga domain ng negosyo, Genie Agents, dashboard, metric view, at query ang available sa akin?",
+        "preview": "Inililista ang mga governed asset na talagang magagamit mo: mga domain ng negosyo, Genie Agents, dashboard, metric view, at naka-save na query.",
+        "source": "Genie One · imbentaryo ng domain at asset"
+      },
+      "analysis-types": {
+        "topic": "Suportadong pagsusuri",
+        "question": "Anong mga uri ng pagsusuri ang sinusuportahan sa mga domain na ito?",
+        "preview": "Inilalarawan ang pagsusuring sinusuportahan nito sa bawat domain — aggregation, trend, comparison, ranking, cohort — sa halip na mangako ng anumang generic.",
+        "source": "Genie One · mga kakayahan sa pagsusuri"
+      },
+      "combine-domains": {
+        "topic": "Pagsasama ng mga domain",
+        "question": "Aling mga domain ang kaya mong pagsamahin kapag sumasagot ng tanong?",
+        "preview": "Pinapangalanan ang mga domain na kaya nitong pagsamahin sa iisang sagot, at kung saan may governed relationship na magagamit para pagdugtungin ang mga ito.",
+        "source": "Genie One · cross-domain joins"
+      },
+      "sources-and-trust": {
+        "topic": "Mga source na pinagkakatiwalaan nito",
+        "question": "Anong mga data source ang ginagamit mo para sumagot ng mga tanong, at paano mo pinipili kung aling source ang pagkakatiwalaan?",
+        "preview": "Ipinapaliwanag kung aling mga source ang pinagbabatayan ng mga sagot nito at ang precedence na ginagamit kapag hindi nagtugma ang dalawang source — ang pagkakaiba ng sagot at hula.",
+        "source": "Genie One · pagpili ng source"
+      },
+      "business-terms": {
+        "topic": "Mga terminong nauunawaan nito",
+        "question": "Anong mga termino sa negosyo, metric, at relationship ang nauunawaan mo?",
+        "preview": "Iniuulat ang bokabularyong itinuro rito: mga termino sa negosyo, kahulugan ng metric, at mga relationship sa pagitan ng mga entity.",
+        "source": "Genie One · semantic model"
+      },
+      "certified-metrics": {
+        "topic": "Mga certified metric",
+        "question": "Aling mga metric ang may governed o certified na kahulugan?",
+        "preview": "Pinaghihiwalay ang mga metric na may governed, certified na kahulugan mula sa mga kinuwenta nang ad hoc, para malaman mo kung aling mga numero ang ligtas banggitin.",
+        "source": "Genie One · certified metric definitions"
+      },
+      "visualizations": {
+        "topic": "Mga visualization",
+        "question": "Anong mga visualization ang kaya mong gawin mula sa mga tanong sa pagsusuri?",
+        "preview": "Inilalarawan ang mga uri ng chart na kaya nitong gawin mula sa tanong sa pagsusuri, at kung kailan mas mabuting basahin ang resulta bilang table.",
+        "source": "Genie One · suporta sa visualization"
+      },
+      "explainability": {
+        "topic": "Ipakita ang batayan",
+        "question": "Maipapaliwanag mo ba ang pangangatwiran, SQL, mga pagpapalagay, at mga source sa likod ng sagot?",
+        "preview": "Humihingi ng audit trail: ang pangangatwirang sinunod nito, ang SQL na pinatakbo nito, ang mga pagpapalagay na ginawa nito, at ang mga source na binasa nito.",
+        "source": "Genie One · pinagmulan ng sagot"
+      },
+      "follow-ups": {
+        "topic": "Mga follow-up na tanong",
+        "question": "Anong uri ng mga follow-up na tanong ang maaari kong itanong pagkatapos ng unang sagot?",
+        "preview": "Ipinapaliwanag kung ano ang pinananatili nito sa konteksto sa pagitan ng mga palitan, para alam mo kung ano ang maaari mong linawin nang hindi inuulit ang buong tanong.",
+        "source": "Genie One · konteksto ng pag-uusap"
+      },
+      "ambiguity": {
+        "topic": "Kapag kailangan nitong magtanong",
+        "question": "Aling mga tanong ang mangangailangan ng paglilinaw dahil malabo ang data o terminolohiya?",
+        "preview": "Tinutukoy ang mga pagkakataong magtatanong ito para maglinaw sa halip na manghula — malalabong termino, magkakapatong na metric, mga saklaw na walang petsa.",
+        "source": "Genie One · paghawak sa kalabuan"
+      },
+      "structured-vs-documents": {
+        "topic": "Data vs mga dokumento",
+        "question": "Anong mga tanong ang masasagot mo mula sa structured Databricks data kumpara sa nakakonektang mga dokumento?",
+        "preview": "Nililinaw ang hangganan ng sinasagot nito mula sa mga governed table at ng sinasagot nito mula sa nakakonektang mga dokumento.",
+        "source": "Genie One · saklaw ng structured at unstructured"
+      },
+      "connectors": {
+        "topic": "Mga nakakonektang source",
+        "question": "Magagamit mo ba ang mga nakakonektang source gaya ng Google Drive, SharePoint, Slack, Glean, Jira, o Confluence?",
+        "preview": "Iniuulat kung aling external source ang talagang nakakonekta para sa iyo, sa halip na kung alin ang posibleng suportado sa teorya.",
+        "source": "Genie One · mga nakakonektang source"
+      },
+      "file-with-data": {
+        "topic": "File + iyong data",
+        "question": "Maaari mo bang suriin ang isang file kasama ng aking Databricks data?",
+        "preview": "Sinasaklaw kung maaaring suriin ang isang na-upload na file kasabay ng mga governed table, at kung anong governance ang nalalapat kapag ginawa ito.",
+        "source": "Genie One · pagsusuri ng file"
+      },
+      "create-agent": {
+        "topic": "Reusable agent",
+        "question": "Maaari ka bang gumawa ng reusable Genie Agent mula sa pag-uusap na ito?",
+        "preview": "Itinatanong kung maaaring i-promote ang pag-uusap na ito bilang reusable Genie Agent na maaaring patakbuhin ng iba.",
+        "source": "Genie One · paggawa ng agent"
+      },
+      "scheduled-briefing": {
+        "topic": "Naka-iskedyul na briefing",
+        "question": "Maaari ka bang gumawa ng naka-iskedyul na briefing o umuulit na report?",
+        "preview": "Sinasaklaw ang paggawa ng sagot bilang umuulit na briefing o report ayon sa iskedyul, at kung sino ang makakatanggap nito.",
+        "source": "Genie One · pag-iskedyul"
+      },
+      "draft-document": {
+        "topic": "Gumawa ng draft ng dokumento",
+        "question": "Puwede ka bang gumawa ng draft ng dokumento batay sa isang pagsusuri?",
+        "preview": "Saklaw nito ang pagsulat ng isang pagsusuri bilang dokumento, habang isinasama ang mga figure at pinagmulan sa halip na muling i-type.",
+        "source": "Genie One · pagbuo ng dokumento"
+      },
+      "external-actions": {
+        "topic": "Pagkilos sa ibang system",
+        "question": "Puwede ka bang gumawa ng mga aksyon sa external na system, at anong mga pahintulot o pag-apruba ang kakailanganin?",
+        "preview": "Ang tanong tungkol sa epekto: kung aling mga aksyon ang kaya nitong gawin sa labas ng Databricks, at ang mga pahintulot o pag-apruba na kailangan muna ng bawat isa.",
+        "source": "Genie One · mga pahintulot sa aksyon"
+      },
+      "limitations": {
+        "topic": "Mga kilalang limitasyon",
+        "question": "Ano ang mga kilalang limitasyon, limitasyon sa pagiging napapanahon ng data, at hangganan ng mga pahintulot?",
+        "preview": "Humihingi ito ng malinaw na hangganan: kung ano ang hindi nito magagawa, gaano kaluma maaaring ang data, at kung saan nililimitahan ng iyong mga pahintulot ang sagot.",
+        "source": "Genie One · hangganan ng kakayahan"
+      },
+      "avoid-questions": {
+        "topic": "Ano ang hindi dapat itanong",
+        "question": "Aling mga tanong ang dapat kong iwasan dahil hindi masasagot nang maaasahan ng available na data ang mga ito?",
+        "preview": "Kabaligtaran ng unang tanong: aling mga tanong ang hindi kayang suportahan ng available na data, para hindi ka kumilos batay sa hindi matibay na numero.",
+        "source": "Genie One · hangganan ng pagiging maaasahan"
+      }
+    }
+  },
+  "fr-FR": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Couverture et périmètre",
+      "Data & Trust": "Données et confiance",
+      "Answers & Explainability": "Réponses et explicabilité",
+      "Documents & Connectors": "Documents et connecteurs",
+      "Actions & Automation": "Actions et automatisation",
+      "Limits & Boundaries": "Limites et garde-fous",
+      "Platform & Concepts": "Plateforme et concepts"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Questions auxquelles répondre",
+        "question": "À quels types de questions métier pouvez-vous répondre avec les données auxquelles j’ai accès ?",
+        "preview": "Genie One indique les types de questions qu’il peut traiter à partir des données couvertes par vos propres autorisations — dans votre périmètre, pas dans l’ensemble du catalogue.",
+        "source": "Genie One · domaines accessibles"
+      },
+      "domain-inventory": {
+        "topic": "Ce qui est disponible pour moi",
+        "question": "Quels domaines métier, Genie Agents, dashboards, metric views et requêtes sont à ma disposition ?",
+        "preview": "Répertorie les ressources gouvernées que vous pouvez réellement utiliser : domaines métier, Genie Agents, dashboards, metric views et requêtes enregistrées.",
+        "source": "Genie One · inventaire des domaines et ressources"
+      },
+      "analysis-types": {
+        "topic": "Analyses prises en charge",
+        "question": "Quels types d’analyse sont pris en charge dans ces domaines ?",
+        "preview": "Décrit les analyses prises en charge par domaine — agrégation, tendance, comparaison, classement, cohorte — sans promesse générique.",
+        "source": "Genie One · capacités d’analyse"
+      },
+      "combine-domains": {
+        "topic": "Combinaison de domaines",
+        "question": "Quels domaines pouvez-vous combiner pour répondre à une question ?",
+        "preview": "Indique les domaines qu’il peut joindre dans une même réponse, et les cas où une relation gouvernée existe pour les relier.",
+        "source": "Genie One · jointures inter-domaines"
+      },
+      "sources-and-trust": {
+        "topic": "Sources de confiance",
+        "question": "Quelles sources de données utilisez-vous pour répondre aux questions, et comment décidez-vous de la source à privilégier ?",
+        "preview": "Explique quelles sources étayent ses réponses et la priorité appliquée lorsque deux sources divergent — ce qui fait la différence entre une réponse et une supposition.",
+        "source": "Genie One · sélection des sources"
+      },
+      "business-terms": {
+        "topic": "Termes compris",
+        "question": "Quels termes métier, métriques et relations comprenez-vous ?",
+        "preview": "Indique le vocabulaire qui lui a été enseigné : termes métier, définitions de métriques et relations entre entités.",
+        "source": "Genie One · modèle sémantique"
+      },
+      "certified-metrics": {
+        "topic": "Métriques certifiées",
+        "question": "Quelles métriques ont des définitions gouvernées ou certifiées ?",
+        "preview": "Distingue les métriques dotées d’une définition gouvernée et certifiée de celles calculées ad hoc, afin que vous sachiez quels chiffres citer en confiance.",
+        "source": "Genie One · définitions de métriques certifiées"
+      },
+      "visualizations": {
+        "topic": "Visualisations",
+        "question": "Quelles visualisations pouvez-vous générer à partir de questions analytiques ?",
+        "preview": "Décrit les types de graphiques qu’il peut produire à partir d’une question analytique, et quand il vaut mieux lire un résultat sous forme de tableau.",
+        "source": "Genie One · prise en charge des visualisations"
+      },
+      "explainability": {
+        "topic": "Montrez votre raisonnement",
+        "question": "Pouvez-vous expliquer le raisonnement, le SQL, les hypothèses et les sources derrière une réponse ?",
+        "preview": "Demande la piste d’audit : le raisonnement suivi, le SQL exécuté, les hypothèses formulées et les sources consultées.",
+        "source": "Genie One · provenance des réponses"
+      },
+      "follow-ups": {
+        "topic": "Questions de suivi",
+        "question": "Quels types de questions de suivi puis-je poser après une première réponse ?",
+        "preview": "Explique ce qu’il conserve en contexte entre les échanges, afin que vous sachiez quoi affiner sans reformuler toute la question.",
+        "source": "Genie One · contexte conversationnel"
+      },
+      "ambiguity": {
+        "topic": "Quand il doit demander",
+        "question": "Quelles questions nécessiteraient une clarification parce que les données ou la terminologie sont ambiguës ?",
+        "preview": "Indique les cas où il posera une question de clarification au lieu de deviner — termes ambigus, métriques qui se recoupent, plages sans date.",
+        "source": "Genie One · gestion de l’ambiguïté"
+      },
+      "structured-vs-documents": {
+        "topic": "Données ou documents",
+        "question": "À quelles questions pouvez-vous répondre à partir de données Databricks structurées plutôt que de documents connectés ?",
+        "preview": "Fait la distinction entre les réponses fondées sur des tables gouvernées et celles fondées sur des documents connectés.",
+        "source": "Genie One · couverture structurée et non structurée"
+      },
+      "connectors": {
+        "topic": "Sources connectées",
+        "question": "Pouvez-vous utiliser des sources connectées comme Google Drive, SharePoint, Slack, Glean, Jira ou Confluence ?",
+        "preview": "Indique quelles sources externes sont réellement connectées pour vous, et non celles qui sont théoriquement prises en charge.",
+        "source": "Genie One · sources connectées"
+      },
+      "file-with-data": {
+        "topic": "Fichier + vos données",
+        "question": "Pouvez-vous analyser un fichier avec mes données Databricks ?",
+        "preview": "Précise si un fichier chargé peut être analysé avec des tables gouvernées, et quelle gouvernance s’applique dans ce cas.",
+        "source": "Genie One · analyse de fichiers"
+      },
+      "create-agent": {
+        "topic": "Agent réutilisable",
+        "question": "Pouvez-vous créer un Genie Agent réutilisable à partir de cette conversation ?",
+        "preview": "Demande si cette conversation peut être transformée en Genie Agent réutilisable que d’autres peuvent exécuter.",
+        "source": "Genie One · création d’agents"
+      },
+      "scheduled-briefing": {
+        "topic": "Briefing planifié",
+        "question": "Pouvez-vous créer un briefing planifié ou un rapport récurrent ?",
+        "preview": "Explique comment transformer une réponse en briefing ou rapport récurrent selon un calendrier, et qui le reçoit.",
+        "source": "Genie One · planification"
+      },
+      "draft-document": {
+        "topic": "Rédiger un document",
+        "question": "Pouvez-vous rédiger un document à partir d’une analyse ?",
+        "preview": "Demande de transformer une analyse en document, en conservant les chiffres et les sources plutôt qu’en les ressaisissant.",
+        "source": "Genie One · génération de documents"
+      },
+      "external-actions": {
+        "topic": "Agir dans d’autres systèmes",
+        "question": "Pouvez-vous effectuer des actions dans des systèmes externes, et quelles autorisations ou approbations seraient nécessaires ?",
+        "preview": "La question sur les effets : quelles actions l’agent peut effectuer en dehors de Databricks, et les autorisations ou approbations requises au préalable pour chacune.",
+        "source": "Genie One · autorisations d’action"
+      },
+      "limitations": {
+        "topic": "Limites connues",
+        "question": "Quelles sont les limites connues, les contraintes de fraîcheur des données et les limites d’autorisation ?",
+        "preview": "Demande les limites réelles : ce que l’agent ne peut pas faire, à quel point les données peuvent dater et où vos autorisations limitent la réponse.",
+        "source": "Genie One · limites des capacités"
+      },
+      "avoid-questions": {
+        "topic": "Ce qu’il vaut mieux ne pas demander",
+        "question": "Quelles questions devrais-je éviter de poser, car les données disponibles ne permettent pas d’y répondre de manière fiable ?",
+        "preview": "L’inverse de la première question : les questions que les données disponibles ne peuvent pas étayer, afin de ne pas agir sur un chiffre fragile.",
+        "source": "Genie One · limites de fiabilité"
+      }
+    }
+  },
+  "hi-IN": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "कवरेज और दायरा",
+      "Data & Trust": "डेटा और भरोसा",
+      "Answers & Explainability": "उत्तर और व्याख्येयता",
+      "Documents & Connectors": "दस्तावेज़ और कनेक्टर",
+      "Actions & Automation": "कार्रवाइयाँ और ऑटोमेशन",
+      "Limits & Boundaries": "सीमाएँ और हदें",
+      "Platform & Concepts": "प्लैटफ़ॉर्म और अवधारणाएँ"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "आप क्या जवाब दे सकते हैं",
+        "question": "मेरी पहुँच वाले डेटा का उपयोग करके आप किस तरह के व्यावसायिक सवालों के जवाब दे सकते हैं?",
+        "preview": "Genie One बताता है कि आपकी अपनी अनुमतियों से उपलब्ध डेटा से वह किस प्रकार के सवालों के जवाब दे सकता है — यह आपके दायरे तक सीमित है, पूरे कैटलॉग तक नहीं.",
+        "source": "Genie One · सुलभ डोमेन"
+      },
+      "domain-inventory": {
+        "topic": "मेरे लिए क्या उपलब्ध है",
+        "question": "कौन-से व्यावसायिक डोमेन, Genie Agents, dashboard, metric views, और क्वेरी मेरे लिए उपलब्ध हैं?",
+        "preview": "उन गवर्न किए गए एसेट की सूची दिखाता है जिन्हें आप वास्तव में उपयोग कर सकते हैं: व्यावसायिक डोमेन, Genie Agents, dashboard, metric views, और सेव की गई क्वेरी.",
+        "source": "Genie One · डोमेन और एसेट इन्वेंटरी"
+      },
+      "analysis-types": {
+        "topic": "समर्थित विश्लेषण",
+        "question": "इन डोमेन में किस तरह का विश्लेषण समर्थित है?",
+        "preview": "किसी सामान्य दावे के बजाय, हर डोमेन के लिए समर्थित विश्लेषण बताता है — एकत्रीकरण, रुझान, तुलना, रैंकिंग, कोहॉर्ट.",
+        "source": "Genie One · विश्लेषण क्षमताएँ"
+      },
+      "combine-domains": {
+        "topic": "डोमेन मिलाना",
+        "question": "किसी सवाल का जवाब देते समय आप कौन-से डोमेन जोड़ सकते हैं?",
+        "preview": "उन डोमेन के नाम बताता है जिन्हें वह एक ही उत्तर में जोड़ सकता है, और जहाँ उन्हें जोड़ने के लिए कोई गवर्न किया गया संबंध मौजूद है.",
+        "source": "Genie One · क्रॉस-डोमेन जॉइन"
+      },
+      "sources-and-trust": {
+        "topic": "जिन स्रोतों पर यह भरोसा करता है",
+        "question": "सवालों के जवाब देने के लिए आप किन डेटा स्रोतों का उपयोग करते हैं, और किस स्रोत पर भरोसा करना है यह कैसे तय करते हैं?",
+        "preview": "बताता है कि उसके जवाब किन स्रोतों पर आधारित हैं और जब दो स्रोत असहमत हों तो वह कौन-सी प्राथमिकता लागू करता है — यही एक उत्तर और अनुमान के बीच का अंतर है.",
+        "source": "Genie One · स्रोत चयन"
+      },
+      "business-terms": {
+        "topic": "यह किन शब्दों को समझता है",
+        "question": "आप कौन-से व्यावसायिक शब्द, मेट्रिक्स, और संबंध समझते हैं?",
+        "preview": "बताता है कि इसे कौन-सी शब्दावली सिखाई गई है: व्यावसायिक शब्द, मेट्रिक परिभाषाएँ, और एंटिटी के बीच संबंध.",
+        "source": "Genie One · सिमैंटिक मॉडल"
+      },
+      "certified-metrics": {
+        "topic": "प्रमाणित मेट्रिक्स",
+        "question": "किन मेट्रिक्स की गवर्न की गई या प्रमाणित परिभाषाएँ हैं?",
+        "preview": "गवर्न की गई, प्रमाणित परिभाषा वाले मेट्रिक्स को ad hoc तरीके से गणना किए गए मेट्रिक्स से अलग करता है, ताकि आपको पता हो कि किन संख्याओं को भरोसे से उद्धृत किया जा सकता है.",
+        "source": "Genie One · प्रमाणित मेट्रिक परिभाषाएँ"
+      },
+      "visualizations": {
+        "topic": "विज़ुअलाइज़ेशन",
+        "question": "विश्लेषणात्मक प्रश्नों से आप कौन-से विज़ुअलाइज़ेशन बना सकते हैं?",
+        "preview": "बताता है कि विश्लेषणात्मक प्रश्न से यह कौन-से चार्ट प्रकार बना सकता है, और कब परिणाम को तालिका के रूप में पढ़ना बेहतर होता है।",
+        "source": "Genie One · विज़ुअलाइज़ेशन समर्थन"
+      },
+      "explainability": {
+        "topic": "अपना काम दिखाएँ",
+        "question": "क्या आप किसी उत्तर के पीछे का तर्क, SQL, धारणाएँ और स्रोत समझा सकते हैं?",
+        "preview": "ऑडिट ट्रेल मांगता है: उसने कौन-सा तर्क अपनाया, कौन-सा SQL चलाया, कौन-सी धारणाएँ बनाईं, और कौन-से स्रोत पढ़े।",
+        "source": "Genie One · उत्तर की उत्पत्ति"
+      },
+      "follow-ups": {
+        "topic": "फ़ॉलो-अप प्रश्न",
+        "question": "प्रारंभिक उत्तर के बाद मैं किस तरह के फ़ॉलो-अप प्रश्न पूछ सकता हूँ?",
+        "preview": "समझाता है कि यह अलग-अलग चरणों के बीच संदर्भ में क्या रखता है, ताकि आपको पता हो कि पूरा प्रश्न दोहराए बिना आप क्या बेहतर कर सकते हैं।",
+        "source": "Genie One · बातचीत का संदर्भ"
+      },
+      "ambiguity": {
+        "topic": "कब पूछना ज़रूरी है",
+        "question": "किन प्रश्नों के लिए स्पष्टीकरण चाहिए होगा क्योंकि डेटा या शब्दावली अस्पष्ट है?",
+        "preview": "उन स्थितियों को बताता है जहाँ यह अनुमान लगाने के बजाय स्पष्टीकरण वाला प्रश्न पूछेगा — अस्पष्ट शब्द, ओवरलैपिंग मेट्रिक्स, बिना तारीख वाली रेंज।",
+        "source": "Genie One · अस्पष्टता प्रबंधन"
+      },
+      "structured-vs-documents": {
+        "topic": "डेटा बनाम दस्तावेज़",
+        "question": "संरचित Databricks डेटा की तुलना में कनेक्टेड दस्तावेज़ों से आप कौन-से प्रश्नों के उत्तर दे सकते हैं?",
+        "preview": "governed tables से मिलने वाले उत्तरों और कनेक्टेड दस्तावेज़ों से मिलने वाले उत्तरों के बीच अंतर स्पष्ट करता है।",
+        "source": "Genie One · संरचित & असंरचित कवरेज"
+      },
+      "connectors": {
+        "topic": "कनेक्टेड स्रोत",
+        "question": "क्या आप Google Drive, SharePoint, Slack, Glean, Jira, या Confluence जैसे कनेक्टेड स्रोतों का उपयोग कर सकते हैं?",
+        "preview": "बताता है कि आपके लिए वास्तव में कौन-से बाहरी स्रोत कनेक्टेड हैं, न कि सैद्धांतिक रूप से कौन-से समर्थित हैं।",
+        "source": "Genie One · कनेक्टेड स्रोत"
+      },
+      "file-with-data": {
+        "topic": "फ़ाइल + आपका डेटा",
+        "question": "क्या आप मेरी Databricks डेटा के साथ किसी फ़ाइल का विश्लेषण कर सकते हैं?",
+        "preview": "कवर करता है कि अपलोड की गई फ़ाइल का governed tables के साथ विश्लेषण किया जा सकता है या नहीं, और ऐसा होने पर कौन-सी गवर्नेंस लागू होती है।",
+        "source": "Genie One · फ़ाइल विश्लेषण"
+      },
+      "create-agent": {
+        "topic": "दोबारा उपयोग किया जा सकने वाला एजेंट",
+        "question": "क्या आप इस बातचीत से दोबारा उपयोग किया जा सकने वाला Genie Agent बना सकते हैं?",
+        "preview": "पूछता है कि क्या इस बातचीत को ऐसे दोबारा उपयोग किए जा सकने वाले Genie Agent में बदला जा सकता है जिसे दूसरे लोग चला सकें।",
+        "source": "Genie One · एजेंट ऑथरिंग"
+      },
+      "scheduled-briefing": {
+        "topic": "शेड्यूल की गई ब्रीफिंग",
+        "question": "क्या आप शेड्यूल की गई ब्रीफिंग या आवर्ती रिपोर्ट बना सकते हैं?",
+        "preview": "किसी उत्तर को शेड्यूल पर चलने वाली आवर्ती ब्रीफिंग या रिपोर्ट में बदलना, और उसे कौन प्राप्त करता है, कवर करता है।",
+        "source": "Genie One · शेड्यूलिंग"
+      },
+      "draft-document": {
+        "topic": "दस्तावेज़ का मसौदा तैयार करें",
+        "question": "क्या आप किसी विश्लेषण के आधार पर दस्तावेज़ का मसौदा तैयार कर सकते हैं?",
+        "preview": "विश्लेषण को दस्तावेज़ के रूप में लिखने के बारे में है, जिसमें आंकड़े और स्रोत दोबारा टाइप करने के बजाय साथ बने रहते हैं।",
+        "source": "Genie One · दस्तावेज़ निर्माण"
+      },
+      "external-actions": {
+        "topic": "अन्य सिस्टम में कार्रवाई करना",
+        "question": "क्या आप बाहरी सिस्टम में कार्रवाइयाँ कर सकते हैं, और किन अनुमतियों या स्वीकृतियों की आवश्यकता होगी?",
+        "preview": "असर से जुड़ा सवाल: यह Databricks के बाहर कौन-सी कार्रवाइयाँ कर सकता है, और हर कार्रवाई से पहले कौन-सी अनुमतियाँ या स्वीकृतियाँ चाहिए।",
+        "source": "Genie One · कार्रवाई अनुमतियाँ"
+      },
+      "limitations": {
+        "topic": "ज्ञात सीमाएँ",
+        "question": "ज्ञात सीमाएँ, डेटा की ताजगी से जुड़ी बाधाएँ, और अनुमति की सीमाएँ क्या हैं?",
+        "preview": "ईमानदार सीमाओं के बारे में पूछता है: यह क्या नहीं कर सकता, डेटा कितना पुराना हो सकता है, और आपकी अनुमतियाँ कहाँ उत्तर को सीमित करती हैं।",
+        "source": "Genie One · क्षमता सीमाएँ"
+      },
+      "avoid-questions": {
+        "topic": "क्या न पूछें",
+        "question": "मुझे कौन-से सवाल पूछने से बचना चाहिए क्योंकि उपलब्ध डेटा उनके भरोसेमंद जवाब नहीं दे सकता?",
+        "preview": "पहले सवाल का उल्टा: उपलब्ध डेटा किन सवालों का समर्थन नहीं कर सकता, ताकि आप अस्थिर संख्या के आधार पर कार्रवाई न करें।",
+        "source": "Genie One · भरोसेमंदता सीमाएँ"
+      }
+    }
+  },
+  "id-ID": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Cakupan & Ruang Lingkup",
+      "Data & Trust": "Data & Kepercayaan",
+      "Answers & Explainability": "Jawaban & Keterjelasan",
+      "Documents & Connectors": "Dokumen & Konektor",
+      "Actions & Automation": "Tindakan & Otomatisasi",
+      "Limits & Boundaries": "Batasan & Cakupan",
+      "Platform & Concepts": "Platform & Konsep"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Apa yang bisa Anda jawab",
+        "question": "Jenis pertanyaan bisnis apa yang bisa Anda jawab menggunakan data yang dapat saya akses?",
+        "preview": "Genie One melaporkan jenis pertanyaan yang dapat dijawab dari data yang dapat dijangkau izin Anda sendiri — terbatas untuk Anda, bukan untuk seluruh katalog.",
+        "source": "Genie One · domain yang dapat diakses"
+      },
+      "domain-inventory": {
+        "topic": "Apa yang tersedia untuk saya",
+        "question": "Domain bisnis, Genie Agents, dashboard, metric view, dan kueri apa yang tersedia untuk saya?",
+        "preview": "Mencantumkan aset yang dikelola tata kelolanya dan benar-benar dapat Anda gunakan: domain bisnis, Genie Agents, dashboard, metric view, dan kueri tersimpan.",
+        "source": "Genie One · inventaris domain & aset"
+      },
+      "analysis-types": {
+        "topic": "Analisis yang didukung",
+        "question": "Jenis analisis apa yang didukung di seluruh domain ini?",
+        "preview": "Menjelaskan analisis yang didukung per domain — agregasi, tren, perbandingan, peringkat, kohort — bukan menjanjikan sesuatu yang umum.",
+        "source": "Genie One · kemampuan analisis"
+      },
+      "combine-domains": {
+        "topic": "Menggabungkan domain",
+        "question": "Domain mana yang dapat Anda gabungkan saat menjawab pertanyaan?",
+        "preview": "Menyebutkan domain yang dapat digabungkan dalam satu jawaban, dan di mana ada hubungan yang dikelola tata kelolanya untuk menghubungkannya.",
+        "source": "Genie One · join lintas domain"
+      },
+      "sources-and-trust": {
+        "topic": "Sumber yang dipercaya",
+        "question": "Sumber data apa yang Anda gunakan untuk menjawab pertanyaan, dan bagaimana Anda menentukan sumber mana yang dipercaya?",
+        "preview": "Menjelaskan sumber yang mendukung jawabannya dan prioritas yang diterapkan saat dua sumber berbeda — perbedaan antara jawaban dan dugaan.",
+        "source": "Genie One · pemilihan sumber"
+      },
+      "business-terms": {
+        "topic": "Istilah yang dipahami",
+        "question": "Istilah bisnis, metrik, dan hubungan apa yang Anda pahami?",
+        "preview": "Melaporkan kosakata yang telah diajarkan: istilah bisnis, definisi metrik, dan hubungan antarentitas.",
+        "source": "Genie One · model semantik"
+      },
+      "certified-metrics": {
+        "topic": "Metrik tersertifikasi",
+        "question": "Metrik mana yang memiliki definisi yang dikelola tata kelolanya atau tersertifikasi?",
+        "preview": "Memisahkan metrik dengan definisi yang dikelola tata kelolanya dan tersertifikasi dari metrik yang dihitung ad hoc, sehingga Anda tahu angka mana yang aman untuk dikutip.",
+        "source": "Genie One · definisi metrik tersertifikasi"
+      },
+      "visualizations": {
+        "topic": "Visualisasi",
+        "question": "Visualisasi apa yang dapat Anda hasilkan dari pertanyaan analitis?",
+        "preview": "Menjelaskan jenis bagan yang dapat dibuat dari pertanyaan analitis, dan kapan hasil lebih baik dibaca sebagai tabel.",
+        "source": "Genie One · dukungan visualisasi"
+      },
+      "explainability": {
+        "topic": "Tunjukkan prosesnya",
+        "question": "Bisakah Anda menjelaskan penalaran, SQL, asumsi, dan sumber di balik sebuah jawaban?",
+        "preview": "Meminta jejak audit: penalaran yang diikuti, SQL yang dijalankan, asumsi yang dibuat, dan sumber yang dibaca.",
+        "source": "Genie One · asal-usul jawaban"
+      },
+      "follow-ups": {
+        "topic": "Pertanyaan lanjutan",
+        "question": "Jenis pertanyaan lanjutan apa yang dapat saya ajukan setelah jawaban awal?",
+        "preview": "Menjelaskan apa yang tetap disimpan dalam konteks antar giliran, sehingga Anda tahu apa yang dapat diperinci tanpa mengulang seluruh pertanyaan.",
+        "source": "Genie One · konteks percakapan"
+      },
+      "ambiguity": {
+        "topic": "Kapan perlu bertanya",
+        "question": "Pertanyaan mana yang memerlukan klarifikasi karena data atau terminologinya ambigu?",
+        "preview": "Menyebutkan kasus ketika akan mengajukan pertanyaan klarifikasi alih-alih menebak — istilah ambigu, metrik yang tumpang tindih, rentang tanpa tanggal.",
+        "source": "Genie One · penanganan ambiguitas"
+      },
+      "structured-vs-documents": {
+        "topic": "Data vs dokumen",
+        "question": "Pertanyaan apa yang dapat Anda jawab dari data terstruktur Databricks dibandingkan dokumen yang terhubung?",
+        "preview": "Menjelaskan batas antara jawaban dari tabel yang dikelola tata kelolanya dan jawaban dari dokumen yang terhubung.",
+        "source": "Genie One · cakupan terstruktur & tidak terstruktur"
+      },
+      "connectors": {
+        "topic": "Sumber terhubung",
+        "question": "Bisakah Anda menggunakan sumber terhubung seperti Google Drive, SharePoint, Slack, Glean, Jira, atau Confluence?",
+        "preview": "Melaporkan sumber eksternal mana yang benar-benar terhubung untuk Anda, bukan sumber mana yang secara teori didukung.",
+        "source": "Genie One · sumber terhubung"
+      },
+      "file-with-data": {
+        "topic": "File + data Anda",
+        "question": "Bisakah Anda menganalisis file bersama data Databricks saya?",
+        "preview": "Mencakup apakah file yang diunggah dapat dianalisis bersama tabel yang dikelola tata kelolanya, dan tata kelola apa yang berlaku saat itu.",
+        "source": "Genie One · analisis file"
+      },
+      "create-agent": {
+        "topic": "Genie Agent yang dapat digunakan ulang",
+        "question": "Bisakah Anda membuat Genie Agent yang dapat digunakan ulang dari percakapan ini?",
+        "preview": "Menanyakan apakah percakapan ini dapat dipromosikan menjadi Genie Agent yang dapat digunakan ulang oleh orang lain.",
+        "source": "Genie One · pembuatan agent"
+      },
+      "scheduled-briefing": {
+        "topic": "Briefing terjadwal",
+        "question": "Bisakah Anda membuat briefing terjadwal atau laporan berulang?",
+        "preview": "Mencakup pengubahan jawaban menjadi briefing atau laporan berulang sesuai jadwal, serta siapa yang menerimanya.",
+        "source": "Genie One · penjadwalan"
+      },
+      "draft-document": {
+        "topic": "Buat draf dokumen",
+        "question": "Bisakah Anda membuat draf dokumen berdasarkan analisis?",
+        "preview": "Mencakup penyusunan analisis menjadi dokumen, dengan angka dan sumber tetap terbawa, bukan diketik ulang.",
+        "source": "Genie One · pembuatan dokumen"
+      },
+      "external-actions": {
+        "topic": "Bertindak di sistem lain",
+        "question": "Bisakah Anda melakukan tindakan di sistem eksternal, dan izin atau persetujuan apa yang diperlukan?",
+        "preview": "Pertanyaan tentang dampak: tindakan apa yang dapat dilakukan di luar Databricks, dan izin atau persetujuan yang harus dipenuhi lebih dulu untuk masing-masing.",
+        "source": "Genie One · izin tindakan"
+      },
+      "limitations": {
+        "topic": "Batasan yang diketahui",
+        "question": "Apa saja batasan yang diketahui, kendala keterkinian data, dan batas izin?",
+        "preview": "Menanyakan batasan apa adanya: apa yang tidak dapat dilakukan, seberapa usang data mungkin, dan di mana izin Anda membatasi jawaban.",
+        "source": "Genie One · batas kemampuan"
+      },
+      "avoid-questions": {
+        "topic": "Yang sebaiknya tidak ditanyakan",
+        "question": "Pertanyaan mana yang sebaiknya saya hindari karena data yang tersedia tidak dapat menjawabnya dengan andal?",
+        "preview": "Kebalikan dari pertanyaan pertama: pertanyaan mana yang tidak didukung oleh data yang tersedia, agar Anda tidak bertindak berdasarkan angka yang meragukan.",
+        "source": "Genie One · batas keandalan"
+      }
+    }
+  },
+  "it-IT": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Copertura e ambito",
+      "Data & Trust": "Dati e affidabilità",
+      "Answers & Explainability": "Risposte e spiegabilità",
+      "Documents & Connectors": "Documenti e connettori",
+      "Actions & Automation": "Azioni e automazione",
+      "Limits & Boundaries": "Limiti e confini",
+      "Platform & Concepts": "Piattaforma e concetti"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "A cosa puoi rispondere",
+        "question": "A quali tipi di domande di business puoi rispondere usando i dati a cui ho accesso?",
+        "preview": "Genie One indica i tipi di domande che può gestire dai dati raggiungibili con le tue autorizzazioni — in base al tuo ambito, non all'intero catalogo.",
+        "source": "Genie One · domini accessibili"
+      },
+      "domain-inventory": {
+        "topic": "Cosa è disponibile per me",
+        "question": "Quali domini di business, Genie Agents, dashboard, metric view e query sono disponibili per me?",
+        "preview": "Elenca gli asset governati che puoi effettivamente usare: domini di business, Genie Agents, dashboard, metric view e query salvate.",
+        "source": "Genie One · inventario di domini e asset"
+      },
+      "analysis-types": {
+        "topic": "Analisi supportate",
+        "question": "Quali tipi di analisi sono supportati in questi domini?",
+        "preview": "Descrive le analisi supportate per dominio — aggregazione, trend, confronto, ranking, coorte — invece di promettere qualcosa di generico.",
+        "source": "Genie One · capacità di analisi"
+      },
+      "combine-domains": {
+        "topic": "Combinare domini",
+        "question": "Quali domini puoi combinare quando rispondi a una domanda?",
+        "preview": "Indica i domini che può unire in un'unica risposta e dove esiste una relazione governata su cui collegarli.",
+        "source": "Genie One · join tra domini"
+      },
+      "sources-and-trust": {
+        "topic": "Fonti considerate affidabili",
+        "question": "Quali fonti di dati usi per rispondere alle domande e come decidi di quale fonte fidarti?",
+        "preview": "Spiega quali fonti supportano le sue risposte e la precedenza che applica quando due fonti non concordano — la differenza tra una risposta e un'ipotesi.",
+        "source": "Genie One · selezione delle fonti"
+      },
+      "business-terms": {
+        "topic": "Termini che comprende",
+        "question": "Quali termini di business, metriche e relazioni comprendi?",
+        "preview": "Riporta il vocabolario che gli è stato insegnato: termini di business, definizioni delle metriche e relazioni tra entità.",
+        "source": "Genie One · modello semantico"
+      },
+      "certified-metrics": {
+        "topic": "Metriche certificate",
+        "question": "Quali metriche hanno definizioni governate o certificate?",
+        "preview": "Distingue le metriche con una definizione governata e certificata da quelle calcolate ad hoc, così sai quali numeri puoi citare con sicurezza.",
+        "source": "Genie One · definizioni delle metriche certificate"
+      },
+      "visualizations": {
+        "topic": "Visualizzazioni",
+        "question": "Quali visualizzazioni puoi generare da domande analitiche?",
+        "preview": "Descrive i tipi di grafico che può produrre da una domanda analitica e quando un risultato è più leggibile come tabella.",
+        "source": "Genie One · supporto alle visualizzazioni"
+      },
+      "explainability": {
+        "topic": "Mostra il ragionamento",
+        "question": "Puoi spiegare il ragionamento, il SQL, le ipotesi e le fonti dietro una risposta?",
+        "preview": "Richiede la traccia di audit: il ragionamento seguito, il SQL eseguito, le ipotesi fatte e le fonti lette.",
+        "source": "Genie One · provenienza delle risposte"
+      },
+      "follow-ups": {
+        "topic": "Domande di approfondimento",
+        "question": "Che tipo di domande di approfondimento posso fare dopo una prima risposta?",
+        "preview": "Spiega cosa mantiene nel contesto tra un turno e l’altro, così sai cosa puoi affinare senza ripetere tutta la domanda.",
+        "source": "Genie One · contesto conversazionale"
+      },
+      "ambiguity": {
+        "topic": "Quando deve chiedere",
+        "question": "Quali domande richiederebbero un chiarimento perché i dati o la terminologia sono ambigui?",
+        "preview": "Indica i casi in cui farà una domanda di chiarimento invece di tirare a indovinare — termini ambigui, metriche sovrapposte, intervalli senza date.",
+        "source": "Genie One · gestione delle ambiguità"
+      },
+      "structured-vs-documents": {
+        "topic": "Dati e documenti",
+        "question": "A quali domande puoi rispondere usando dati strutturati Databricks rispetto a documenti collegati?",
+        "preview": "Distingue ciò a cui risponde usando tabelle governate da ciò a cui risponde usando documenti collegati.",
+        "source": "Genie One · copertura strutturata e non strutturata"
+      },
+      "connectors": {
+        "topic": "Fonti collegate",
+        "question": "Puoi usare fonti collegate come Google Drive, SharePoint, Slack, Glean, Jira o Confluence?",
+        "preview": "Indica quali fonti esterne sono effettivamente collegate per te, invece di quelle supportate solo in teoria.",
+        "source": "Genie One · fonti collegate"
+      },
+      "file-with-data": {
+        "topic": "File + i tuoi dati",
+        "question": "Puoi analizzare un file insieme ai miei dati Databricks?",
+        "preview": "Spiega se un file caricato può essere analizzato insieme a tabelle governate e quale governance si applica in quel caso.",
+        "source": "Genie One · analisi dei file"
+      },
+      "create-agent": {
+        "topic": "Agent riutilizzabile",
+        "question": "Puoi creare un Genie Agent riutilizzabile da questa conversazione?",
+        "preview": "Chiede se questa conversazione può essere promossa a Genie Agent riutilizzabile che altri possono eseguire.",
+        "source": "Genie One · creazione di agent"
+      },
+      "scheduled-briefing": {
+        "topic": "Briefing pianificato",
+        "question": "Puoi creare un briefing pianificato o un report ricorrente?",
+        "preview": "Copre la trasformazione di una risposta in un briefing o report ricorrente secondo una pianificazione, e chi lo riceve.",
+        "source": "Genie One · pianificazione"
+      },
+      "draft-document": {
+        "topic": "Redigere un documento",
+        "question": "Puoi redigere un documento basato su un'analisi?",
+        "preview": "Riguarda la trasformazione di un'analisi in un documento, mantenendo figure e fonti invece di reinserirle manualmente.",
+        "source": "Genie One · generazione di documenti"
+      },
+      "external-actions": {
+        "topic": "Azioni in altri sistemi",
+        "question": "Puoi eseguire azioni in sistemi esterni, e quali autorizzazioni o approvazioni sarebbero necessarie?",
+        "preview": "La domanda sugli effetti: quali azioni può eseguire fuori da Databricks, e quali autorizzazioni o approvazioni richiede prima ciascuna.",
+        "source": "Genie One · autorizzazioni per le azioni"
+      },
+      "limitations": {
+        "topic": "Limiti noti",
+        "question": "Quali sono i limiti noti, i vincoli di aggiornamento dei dati e i confini delle autorizzazioni?",
+        "preview": "Chiede i limiti effettivi: cosa non può fare, quanto possono essere datati i dati e dove le tue autorizzazioni impediscono la risposta.",
+        "source": "Genie One · confini delle capacità"
+      },
+      "avoid-questions": {
+        "topic": "Cosa non chiedere",
+        "question": "Quali domande dovrei evitare perché i dati disponibili non possono rispondere in modo affidabile?",
+        "preview": "L'inverso della prima domanda: quali domande i dati disponibili non possono supportare, così non agisci sulla base di un numero incerto.",
+        "source": "Genie One · confini dell'affidabilità"
+      }
+    }
+  },
+  "ja-JP": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "対応範囲とスコープ",
+      "Data & Trust": "データと信頼性",
+      "Answers & Explainability": "回答と説明可能性",
+      "Documents & Connectors": "ドキュメントとコネクタ",
+      "Actions & Automation": "アクションと自動化",
+      "Limits & Boundaries": "制限と境界",
+      "Platform & Concepts": "プラットフォームと概念"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "回答できること",
+        "question": "アクセスできるデータを使って、どのようなビジネス上の質問に答えられますか?",
+        "preview": "Genie One は、あなた自身の権限でアクセスできるデータから対応できる質問の種類を示します — カタログ全体ではなく、あなたの範囲に限定されます。",
+        "source": "Genie One · アクセス可能なドメイン"
+      },
+      "domain-inventory": {
+        "topic": "利用できるもの",
+        "question": "私が利用できるビジネスドメイン、Genie Agents、ダッシュボード、metric view、クエリはどれですか?",
+        "preview": "実際に利用できるガバナンス対象のアセットを一覧表示します: ビジネスドメイン、Genie Agents、ダッシュボード、metric view、保存済みクエリ。",
+        "source": "Genie One · ドメインとアセットのインベントリ"
+      },
+      "analysis-types": {
+        "topic": "対応している分析",
+        "question": "これらのドメインでは、どのような分析タイプがサポートされていますか?",
+        "preview": "一般的な約束ではなく、ドメインごとにサポートする分析 — 集計、トレンド、比較、ランキング、コホート — を説明します。",
+        "source": "Genie One · 分析機能"
+      },
+      "combine-domains": {
+        "topic": "ドメインの組み合わせ",
+        "question": "質問に答えるとき、どのドメインを組み合わせられますか?",
+        "preview": "1つの回答で結合できるドメインと、その結合に使えるガバナンス対象のリレーションシップが存在する場所を示します。",
+        "source": "Genie One · クロスドメイン結合"
+      },
+      "sources-and-trust": {
+        "topic": "信頼するソース",
+        "question": "質問に答えるためにどのデータソースを使いますか。また、どのソースを信頼するかはどのように決めますか?",
+        "preview": "回答の根拠となるソースと、2つのソースが一致しない場合に適用する優先順位を説明します — 回答と推測の違いです。",
+        "source": "Genie One · ソース選択"
+      },
+      "business-terms": {
+        "topic": "理解できる用語",
+        "question": "どのビジネス用語、メトリクス、リレーションシップを理解していますか?",
+        "preview": "設定されている語彙を示します: ビジネス用語、メトリクス定義、エンティティ間のリレーションシップ。",
+        "source": "Genie One · セマンティックモデル"
+      },
+      "certified-metrics": {
+        "topic": "認定済みメトリクス",
+        "question": "ガバナンス対象または認定済みの定義があるメトリクスはどれですか?",
+        "preview": "ガバナンス対象の認定済み定義を持つメトリクスと、アドホックに計算されたメトリクスを分けて示すため、安心して引用できる数値がわかります。",
+        "source": "Genie One · 認定済みメトリクス定義"
+      },
+      "visualizations": {
+        "topic": "ビジュアライゼーション",
+        "question": "分析の質問からどのようなビジュアライゼーションを生成できますか?",
+        "preview": "分析の質問から作成できるグラフの種類と、表で読むほうが適している場合を説明します。",
+        "source": "Genie One · ビジュアライゼーション対応"
+      },
+      "explainability": {
+        "topic": "根拠を示す",
+        "question": "回答の背後にある推論、SQL、前提、情報源を説明できますか?",
+        "preview": "たどった推論、実行したSQL、置いた前提、参照した情報源といった監査証跡を確認します。",
+        "source": "Genie One · 回答の根拠"
+      },
+      "follow-ups": {
+        "topic": "フォローアップの質問",
+        "question": "最初の回答の後に、どのようなフォローアップの質問ができますか?",
+        "preview": "会話の間で何がコンテキストとして保持されるかを説明し、質問全体を言い直さずにどこを絞り込めるかが分かります。",
+        "source": "Genie One · 会話コンテキスト"
+      },
+      "ambiguity": {
+        "topic": "確認が必要な場合",
+        "question": "データや用語が曖昧なため確認が必要になるのは、どのような質問ですか?",
+        "preview": "曖昧な用語、重複する指標、日付のない期間など、推測せずに確認の質問をするケースを示します。",
+        "source": "Genie One · 曖昧さへの対応"
+      },
+      "structured-vs-documents": {
+        "topic": "データとドキュメント",
+        "question": "構造化されたDatabricksデータと接続済みドキュメントでは、それぞれどのような質問に答えられますか?",
+        "preview": "ガバナンス管理されたテーブルから答える内容と、接続済みドキュメントから答える内容の境界を示します。",
+        "source": "Genie One · 構造化と非構造化の対応範囲"
+      },
+      "connectors": {
+        "topic": "接続済みソース",
+        "question": "Google Drive、SharePoint、Slack、Glean、Jira、Confluenceなどの接続済みソースを使用できますか?",
+        "preview": "理論上サポートされているソースではなく、実際にあなたに接続されている外部ソースを報告します。",
+        "source": "Genie One · 接続済みソース"
+      },
+      "file-with-data": {
+        "topic": "ファイル + あなたのデータ",
+        "question": "ファイルをDatabricksデータとあわせて分析できますか?",
+        "preview": "アップロードされたファイルをガバナンス管理されたテーブルとあわせて分析できるか、またその際に適用されるガバナンスを説明します。",
+        "source": "Genie One · ファイル分析"
+      },
+      "create-agent": {
+        "topic": "再利用可能なエージェント",
+        "question": "この会話から再利用可能なGenie Agentを作成できますか?",
+        "preview": "この会話を、他のユーザーが実行できる再利用可能なGenie Agentに昇格できるかを確認します。",
+        "source": "Genie One · エージェント作成"
+      },
+      "scheduled-briefing": {
+        "topic": "定期ブリーフィング",
+        "question": "スケジュールされたブリーフィングや定期レポートを作成できますか?",
+        "preview": "回答をスケジュールに沿った定期ブリーフィングやレポートに変換することと、その受信者を扱います。",
+        "source": "Genie One · スケジューリング"
+      },
+      "draft-document": {
+        "topic": "ドキュメントの下書きを作成",
+        "question": "分析に基づいてドキュメントの下書きを作成できますか？",
+        "preview": "図表やソースを入力し直すのではなく引き継いで、分析内容をドキュメントとしてまとめる方法を扱います。",
+        "source": "Genie One · ドキュメント生成"
+      },
+      "external-actions": {
+        "topic": "他のシステムでの操作",
+        "question": "外部システムで操作を実行できますか？その場合、どのような権限や承認が必要ですか？",
+        "preview": "Databricksの外で実行できる操作と、それぞれ事前に必要な権限や承認を確認します。",
+        "source": "Genie One · アクション権限"
+      },
+      "limitations": {
+        "topic": "既知の制限",
+        "question": "既知の制限、データ鮮度の制約、権限の境界は何ですか？",
+        "preview": "率直な限界を確認します。できないこと、データがどの程度古い可能性があるか、権限によって回答がどこまで制限されるかを扱います。",
+        "source": "Genie One · 機能の境界"
+      },
+      "avoid-questions": {
+        "topic": "避けるべき質問",
+        "question": "利用可能なデータでは信頼性高く回答できないため、避けるべき質問はどれですか？",
+        "preview": "最初の質問の逆です。利用可能なデータで裏付けられない質問を把握し、不確かな数値に基づいて行動しないようにします。",
+        "source": "Genie One · 信頼性の境界"
+      }
+    }
+  },
+  "ko-KR": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "지원 범위 및 적용 대상",
+      "Data & Trust": "데이터 및 신뢰",
+      "Answers & Explainability": "답변 및 설명 가능성",
+      "Documents & Connectors": "문서 및 커넥터",
+      "Actions & Automation": "작업 및 자동화",
+      "Limits & Boundaries": "한계 및 경계",
+      "Platform & Concepts": "플랫폼 및 개념"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "답변할 수 있는 질문",
+        "question": "제가 액세스할 수 있는 데이터를 사용해 어떤 비즈니스 질문에 답할 수 있나요?",
+        "preview": "Genie One은 사용자 권한으로 접근 가능한 데이터에서 처리할 수 있는 질문 유형을 알려줍니다. 전체 카탈로그가 아니라 사용자에게 맞춰 범위가 지정됩니다.",
+        "source": "Genie One · 액세스 가능한 도메인"
+      },
+      "domain-inventory": {
+        "topic": "내가 사용할 수 있는 항목",
+        "question": "제가 사용할 수 있는 비즈니스 도메인, Genie Agents, dashboard, metric view, 쿼리는 무엇인가요?",
+        "preview": "실제로 사용할 수 있는 거버넌스 적용 자산을 나열합니다: 비즈니스 도메인, Genie Agents, dashboard, metric view, 저장된 쿼리.",
+        "source": "Genie One · 도메인 및 자산 인벤토리"
+      },
+      "analysis-types": {
+        "topic": "지원되는 분석",
+        "question": "이 도메인들에서 어떤 유형의 분석이 지원되나요?",
+        "preview": "일반적인 지원을 약속하는 대신, 도메인별로 지원되는 분석을 설명합니다 — 집계, 추세, 비교, 순위, 코호트.",
+        "source": "Genie One · 분석 기능"
+      },
+      "combine-domains": {
+        "topic": "도메인 결합",
+        "question": "질문에 답할 때 어떤 도메인을 결합할 수 있나요?",
+        "preview": "하나의 답변에서 조인할 수 있는 도메인과, 조인에 사용할 거버넌스 적용 관계가 있는 위치를 알려줍니다.",
+        "source": "Genie One · 도메인 간 조인"
+      },
+      "sources-and-trust": {
+        "topic": "신뢰하는 소스",
+        "question": "질문에 답할 때 어떤 데이터 소스를 사용하며, 어떤 소스를 신뢰할지 어떻게 결정하나요?",
+        "preview": "답변의 근거가 되는 소스와 두 소스가 일치하지 않을 때 적용하는 우선순위를 설명합니다 — 답변과 추측의 차이를 보여줍니다.",
+        "source": "Genie One · 소스 선택"
+      },
+      "business-terms": {
+        "topic": "이해하는 용어",
+        "question": "어떤 비즈니스 용어, 메트릭, 관계를 이해하나요?",
+        "preview": "학습된 어휘를 보고합니다: 비즈니스 용어, 메트릭 정의, 엔터티 간 관계.",
+        "source": "Genie One · 의미 체계 모델"
+      },
+      "certified-metrics": {
+        "topic": "인증된 메트릭",
+        "question": "거버넌스가 적용되었거나 인증된 정의가 있는 메트릭은 무엇인가요?",
+        "preview": "거버넌스가 적용되고 인증된 정의가 있는 메트릭과 즉석에서 계산된 메트릭을 구분하여, 어떤 수치를 안심하고 인용할 수 있는지 알 수 있게 합니다.",
+        "source": "Genie One · 인증된 메트릭 정의"
+      },
+      "visualizations": {
+        "topic": "시각화",
+        "question": "분석 질문을 바탕으로 어떤 시각화를 생성할 수 있나요?",
+        "preview": "분석 질문에서 생성할 수 있는 차트 유형과 결과를 표로 보는 것이 더 나은 경우를 설명합니다.",
+        "source": "Genie One · 시각화 지원"
+      },
+      "explainability": {
+        "topic": "답변 과정 보기",
+        "question": "답변의 추론, SQL, 가정, 출처를 설명해 줄 수 있나요?",
+        "preview": "따른 추론, 실행한 SQL, 세운 가정, 참고한 출처 등 감사 추적 정보를 요청합니다.",
+        "source": "Genie One · 답변 출처"
+      },
+      "follow-ups": {
+        "topic": "후속 질문",
+        "question": "첫 답변 후에는 어떤 후속 질문을 할 수 있나요?",
+        "preview": "대화 중 어떤 내용을 컨텍스트로 유지하는지 설명하여, 전체 질문을 다시 말하지 않고 무엇을 구체화할 수 있는지 알 수 있게 합니다.",
+        "source": "Genie One · 대화 컨텍스트"
+      },
+      "ambiguity": {
+        "topic": "확인이 필요한 경우",
+        "question": "데이터나 용어가 모호해서 명확화가 필요한 질문은 어떤 것인가요?",
+        "preview": "모호한 용어, 중복되는 메트릭, 날짜가 없는 범위 등 추측하지 않고 명확화 질문을 하는 경우를 알려 줍니다.",
+        "source": "Genie One · 모호성 처리"
+      },
+      "structured-vs-documents": {
+        "topic": "데이터와 문서",
+        "question": "구조화된 Databricks 데이터와 연결된 문서에서 각각 어떤 질문에 답할 수 있나요?",
+        "preview": "관리되는 테이블에서 답하는 내용과 연결된 문서에서 답하는 내용의 경계를 구분합니다.",
+        "source": "Genie One · 정형 및 비정형 범위"
+      },
+      "connectors": {
+        "topic": "연결된 소스",
+        "question": "Google Drive, SharePoint, Slack, Glean, Jira, Confluence 같은 연결된 소스를 사용할 수 있나요?",
+        "preview": "이론적으로 지원되는 소스가 아니라, 실제로 사용자에게 연결된 외부 소스를 알려 줍니다.",
+        "source": "Genie One · 연결된 소스"
+      },
+      "file-with-data": {
+        "topic": "파일 + 내 데이터",
+        "question": "파일을 내 Databricks 데이터와 함께 분석할 수 있나요?",
+        "preview": "업로드한 파일을 관리되는 테이블과 함께 분석할 수 있는지, 그리고 그 경우 어떤 거버넌스가 적용되는지 다룹니다.",
+        "source": "Genie One · 파일 분석"
+      },
+      "create-agent": {
+        "topic": "재사용 가능한 에이전트",
+        "question": "이 대화로 재사용 가능한 Genie Agent를 만들 수 있나요?",
+        "preview": "이 대화를 다른 사용자가 실행할 수 있는 재사용 가능한 Genie Agent로 전환할 수 있는지 묻습니다.",
+        "source": "Genie One · 에이전트 작성"
+      },
+      "scheduled-briefing": {
+        "topic": "예약된 브리핑",
+        "question": "예약된 브리핑이나 반복 보고서를 만들 수 있나요?",
+        "preview": "답변을 일정에 따라 반복되는 브리핑이나 보고서로 전환하는 것과 수신자를 다룹니다.",
+        "source": "Genie One · 일정 예약"
+      },
+      "draft-document": {
+        "topic": "문서 초안 작성",
+        "question": "분석을 바탕으로 문서 초안을 작성해 줄 수 있나요?",
+        "preview": "분석 내용을 문서로 정리하되, 그림과 출처를 다시 입력하지 않고 그대로 반영하는 방법을 다룹니다.",
+        "source": "Genie One · 문서 생성"
+      },
+      "external-actions": {
+        "topic": "다른 시스템에서 작업 수행",
+        "question": "외부 시스템에서 작업을 수행할 수 있는지, 어떤 권한이나 승인이 필요한지 알려줄 수 있나요?",
+        "preview": "실행 범위에 대한 질문입니다: Databricks 외부에서 수행할 수 있는 작업과 각 작업 전에 필요한 권한 또는 승인을 확인합니다.",
+        "source": "Genie One · 작업 권한"
+      },
+      "limitations": {
+        "topic": "알려진 제한 사항",
+        "question": "알려진 제한 사항, 데이터 최신성 제약, 권한 경계는 무엇인가요?",
+        "preview": "솔직한 한계를 묻습니다: 할 수 없는 일, 데이터가 얼마나 오래되었을 수 있는지, 권한 때문에 답변이 제한되는 지점을 확인합니다.",
+        "source": "Genie One · 기능 경계"
+      },
+      "avoid-questions": {
+        "topic": "묻지 말아야 할 질문",
+        "question": "사용 가능한 데이터로 신뢰성 있게 답할 수 없어 피해야 할 질문은 무엇인가요?",
+        "preview": "첫 번째 질문의 반대입니다: 사용 가능한 데이터로 뒷받침할 수 없는 질문을 확인해 불안정한 수치에 따라 행동하지 않도록 합니다.",
+        "source": "Genie One · 신뢰성 경계"
+      }
+    }
+  },
+  "ms-MY": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Liputan & Skop",
+      "Data & Trust": "Data & Kepercayaan",
+      "Answers & Explainability": "Jawapan & Kebolehjelasan",
+      "Documents & Connectors": "Dokumen & Penyambung",
+      "Actions & Automation": "Tindakan & Automasi",
+      "Limits & Boundaries": "Had & Sempadan",
+      "Platform & Concepts": "Platform & Konsep"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Soalan yang boleh dijawab",
+        "question": "Apakah jenis soalan perniagaan yang boleh anda jawab menggunakan data yang boleh saya akses?",
+        "preview": "Genie One melaporkan jenis soalan yang boleh dilayan daripada data yang boleh dicapai oleh kebenaran anda sendiri — mengikut skop akses anda, bukan keseluruhan katalog.",
+        "source": "Genie One · domain yang boleh diakses"
+      },
+      "domain-inventory": {
+        "topic": "Perkara yang tersedia untuk saya",
+        "question": "Domain perniagaan, Genie Agents, dashboard, metric view dan pertanyaan manakah yang tersedia untuk saya?",
+        "preview": "Menyenaraikan aset tertadbir yang benar-benar boleh anda gunakan: domain perniagaan, Genie Agents, dashboard, metric view dan pertanyaan tersimpan.",
+        "source": "Genie One · inventori domain & aset"
+      },
+      "analysis-types": {
+        "topic": "Analisis yang disokong",
+        "question": "Apakah jenis analisis yang disokong merentas domain ini?",
+        "preview": "Menerangkan analisis yang disokong bagi setiap domain — pengagregatan, trend, perbandingan, pemeringkatan, kohort — tanpa membuat janji umum.",
+        "source": "Genie One · keupayaan analisis"
+      },
+      "combine-domains": {
+        "topic": "Menggabungkan domain",
+        "question": "Domain manakah yang boleh anda gabungkan semasa menjawab soalan?",
+        "preview": "Menamakan domain yang boleh digabungkan dalam satu jawapan, serta tempat wujudnya hubungan tertadbir untuk menyambungkannya.",
+        "source": "Genie One · gabungan merentas domain"
+      },
+      "sources-and-trust": {
+        "topic": "Sumber yang dipercayainya",
+        "question": "Apakah sumber data yang anda gunakan untuk menjawab soalan, dan bagaimana anda menentukan sumber yang boleh dipercayai?",
+        "preview": "Menerangkan sumber yang menyokong jawapannya dan keutamaan yang digunakan apabila dua sumber bercanggah — perbezaan antara jawapan dengan tekaan.",
+        "source": "Genie One · pemilihan sumber"
+      },
+      "business-terms": {
+        "topic": "Istilah yang difahaminya",
+        "question": "Apakah istilah perniagaan, metrik dan hubungan yang anda fahami?",
+        "preview": "Melaporkan kosa kata yang telah diajarkan kepadanya: istilah perniagaan, definisi metrik dan hubungan antara entiti.",
+        "source": "Genie One · model semantik"
+      },
+      "certified-metrics": {
+        "topic": "Metrik diperakui",
+        "question": "Metrik manakah yang mempunyai definisi tertadbir atau diperakui?",
+        "preview": "Membezakan metrik dengan definisi tertadbir dan diperakui daripada metrik yang dikira secara ad hoc, supaya anda tahu nombor mana yang selamat untuk dirujuk.",
+        "source": "Genie One · definisi metrik diperakui"
+      },
+      "visualizations": {
+        "topic": "Visualisasi",
+        "question": "Apakah visualisasi yang boleh anda hasilkan daripada soalan analitik?",
+        "preview": "Menerangkan jenis carta yang boleh dihasilkan daripada soalan analitik, dan bila hasil lebih sesuai dibaca sebagai jadual.",
+        "source": "Genie One · sokongan visualisasi"
+      },
+      "explainability": {
+        "topic": "Tunjukkan cara kerja anda",
+        "question": "Bolehkah anda jelaskan penaakulan, SQL, andaian, dan sumber di sebalik sesuatu jawapan?",
+        "preview": "Meminta jejak audit: penaakulan yang diikuti, SQL yang dijalankan, andaian yang dibuat, dan sumber yang dibaca.",
+        "source": "Genie One · asal-usul jawapan"
+      },
+      "follow-ups": {
+        "topic": "Soalan susulan",
+        "question": "Apakah jenis soalan susulan yang boleh saya tanya selepas jawapan awal?",
+        "preview": "Menerangkan perkara yang dikekalkan dalam konteks antara giliran, supaya anda tahu apa yang boleh diperhalus tanpa menyatakan semula seluruh soalan.",
+        "source": "Genie One · konteks perbualan"
+      },
+      "ambiguity": {
+        "topic": "Apabila ia perlu bertanya",
+        "question": "Soalan manakah yang memerlukan penjelasan kerana data atau istilahnya tidak jelas?",
+        "preview": "Menyenaraikan keadaan ia akan bertanya soalan penjelasan dan bukannya meneka — istilah yang tidak jelas, metrik yang bertindih, julat tanpa tarikh.",
+        "source": "Genie One · pengendalian kekaburan"
+      },
+      "structured-vs-documents": {
+        "topic": "Data berbanding dokumen",
+        "question": "Apakah soalan yang boleh anda jawab daripada data Databricks berstruktur berbanding dokumen yang disambungkan?",
+        "preview": "Membezakan perkara yang dijawab daripada jadual tertadbir dengan perkara yang dijawab daripada dokumen yang disambungkan.",
+        "source": "Genie One · liputan berstruktur & tidak berstruktur"
+      },
+      "connectors": {
+        "topic": "Sumber tersambung",
+        "question": "Bolehkah anda menggunakan sumber tersambung seperti Google Drive, SharePoint, Slack, Glean, Jira, atau Confluence?",
+        "preview": "Melaporkan sumber luaran yang sebenarnya disambungkan untuk anda, bukan sumber yang disokong secara teori.",
+        "source": "Genie One · sumber tersambung"
+      },
+      "file-with-data": {
+        "topic": "Fail + data anda",
+        "question": "Bolehkah anda menganalisis fail bersama-sama data Databricks saya?",
+        "preview": "Merangkumi sama ada fail yang dimuat naik boleh dianalisis bersama jadual tertadbir, dan tadbir urus yang terpakai apabila ia dilakukan.",
+        "source": "Genie One · analisis fail"
+      },
+      "create-agent": {
+        "topic": "Ejen boleh guna semula",
+        "question": "Bolehkah anda mencipta Genie Agent boleh guna semula daripada perbualan ini?",
+        "preview": "Menanyakan sama ada perbualan ini boleh dijadikan Genie Agent boleh guna semula yang boleh dijalankan oleh orang lain.",
+        "source": "Genie One · penciptaan ejen"
+      },
+      "scheduled-briefing": {
+        "topic": "Taklimat berjadual",
+        "question": "Bolehkah anda mencipta taklimat berjadual atau laporan berulang?",
+        "preview": "Merangkumi cara menukar jawapan kepada taklimat atau laporan berulang mengikut jadual, serta siapa yang menerimanya.",
+        "source": "Genie One · penjadualan"
+      },
+      "draft-document": {
+        "topic": "Sediakan draf dokumen",
+        "question": "Bolehkah anda sediakan draf dokumen berdasarkan analisis?",
+        "preview": "Meliputi penulisan analisis sebagai dokumen, dengan angka dan sumber dibawa bersama dan bukan ditaip semula.",
+        "source": "Genie One · penjanaan dokumen"
+      },
+      "external-actions": {
+        "topic": "Bertindak dalam sistem lain",
+        "question": "Bolehkah anda mengambil tindakan dalam sistem luaran, dan apakah kebenaran atau kelulusan yang diperlukan?",
+        "preview": "Soalan tentang kesan: tindakan yang boleh diambil di luar Databricks, serta kebenaran atau kelulusan yang perlu diperoleh terlebih dahulu.",
+        "source": "Genie One · kebenaran tindakan"
+      },
+      "limitations": {
+        "topic": "Had yang diketahui",
+        "question": "Apakah had yang diketahui, kekangan kesegaran data dan sempadan kebenaran?",
+        "preview": "Menanyakan batasan sebenar: perkara yang tidak boleh dilakukan, sejauh mana data mungkin lapuk dan di mana kebenaran anda mengehadkan jawapan.",
+        "source": "Genie One · sempadan keupayaan"
+      },
+      "avoid-questions": {
+        "topic": "Perkara yang tidak patut ditanya",
+        "question": "Soalan manakah yang patut saya elakkan kerana data yang tersedia tidak dapat menjawabnya dengan boleh dipercayai?",
+        "preview": "Kebalikan daripada soalan pertama: soalan yang tidak dapat disokong oleh data yang tersedia, supaya anda tidak bertindak berdasarkan angka yang tidak kukuh.",
+        "source": "Genie One · sempadan kebolehpercayaan"
+      }
+    }
+  },
+  "nl-NL": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Dekking en scope",
+      "Data & Trust": "Data en vertrouwen",
+      "Answers & Explainability": "Antwoorden en uitlegbaarheid",
+      "Documents & Connectors": "Documenten en connectors",
+      "Actions & Automation": "Acties en automatisering",
+      "Limits & Boundaries": "Limieten en grenzen",
+      "Platform & Concepts": "Platform en concepten"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Wat je kunt beantwoorden",
+        "question": "Welke soorten zakelijke vragen kun je beantwoorden met de data waar ik toegang toe heb?",
+        "preview": "Genie One geeft aan welke vraagtypen het kan beantwoorden op basis van de data waar jouw eigen rechten bij kunnen — afgestemd op jou, niet op de volledige catalogus.",
+        "source": "Genie One · toegankelijke domeinen"
+      },
+      "domain-inventory": {
+        "topic": "Wat voor mij beschikbaar is",
+        "question": "Welke zakelijke domeinen, Genie Agents, dashboards, metric views en query's zijn voor mij beschikbaar?",
+        "preview": "Toont de beheerde assets die je echt kunt gebruiken: zakelijke domeinen, Genie Agents, dashboards, metric views en opgeslagen query's.",
+        "source": "Genie One · domein- en assetinventaris"
+      },
+      "analysis-types": {
+        "topic": "Ondersteunde analyse",
+        "question": "Welke typen analyse worden in deze domeinen ondersteund?",
+        "preview": "Beschrijft welke analyses per domein worden ondersteund — aggregatie, trend, vergelijking, ranking, cohort — zonder iets generieks te beloven.",
+        "source": "Genie One · analysemogelijkheden"
+      },
+      "combine-domains": {
+        "topic": "Domeinen combineren",
+        "question": "Welke domeinen kun je combineren bij het beantwoorden van een vraag?",
+        "preview": "Noemt de domeinen die in één antwoord kunnen worden samengevoegd, en waar een beheerde relatie bestaat om ze op te verbinden.",
+        "source": "Genie One · joins tussen domeinen"
+      },
+      "sources-and-trust": {
+        "topic": "Bronnen die het vertrouwt",
+        "question": "Welke databronnen gebruik je om vragen te beantwoorden, en hoe bepaal je welke bron te vertrouwen is?",
+        "preview": "Legt uit welke bronnen de antwoorden onderbouwen en welke prioriteit wordt toegepast als twee bronnen elkaar tegenspreken — het verschil tussen een antwoord en een gok.",
+        "source": "Genie One · bronselectie"
+      },
+      "business-terms": {
+        "topic": "Termen die het begrijpt",
+        "question": "Welke zakelijke termen, metrics en relaties begrijp je?",
+        "preview": "Geeft de woordenschat weer die is aangeleerd: zakelijke termen, definities van metrics en de relaties tussen entiteiten.",
+        "source": "Genie One · semantisch model"
+      },
+      "certified-metrics": {
+        "topic": "Gecertificeerde metrics",
+        "question": "Welke metrics hebben beheerde of gecertificeerde definities?",
+        "preview": "Maakt onderscheid tussen metrics met een beheerde, gecertificeerde definitie en metrics die ad hoc worden berekend, zodat je weet welke cijfers je veilig kunt citeren.",
+        "source": "Genie One · gecertificeerde metricdefinities"
+      },
+      "visualizations": {
+        "topic": "Visualisaties",
+        "question": "Welke visualisaties kun je genereren op basis van analytische vragen?",
+        "preview": "Beschrijft welke grafiektypen het kan maken op basis van een analytische vraag, en wanneer een resultaat beter als tabel kan worden gelezen.",
+        "source": "Genie One · visualisatieondersteuning"
+      },
+      "explainability": {
+        "topic": "Toon je werkwijze",
+        "question": "Kun je de redenering, SQL, aannames en bronnen achter een antwoord uitleggen?",
+        "preview": "Vraagt om het auditspoor: de gevolgde redenering, de uitgevoerde SQL, de gemaakte aannames en de geraadpleegde bronnen.",
+        "source": "Genie One · herkomst van antwoorden"
+      },
+      "follow-ups": {
+        "topic": "Vervolgvragen",
+        "question": "Welke soorten vervolgvragen kan ik stellen na een eerste antwoord?",
+        "preview": "Legt uit wat het tussen beurten in de context houdt, zodat je weet wat je kunt verfijnen zonder de hele vraag opnieuw te stellen.",
+        "source": "Genie One · gesprekscontext"
+      },
+      "ambiguity": {
+        "topic": "Wanneer het moet doorvragen",
+        "question": "Welke vragen vereisen verduidelijking omdat de data of terminologie dubbelzinnig is?",
+        "preview": "Benoemt de gevallen waarin het een verduidelijkende vraag stelt in plaats van te gokken — dubbelzinnige termen, overlappende metrics, datumbereiken zonder datum.",
+        "source": "Genie One · omgaan met dubbelzinnigheid"
+      },
+      "structured-vs-documents": {
+        "topic": "Data vs documenten",
+        "question": "Welke vragen kun je beantwoorden op basis van gestructureerde Databricks-data versus verbonden documenten?",
+        "preview": "Trekt de grens tussen wat het beantwoordt op basis van beheerde tabellen en wat het beantwoordt op basis van verbonden documenten.",
+        "source": "Genie One · dekking van gestructureerd & ongestructureerd"
+      },
+      "connectors": {
+        "topic": "Verbonden bronnen",
+        "question": "Kun je verbonden bronnen gebruiken, zoals Google Drive, SharePoint, Slack, Glean, Jira of Confluence?",
+        "preview": "Geeft aan welke externe bronnen daadwerkelijk voor je zijn verbonden, in plaats van welke theoretisch worden ondersteund.",
+        "source": "Genie One · verbonden bronnen"
+      },
+      "file-with-data": {
+        "topic": "Bestand + je data",
+        "question": "Kun je een bestand analyseren samen met mijn Databricks-data?",
+        "preview": "Behandelt of een geüpload bestand naast beheerde tabellen kan worden geanalyseerd, en welke governance dan van toepassing is.",
+        "source": "Genie One · bestandsanalyse"
+      },
+      "create-agent": {
+        "topic": "Herbruikbare agent",
+        "question": "Kun je op basis van dit gesprek een herbruikbare Genie Agent maken?",
+        "preview": "Vraagt of dit gesprek kan worden omgezet in een herbruikbare Genie Agent die anderen kunnen uitvoeren.",
+        "source": "Genie One · agents maken"
+      },
+      "scheduled-briefing": {
+        "topic": "Geplande briefing",
+        "question": "Kun je een geplande briefing of terugkerend rapport maken?",
+        "preview": "Behandelt hoe je een antwoord omzet in een terugkerende briefing of rapport volgens een planning, en wie het ontvangt.",
+        "source": "Genie One · planning"
+      },
+      "draft-document": {
+        "topic": "Een document opstellen",
+        "question": "Kun je een document opstellen op basis van een analyse?",
+        "preview": "Gaat over het uitschrijven van een analyse als document, waarbij de cijfers en bronnen worden meegenomen in plaats van opnieuw ingevoerd.",
+        "source": "Genie One · documentgeneratie"
+      },
+      "external-actions": {
+        "topic": "Acties uitvoeren in andere systemen",
+        "question": "Kun je acties uitvoeren in externe systemen, en welke machtigingen of goedkeuringen zijn daarvoor vereist?",
+        "preview": "De effectvraag: welke acties het buiten Databricks kan uitvoeren, en welke machtigingen of goedkeuringen daarvoor eerst nodig zijn.",
+        "source": "Genie One · actiemachtigingen"
+      },
+      "limitations": {
+        "topic": "Bekende beperkingen",
+        "question": "Wat zijn de bekende beperkingen, de grenzen aan de actualiteit van gegevens en de machtigingsgrenzen?",
+        "preview": "Vraagt naar de eerlijke grenzen: wat het niet kan, hoe verouderd de gegevens kunnen zijn en waar je machtigingen het antwoord beperken.",
+        "source": "Genie One · grenzen van mogelijkheden"
+      },
+      "avoid-questions": {
+        "topic": "Wat je beter niet kunt vragen",
+        "question": "Welke vragen kan ik beter vermijden omdat de beschikbare gegevens ze niet betrouwbaar kunnen beantwoorden?",
+        "preview": "Het omgekeerde van de eerste vraag: welke vragen de beschikbare gegevens niet kunnen onderbouwen, zodat je niet handelt op basis van een wankel cijfer.",
+        "source": "Genie One · betrouwbaarheidsgrenzen"
+      }
+    }
+  },
+  "pl-PL": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Zakres i pokrycie",
+      "Data & Trust": "Dane i zaufanie",
+      "Answers & Explainability": "Odpowiedzi i wyjaśnialność",
+      "Documents & Connectors": "Dokumenty i konektory",
+      "Actions & Automation": "Akcje i automatyzacja",
+      "Limits & Boundaries": "Limity i granice",
+      "Platform & Concepts": "Platforma i pojęcia"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Na co możesz odpowiedzieć",
+        "question": "Na jakie pytania biznesowe możesz odpowiedzieć na podstawie danych, do których mam dostęp?",
+        "preview": "Genie One wskazuje typy pytań, które może obsłużyć na podstawie danych dostępnych w ramach Twoich uprawnień — dla Ciebie, nie dla całego katalogu.",
+        "source": "Genie One · dostępne domeny"
+      },
+      "domain-inventory": {
+        "topic": "Co jest dla mnie dostępne",
+        "question": "Które domeny biznesowe, Genie Agents, dashboardy, metric views i zapytania są dla mnie dostępne?",
+        "preview": "Wymienia zasoby objęte nadzorem, z których możesz faktycznie korzystać: domeny biznesowe, Genie Agents, dashboardy, metric views i zapisane zapytania.",
+        "source": "Genie One · spis domen i zasobów"
+      },
+      "analysis-types": {
+        "topic": "Obsługiwane analizy",
+        "question": "Jakie typy analiz są obsługiwane w tych domenach?",
+        "preview": "Opisuje analizy obsługiwane w poszczególnych domenach — agregację, trend, porównanie, ranking, kohortę — zamiast składać ogólne obietnice.",
+        "source": "Genie One · możliwości analityczne"
+      },
+      "combine-domains": {
+        "topic": "Łączenie domen",
+        "question": "Które domeny możesz połączyć, odpowiadając na pytanie?",
+        "preview": "Wskazuje domeny, które może połączyć w jednej odpowiedzi, oraz miejsce, w którym istnieje nadzorowana relacja do ich połączenia.",
+        "source": "Genie One · połączenia między domenami"
+      },
+      "sources-and-trust": {
+        "topic": "Źródła, którym ufa",
+        "question": "Z jakich źródeł danych korzystasz, odpowiadając na pytania, i jak decydujesz, któremu źródłu zaufać?",
+        "preview": "Wyjaśnia, które źródła wspierają odpowiedzi i jaki priorytet stosuje, gdy dwa źródła są sprzeczne — to różnica między odpowiedzią a domysłem.",
+        "source": "Genie One · wybór źródła"
+      },
+      "business-terms": {
+        "topic": "Terminy, które rozumie",
+        "question": "Jakie terminy biznesowe, miary i relacje rozumiesz?",
+        "preview": "Przedstawia słownictwo, którego zostało nauczone: terminy biznesowe, definicje miar i relacje między encjami.",
+        "source": "Genie One · model semantyczny"
+      },
+      "certified-metrics": {
+        "topic": "Certyfikowane miary",
+        "question": "Które miary mają nadzorowane lub certyfikowane definicje?",
+        "preview": "Oddziela miary z nadzorowaną, certyfikowaną definicją od miar obliczanych ad hoc, aby było jasne, które liczby można bezpiecznie cytować.",
+        "source": "Genie One · certyfikowane definicje miar"
+      },
+      "visualizations": {
+        "topic": "Wizualizacje",
+        "question": "Jakie wizualizacje możesz wygenerować na podstawie pytań analitycznych?",
+        "preview": "Opisuje typy wykresów, które może utworzyć na podstawie pytania analitycznego, oraz kiedy wynik lepiej odczytywać jako tabelę.",
+        "source": "Genie One · obsługa wizualizacji"
+      },
+      "explainability": {
+        "topic": "Pokaż uzasadnienie",
+        "question": "Czy możesz wyjaśnić rozumowanie, SQL, założenia i źródła stojące za odpowiedzią?",
+        "preview": "Prosi o ścieżkę audytu: zastosowane rozumowanie, uruchomiony SQL, przyjęte założenia i przeczytane źródła.",
+        "source": "Genie One · źródła odpowiedzi"
+      },
+      "follow-ups": {
+        "topic": "Pytania uzupełniające",
+        "question": "Jakie pytania uzupełniające mogę zadać po pierwszej odpowiedzi?",
+        "preview": "Wyjaśnia, co zachowuje w kontekście między turami, aby było wiadomo, co można doprecyzować bez powtarzania całego pytania.",
+        "source": "Genie One · kontekst rozmowy"
+      },
+      "ambiguity": {
+        "topic": "Kiedy musi dopytać",
+        "question": "Które pytania wymagają doprecyzowania, ponieważ dane lub terminologia są niejednoznaczne?",
+        "preview": "Wskazuje przypadki, w których zada pytanie doprecyzowujące zamiast zgadywać — niejednoznaczne terminy, nakładające się metryki, zakresy bez dat.",
+        "source": "Genie One · obsługa niejednoznaczności"
+      },
+      "structured-vs-documents": {
+        "topic": "Dane a dokumenty",
+        "question": "Na jakie pytania możesz odpowiedzieć na podstawie ustrukturyzowanych danych Databricks, a na jakie na podstawie połączonych dokumentów?",
+        "preview": "Wyznacza granicę między odpowiedziami opartymi na zarządzanych tabelach a odpowiedziami opartymi na połączonych dokumentach.",
+        "source": "Genie One · zakres danych ustrukturyzowanych i nieustrukturyzowanych"
+      },
+      "connectors": {
+        "topic": "Połączone źródła",
+        "question": "Czy możesz korzystać z połączonych źródeł, takich jak Google Drive, SharePoint, Slack, Glean, Jira lub Confluence?",
+        "preview": "Informuje, które zewnętrzne źródła są faktycznie połączone dla Ciebie, zamiast wskazywać teoretycznie obsługiwane opcje.",
+        "source": "Genie One · połączone źródła"
+      },
+      "file-with-data": {
+        "topic": "Plik + Twoje dane",
+        "question": "Czy możesz przeanalizować plik razem z moimi danymi Databricks?",
+        "preview": "Omawia, czy przesłany plik można analizować razem z zarządzanymi tabelami oraz jakie zasady nadzoru wtedy obowiązują.",
+        "source": "Genie One · analiza plików"
+      },
+      "create-agent": {
+        "topic": "Agent do ponownego użycia",
+        "question": "Czy możesz utworzyć z tej rozmowy Genie Agent do ponownego użycia?",
+        "preview": "Pyta, czy tę rozmowę można przekształcić w Genie Agent do ponownego użycia, który mogą uruchamiać inni.",
+        "source": "Genie One · tworzenie agentów"
+      },
+      "scheduled-briefing": {
+        "topic": "Zaplanowany briefing",
+        "question": "Czy możesz utworzyć zaplanowany briefing lub raport cykliczny?",
+        "preview": "Obejmuje przekształcenie odpowiedzi w cykliczny briefing lub raport według harmonogramu oraz wskazanie odbiorców.",
+        "source": "Genie One · planowanie"
+      },
+      "draft-document": {
+        "topic": "Przygotowanie dokumentu",
+        "question": "Czy możesz przygotować dokument na podstawie analizy?",
+        "preview": "Obejmuje opisanie analizy w formie dokumentu, z zachowaniem wykresów i źródeł zamiast przepisywania ich od nowa.",
+        "source": "Genie One · generowanie dokumentów"
+      },
+      "external-actions": {
+        "topic": "Działanie w innych systemach",
+        "question": "Czy możesz wykonywać działania w systemach zewnętrznych i jakie uprawnienia lub zatwierdzenia byłyby wymagane?",
+        "preview": "Pytanie o skutki: jakie działania może wykonywać poza Databricks oraz jakich uprawnień lub zatwierdzeń każde z nich wymaga najpierw.",
+        "source": "Genie One · uprawnienia do działań"
+      },
+      "limitations": {
+        "topic": "Znane ograniczenia",
+        "question": "Jakie są znane ograniczenia, ograniczenia dotyczące aktualności danych i granice uprawnień?",
+        "preview": "Pyta o rzeczywiste granice: czego nie może zrobić, jak nieaktualne mogą być dane i gdzie Twoje uprawnienia ograniczają odpowiedź.",
+        "source": "Genie One · granice możliwości"
+      },
+      "avoid-questions": {
+        "topic": "O co nie pytać",
+        "question": "Których pytań lepiej unikać, ponieważ dostępne dane nie pozwalają odpowiedzieć na nie wiarygodnie?",
+        "preview": "Odwrotność pierwszego pytania: których pytań dostępne dane nie obsługują, aby nie działać na podstawie niepewnej liczby.",
+        "source": "Genie One · granice wiarygodności"
+      }
+    }
+  },
+  "pt-PT": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Cobertura e âmbito",
+      "Data & Trust": "Dados e confiança",
+      "Answers & Explainability": "Respostas e explicabilidade",
+      "Documents & Connectors": "Documentos e conectores",
+      "Actions & Automation": "Ações e automatização",
+      "Limits & Boundaries": "Limites e fronteiras",
+      "Platform & Concepts": "Plataforma e conceitos"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "O que pode responder",
+        "question": "A que tipos de perguntas de negócio consegue responder com os dados a que tenho acesso?",
+        "preview": "O Genie One indica os tipos de perguntas que consegue tratar com os dados abrangidos pelas suas permissões — limitado a si, não ao catálogo em geral.",
+        "source": "Genie One · domínios acessíveis"
+      },
+      "domain-inventory": {
+        "topic": "O que está disponível para mim",
+        "question": "Que domínios de negócio, Genie Agents, dashboards, metric views e consultas estão disponíveis para mim?",
+        "preview": "Lista os ativos governados que pode realmente utilizar: domínios de negócio, Genie Agents, dashboards, metric views e consultas guardadas.",
+        "source": "Genie One · inventário de domínios e ativos"
+      },
+      "analysis-types": {
+        "topic": "Análises suportadas",
+        "question": "Que tipos de análise são suportados nestes domínios?",
+        "preview": "Descreve as análises suportadas por domínio — agregação, tendência, comparação, classificação, coorte — em vez de prometer algo genérico.",
+        "source": "Genie One · capacidades de análise"
+      },
+      "combine-domains": {
+        "topic": "Combinar domínios",
+        "question": "Que domínios consegue combinar ao responder a uma pergunta?",
+        "preview": "Identifica os domínios que consegue juntar numa resposta e onde existe uma relação governada para os associar.",
+        "source": "Genie One · junções entre domínios"
+      },
+      "sources-and-trust": {
+        "topic": "Fontes em que confia",
+        "question": "Que fontes de dados utiliza para responder a perguntas e como decide em que fonte confiar?",
+        "preview": "Explica que fontes sustentam as respostas e a precedência aplicada quando duas fontes divergem — a diferença entre uma resposta e uma suposição.",
+        "source": "Genie One · seleção de fontes"
+      },
+      "business-terms": {
+        "topic": "Termos que compreende",
+        "question": "Que termos de negócio, métricas e relações compreende?",
+        "preview": "Indica o vocabulário que lhe foi ensinado: termos de negócio, definições de métricas e relações entre entidades.",
+        "source": "Genie One · modelo semântico"
+      },
+      "certified-metrics": {
+        "topic": "Métricas certificadas",
+        "question": "Que métricas têm definições governadas ou certificadas?",
+        "preview": "Distingue as métricas com uma definição governada e certificada das calculadas ad hoc, para saber que números pode citar com segurança.",
+        "source": "Genie One · definições de métricas certificadas"
+      },
+      "visualizations": {
+        "topic": "Visualizações",
+        "question": "Que visualizações consegue gerar a partir de perguntas analíticas?",
+        "preview": "Descreve os tipos de gráficos que consegue produzir a partir de uma pergunta analítica, e quando é melhor ler um resultado como tabela.",
+        "source": "Genie One · suporte de visualização"
+      },
+      "explainability": {
+        "topic": "Mostrar o trabalho",
+        "question": "Pode explicar o raciocínio, o SQL, os pressupostos e as fontes por trás de uma resposta?",
+        "preview": "Pede o registo de auditoria: o raciocínio que seguiu, o SQL que executou, os pressupostos que assumiu e as fontes que leu.",
+        "source": "Genie One · proveniência das respostas"
+      },
+      "follow-ups": {
+        "topic": "Perguntas de seguimento",
+        "question": "Que tipos de perguntas de seguimento posso fazer depois de uma resposta inicial?",
+        "preview": "Explica o que mantém em contexto entre interações, para saber o que pode refinar sem repetir a pergunta completa.",
+        "source": "Genie One · contexto conversacional"
+      },
+      "ambiguity": {
+        "topic": "Quando tem de perguntar",
+        "question": "Que perguntas exigiriam clarificação porque os dados ou a terminologia são ambíguos?",
+        "preview": "Indica os casos em que fará uma pergunta de clarificação em vez de adivinhar — termos ambíguos, métricas sobrepostas, intervalos sem datas.",
+        "source": "Genie One · tratamento de ambiguidade"
+      },
+      "structured-vs-documents": {
+        "topic": "Dados vs documentos",
+        "question": "A que perguntas consegue responder com dados estruturados do Databricks em comparação com documentos ligados?",
+        "preview": "Distingue o que responde a partir de tabelas governadas do que responde a partir de documentos ligados.",
+        "source": "Genie One · cobertura estruturada e não estruturada"
+      },
+      "connectors": {
+        "topic": "Fontes ligadas",
+        "question": "Consegue usar fontes ligadas como Google Drive, SharePoint, Slack, Glean, Jira ou Confluence?",
+        "preview": "Indica que fontes externas estão realmente ligadas para si, em vez das que são teoricamente suportadas.",
+        "source": "Genie One · fontes ligadas"
+      },
+      "file-with-data": {
+        "topic": "Ficheiro + os seus dados",
+        "question": "Consegue analisar um ficheiro juntamente com os meus dados do Databricks?",
+        "preview": "Abrange se um ficheiro carregado pode ser analisado juntamente com tabelas governadas, e que governação se aplica nesse caso.",
+        "source": "Genie One · análise de ficheiros"
+      },
+      "create-agent": {
+        "topic": "Agente reutilizável",
+        "question": "Consegue criar um Genie Agent reutilizável a partir desta conversa?",
+        "preview": "Pergunta se esta conversa pode ser promovida a um Genie Agent reutilizável que outras pessoas possam executar.",
+        "source": "Genie One · criação de agentes"
+      },
+      "scheduled-briefing": {
+        "topic": "Resumo agendado",
+        "question": "Consegue criar um resumo agendado ou um relatório recorrente?",
+        "preview": "Abrange transformar uma resposta num resumo ou relatório recorrente segundo uma agenda, e quem o recebe.",
+        "source": "Genie One · agendamento"
+      },
+      "draft-document": {
+        "topic": "Redigir um documento",
+        "question": "Pode redigir um documento com base numa análise?",
+        "preview": "Abrange transformar uma análise num documento, mantendo os valores e as fontes em vez de os voltar a introduzir.",
+        "source": "Genie One · geração de documentos"
+      },
+      "external-actions": {
+        "topic": "Atuar noutros sistemas",
+        "question": "Pode executar ações em sistemas externos, e que permissões ou aprovações seriam necessárias?",
+        "preview": "A pergunta sobre impacto: que ações pode executar fora do Databricks e que permissões ou aprovações cada uma exige primeiro.",
+        "source": "Genie One · permissões de ação"
+      },
+      "limitations": {
+        "topic": "Limites conhecidos",
+        "question": "Quais são as limitações conhecidas, as restrições de atualidade dos dados e os limites das permissões?",
+        "preview": "Pergunta pelos limites reais: o que não consegue fazer, quão desatualizados os dados podem estar e onde as suas permissões impedem a resposta.",
+        "source": "Genie One · limites de capacidade"
+      },
+      "avoid-questions": {
+        "topic": "O que não perguntar",
+        "question": "Que perguntas devo evitar porque os dados disponíveis não conseguem responder-lhes de forma fiável?",
+        "preview": "O inverso da primeira pergunta: que perguntas os dados disponíveis não conseguem sustentar, para não agir com base num número pouco sólido.",
+        "source": "Genie One · limites de fiabilidade"
+      }
+    }
+  },
+  "ru-RU": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Охват и область действия",
+      "Data & Trust": "Данные и доверие",
+      "Answers & Explainability": "Ответы и объяснимость",
+      "Documents & Connectors": "Документы и коннекторы",
+      "Actions & Automation": "Действия и автоматизация",
+      "Limits & Boundaries": "Ограничения и границы",
+      "Platform & Concepts": "Платформа и концепции"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "На какие вопросы можно ответить",
+        "question": "На какие бизнес-вопросы вы можете ответить на основе данных, к которым у меня есть доступ?",
+        "preview": "Genie One показывает типы вопросов, с которыми может работать на основе данных, доступных по вашим правам, — именно для вас, а не для всего каталога.",
+        "source": "Genie One · доступные домены"
+      },
+      "domain-inventory": {
+        "topic": "Что мне доступно",
+        "question": "Какие бизнес-домены, Genie Agents, dashboard, metric view и запросы мне доступны?",
+        "preview": "Показывает управляемые активы, которыми вы действительно можете пользоваться: бизнес-домены, Genie Agents, dashboard, metric view и сохраненные запросы.",
+        "source": "Genie One · инвентаризация доменов и активов"
+      },
+      "analysis-types": {
+        "topic": "Поддерживаемый анализ",
+        "question": "Какие типы анализа поддерживаются в этих доменах?",
+        "preview": "Описывает поддерживаемый анализ по доменам — агрегацию, тренды, сравнение, ранжирование, когорты — без общих обещаний.",
+        "source": "Genie One · возможности анализа"
+      },
+      "combine-domains": {
+        "topic": "Объединение доменов",
+        "question": "Какие домены вы можете объединять при ответе на вопрос?",
+        "preview": "Называет домены, которые можно связать в одном ответе, и указывает, где для этого есть управляемая связь.",
+        "source": "Genie One · междоменные соединения"
+      },
+      "sources-and-trust": {
+        "topic": "Надежные источники",
+        "question": "Какие источники данных вы используете для ответов и как решаете, какому источнику доверять?",
+        "preview": "Объясняет, какие источники лежат в основе ответов и какой приоритет применяется, если два источника расходятся, — в этом разница между ответом и догадкой.",
+        "source": "Genie One · выбор источника"
+      },
+      "business-terms": {
+        "topic": "Понятные термины",
+        "question": "Какие бизнес-термины, метрики и связи вы понимаете?",
+        "preview": "Показывает словарь, которому он обучен: бизнес-термины, определения метрик и связи между сущностями.",
+        "source": "Genie One · семантическая модель"
+      },
+      "certified-metrics": {
+        "topic": "Сертифицированные метрики",
+        "question": "У каких метрик есть управляемые или сертифицированные определения?",
+        "preview": "Отделяет метрики с управляемым, сертифицированным определением от рассчитанных ad hoc, чтобы вы знали, на какие числа можно ссылаться.",
+        "source": "Genie One · сертифицированные определения метрик"
+      },
+      "visualizations": {
+        "topic": "Визуализации",
+        "question": "Какие визуализации можно создать на основе аналитических вопросов?",
+        "preview": "Описывает типы диаграмм, которые можно построить по аналитическому вопросу, и когда результат лучше читать как таблицу.",
+        "source": "Genie One · поддержка визуализаций"
+      },
+      "explainability": {
+        "topic": "Покажите, как получен ответ",
+        "question": "Можете ли вы объяснить ход рассуждений, SQL, допущения и источники ответа?",
+        "preview": "Запрашивает аудиторский след: ход рассуждений, выполненный SQL, сделанные допущения и использованные источники.",
+        "source": "Genie One · происхождение ответа"
+      },
+      "follow-ups": {
+        "topic": "Уточняющие вопросы",
+        "question": "Какие уточняющие вопросы можно задать после первого ответа?",
+        "preview": "Объясняет, что сохраняется в контексте между репликами, чтобы вы понимали, что можно уточнить без повторения всего вопроса.",
+        "source": "Genie One · контекст диалога"
+      },
+      "ambiguity": {
+        "topic": "Когда нужно уточнение",
+        "question": "Какие вопросы потребуют уточнения, потому что данные или терминология неоднозначны?",
+        "preview": "Называет случаи, когда вместо догадок будет задан уточняющий вопрос — неоднозначные термины, пересекающиеся метрики, диапазоны без дат.",
+        "source": "Genie One · обработка неоднозначности"
+      },
+      "structured-vs-documents": {
+        "topic": "Данные и документы",
+        "question": "На какие вопросы вы можете отвечать по структурированным данным Databricks, а на какие — по подключенным документам?",
+        "preview": "Проводит границу между ответами на основе управляемых таблиц и ответами на основе подключенных документов.",
+        "source": "Genie One · покрытие структурированных и неструктурированных данных"
+      },
+      "connectors": {
+        "topic": "Подключенные источники",
+        "question": "Можете ли вы использовать подключенные источники, такие как Google Drive, SharePoint, Slack, Glean, Jira или Confluence?",
+        "preview": "Сообщает, какие внешние источники действительно подключены для вас, а не какие из них теоретически поддерживаются.",
+        "source": "Genie One · подключенные источники"
+      },
+      "file-with-data": {
+        "topic": "Файл + ваши данные",
+        "question": "Можете ли вы анализировать файл вместе с моими данными Databricks?",
+        "preview": "Описывает, можно ли анализировать загруженный файл вместе с управляемыми таблицами и какие правила управления данными при этом применяются.",
+        "source": "Genie One · анализ файлов"
+      },
+      "create-agent": {
+        "topic": "Повторно используемый агент",
+        "question": "Можете ли вы создать повторно используемый Genie Agent из этого диалога?",
+        "preview": "Уточняет, можно ли превратить этот диалог в повторно используемый Genie Agent, который смогут запускать другие пользователи.",
+        "source": "Genie One · создание агентов"
+      },
+      "scheduled-briefing": {
+        "topic": "Брифинг по расписанию",
+        "question": "Можете ли вы создать брифинг по расписанию или регулярный отчет?",
+        "preview": "Описывает превращение ответа в регулярный брифинг или отчет по расписанию и то, кто его получает.",
+        "source": "Genie One · планирование"
+      },
+      "draft-document": {
+        "topic": "Подготовить черновик документа",
+        "question": "Можешь подготовить черновик документа на основе анализа?",
+        "preview": "Помогает оформить анализ как документ, сохраняя показатели и источники без повторного ввода вручную.",
+        "source": "Genie One · создание документов"
+      },
+      "external-actions": {
+        "topic": "Действия в других системах",
+        "question": "Можешь выполнять действия во внешних системах, и какие разрешения или согласования для этого нужны?",
+        "preview": "Вопрос о действиях: что можно выполнить за пределами Databricks и какие разрешения или согласования нужны заранее для каждого действия.",
+        "source": "Genie One · разрешения на действия"
+      },
+      "limitations": {
+        "topic": "Известные ограничения",
+        "question": "Какие есть известные ограничения, ограничения по актуальности данных и границы разрешений?",
+        "preview": "Помогает честно оценить границы: что невозможно сделать, насколько данные могут быть устаревшими и где ваши разрешения ограничивают ответ.",
+        "source": "Genie One · границы возможностей"
+      },
+      "avoid-questions": {
+        "topic": "О чём не стоит спрашивать",
+        "question": "Каких вопросов лучше избегать, потому что доступные данные не позволяют надёжно на них ответить?",
+        "preview": "Обратная сторона первого вопроса: какие вопросы доступные данные не поддерживают, чтобы вы не принимали решения на основе ненадёжного показателя.",
+        "source": "Genie One · границы надёжности"
+      }
+    }
+  },
+  "sv-SE": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Täckning och omfattning",
+      "Data & Trust": "Data och förtroende",
+      "Answers & Explainability": "Svar och förklarbarhet",
+      "Documents & Connectors": "Dokument och kopplingar",
+      "Actions & Automation": "Åtgärder och automatisering",
+      "Limits & Boundaries": "Begränsningar och gränser",
+      "Platform & Concepts": "Plattform och begrepp"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Vad du kan svara på",
+        "question": "Vilka typer av affärsfrågor kan du besvara med de data jag har åtkomst till?",
+        "preview": "Genie One visar vilka frågetyper den kan hantera utifrån de data som dina egna behörigheter ger åtkomst till — avgränsat till dig, inte till katalogen i stort.",
+        "source": "Genie One · tillgängliga domäner"
+      },
+      "domain-inventory": {
+        "topic": "Vad jag har tillgång till",
+        "question": "Vilka affärsdomäner, Genie Agents, dashboards, metric views och queries är tillgängliga för mig?",
+        "preview": "Listar de styrda tillgångar du faktiskt kan använda: affärsdomäner, Genie Agents, dashboards, metric views och sparade queries.",
+        "source": "Genie One · domän- och tillgångsinventering"
+      },
+      "analysis-types": {
+        "topic": "Analys som stöds",
+        "question": "Vilka typer av analys stöds i de här domänerna?",
+        "preview": "Beskriver vilken analys som stöds per domän — aggregering, trend, jämförelse, rangordning, kohort — i stället för att utlova något generiskt.",
+        "source": "Genie One · analysfunktioner"
+      },
+      "combine-domains": {
+        "topic": "Kombinera domäner",
+        "question": "Vilka domäner kan du kombinera när du besvarar en fråga?",
+        "preview": "Anger vilka domäner som kan kombineras i ett svar, och var det finns en styrd relation att koppla dem på.",
+        "source": "Genie One · kopplingar mellan domäner"
+      },
+      "sources-and-trust": {
+        "topic": "Källor den litar på",
+        "question": "Vilka datakällor använder du för att besvara frågor, och hur avgör du vilken källa du ska lita på?",
+        "preview": "Förklarar vilka källor som ligger bakom svaren och vilken prioritet som används när två källor säger emot varandra — skillnaden mellan ett svar och en gissning.",
+        "source": "Genie One · val av källa"
+      },
+      "business-terms": {
+        "topic": "Begrepp den förstår",
+        "question": "Vilka affärsbegrepp, mätvärden och relationer förstår du?",
+        "preview": "Visar den vokabulär den har fått: affärsbegrepp, definitioner av mätvärden och relationerna mellan entiteter.",
+        "source": "Genie One · semantisk modell"
+      },
+      "certified-metrics": {
+        "topic": "Certifierade mätvärden",
+        "question": "Vilka mätvärden har styrda eller certifierade definitioner?",
+        "preview": "Skiljer mätvärden med en styrd, certifierad definition från sådana som beräknas ad hoc, så att du vet vilka siffror som är säkra att hänvisa till.",
+        "source": "Genie One · certifierade definitioner av mätvärden"
+      },
+      "visualizations": {
+        "topic": "Visualiseringar",
+        "question": "Vilka visualiseringar kan du skapa utifrån analytiska frågor?",
+        "preview": "Beskriver vilka diagramtyper den kan skapa från en analytisk fråga, och när ett resultat passar bättre som tabell.",
+        "source": "Genie One · visualiseringsstöd"
+      },
+      "explainability": {
+        "topic": "Visa hur du kom fram till svaret",
+        "question": "Kan du förklara resonemanget, SQL, antaganden och källor bakom ett svar?",
+        "preview": "Ber om granskningsspåret: resonemanget den följde, SQL den körde, antagandena den gjorde och källorna den läste.",
+        "source": "Genie One · svarens spårbarhet"
+      },
+      "follow-ups": {
+        "topic": "Följdfrågor",
+        "question": "Vilka typer av följdfrågor kan jag ställa efter ett första svar?",
+        "preview": "Förklarar vad den behåller i kontext mellan meddelanden, så att du vet vad du kan förfina utan att upprepa hela frågan.",
+        "source": "Genie One · konversationskontext"
+      },
+      "ambiguity": {
+        "topic": "När den måste fråga",
+        "question": "Vilka frågor skulle kräva förtydligande eftersom data eller terminologin är tvetydig?",
+        "preview": "Anger fallen där den ställer en förtydligande fråga i stället för att gissa — tvetydiga termer, överlappande mått, intervall utan datum.",
+        "source": "Genie One · hantering av tvetydighet"
+      },
+      "structured-vs-documents": {
+        "topic": "Data kontra dokument",
+        "question": "Vilka frågor kan du besvara från strukturerade Databricks-data jämfört med anslutna dokument?",
+        "preview": "Drar gränsen mellan vad den besvarar från styrda tabeller och vad den besvarar från anslutna dokument.",
+        "source": "Genie One · täckning för strukturerat och ostrukturerat innehåll"
+      },
+      "connectors": {
+        "topic": "Anslutna källor",
+        "question": "Kan du använda anslutna källor som Google Drive, SharePoint, Slack, Glean, Jira eller Confluence?",
+        "preview": "Rapporterar vilka externa källor som faktiskt är anslutna för dig, snarare än vilka som stöds i teorin.",
+        "source": "Genie One · anslutna källor"
+      },
+      "file-with-data": {
+        "topic": "Fil + dina data",
+        "question": "Kan du analysera en fil tillsammans med mina Databricks-data?",
+        "preview": "Tar upp om en uppladdad fil kan analyseras tillsammans med styrda tabeller, och vilken datastyrning som gäller då.",
+        "source": "Genie One · filanalys"
+      },
+      "create-agent": {
+        "topic": "Återanvändbar agent",
+        "question": "Kan du skapa en återanvändbar Genie Agent från den här konversationen?",
+        "preview": "Frågar om den här konversationen kan göras om till en återanvändbar Genie Agent som andra kan köra.",
+        "source": "Genie One · agentskapande"
+      },
+      "scheduled-briefing": {
+        "topic": "Schemalagd briefing",
+        "question": "Kan du skapa en schemalagd briefing eller återkommande rapport?",
+        "preview": "Tar upp hur ett svar kan göras om till en återkommande briefing eller rapport enligt ett schema, och vilka som får den.",
+        "source": "Genie One · schemaläggning"
+      },
+      "draft-document": {
+        "topic": "Skapa ett utkast till dokument",
+        "question": "Kan du skapa ett utkast till ett dokument baserat på en analys?",
+        "preview": "Omfattar att skriva ut en analys som ett dokument, där siffror och källor följer med i stället för att skrivas om.",
+        "source": "Genie One · dokumentgenerering"
+      },
+      "external-actions": {
+        "topic": "Agera i andra system",
+        "question": "Kan du utföra åtgärder i externa system, och vilka behörigheter eller godkännanden krävs?",
+        "preview": "Frågan om påverkan: vilka åtgärder den kan utföra utanför Databricks, och vilka behörigheter eller godkännanden som först krävs för varje åtgärd.",
+        "source": "Genie One · åtgärdsbehörigheter"
+      },
+      "limitations": {
+        "topic": "Kända begränsningar",
+        "question": "Vilka är de kända begränsningarna, begränsningarna för dataaktualitet och behörighetsgränserna?",
+        "preview": "Frågar efter de faktiska gränserna: vad den inte kan göra, hur inaktuella data kan vara och var dina behörigheter sätter stopp för svaret.",
+        "source": "Genie One · funktionsgränser"
+      },
+      "avoid-questions": {
+        "topic": "Frågor att undvika",
+        "question": "Vilka frågor bör jag undvika att ställa eftersom tillgängliga data inte kan besvara dem på ett tillförlitligt sätt?",
+        "preview": "Motsatsen till den första frågan: vilka frågor tillgängliga data inte kan stödja, så att du inte agerar på ett osäkert tal.",
+        "source": "Genie One · tillförlitlighetsgränser"
+      }
+    }
+  },
+  "th-TH": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "ความครอบคลุมและขอบเขต",
+      "Data & Trust": "ข้อมูลและความน่าเชื่อถือ",
+      "Answers & Explainability": "คำตอบและการอธิบายได้",
+      "Documents & Connectors": "เอกสารและตัวเชื่อมต่อ",
+      "Actions & Automation": "การดำเนินการและระบบอัตโนมัติ",
+      "Limits & Boundaries": "ข้อจำกัดและขอบเขต",
+      "Platform & Concepts": "แพลตฟอร์มและแนวคิด"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "คำถามที่ตอบได้",
+        "question": "คุณตอบคำถามทางธุรกิจประเภทใดได้บ้าง โดยใช้ข้อมูลที่ฉันเข้าถึงได้?",
+        "preview": "Genie One แจ้งประเภทคำถามที่ให้บริการได้จากข้อมูลที่สิทธิ์ของคุณเข้าถึง — จำกัดตามขอบเขตของคุณ ไม่ใช่ทั้งแคตตาล็อกโดยรวม",
+        "source": "Genie One · โดเมนที่เข้าถึงได้"
+      },
+      "domain-inventory": {
+        "topic": "สิ่งที่ฉันใช้ได้",
+        "question": "มีโดเมนธุรกิจ, Genie Agents, dashboards, metric views และคิวรีใดบ้างที่ฉันใช้ได้?",
+        "preview": "แสดงรายการสินทรัพย์ที่มีการกำกับดูแลและคุณใช้งานได้จริง: โดเมนธุรกิจ, Genie Agents, dashboards, metric views และคิวรีที่บันทึกไว้",
+        "source": "Genie One · รายการโดเมนและสินทรัพย์"
+      },
+      "analysis-types": {
+        "topic": "การวิเคราะห์ที่รองรับ",
+        "question": "การวิเคราะห์ประเภทใดที่รองรับในโดเมนเหล่านี้?",
+        "preview": "อธิบายการวิเคราะห์ที่รองรับในแต่ละโดเมน — การรวมยอด, แนวโน้ม, การเปรียบเทียบ, การจัดอันดับ, cohort — แทนที่จะให้คำมั่นแบบกว้าง ๆ",
+        "source": "Genie One · ความสามารถในการวิเคราะห์"
+      },
+      "combine-domains": {
+        "topic": "การรวมโดเมน",
+        "question": "เมื่อคุณตอบคำถาม สามารถรวมโดเมนใดเข้าด้วยกันได้บ้าง?",
+        "preview": "ระบุชื่อโดเมนที่สามารถเชื่อมเข้าด้วยกันในคำตอบเดียว และจุดที่มีความสัมพันธ์ที่มีการกำกับดูแลสำหรับใช้เชื่อมกัน",
+        "source": "Genie One · การเชื่อมข้ามโดเมน"
+      },
+      "sources-and-trust": {
+        "topic": "แหล่งข้อมูลที่เชื่อถือ",
+        "question": "คุณใช้แหล่งข้อมูลใดในการตอบคำถาม และตัดสินใจอย่างไรว่าแหล่งใดควรเชื่อถือ?",
+        "preview": "อธิบายว่าแหล่งข้อมูลใดสนับสนุนคำตอบ และใช้ลำดับความสำคัญอย่างไรเมื่อสองแหล่งข้อมูลขัดแย้งกัน — ความแตกต่างระหว่างคำตอบกับการคาดเดา",
+        "source": "Genie One · การเลือกแหล่งข้อมูล"
+      },
+      "business-terms": {
+        "topic": "คำศัพท์ที่เข้าใจ",
+        "question": "คุณเข้าใจคำศัพท์ทางธุรกิจ, เมตริก และความสัมพันธ์ใดบ้าง?",
+        "preview": "รายงานคำศัพท์ที่ได้รับการสอน: คำศัพท์ทางธุรกิจ, คำนิยามเมตริก และความสัมพันธ์ระหว่างเอนทิตี",
+        "source": "Genie One · โมเดลเชิงความหมาย"
+      },
+      "certified-metrics": {
+        "topic": "เมตริกที่ได้รับการรับรอง",
+        "question": "เมตริกใดมีคำนิยามที่มีการกำกับดูแลหรือได้รับการรับรอง?",
+        "preview": "แยกเมตริกที่มีคำนิยามที่มีการกำกับดูแลและได้รับการรับรอง ออกจากเมตริกที่คำนวณแบบเฉพาะกิจ เพื่อให้คุณรู้ว่าตัวเลขใดอ้างอิงได้อย่างมั่นใจ",
+        "source": "Genie One · คำนิยามเมตริกที่ได้รับการรับรอง"
+      },
+      "visualizations": {
+        "topic": "การแสดงภาพข้อมูล",
+        "question": "คุณสร้างการแสดงภาพข้อมูลแบบใดได้บ้างจากคำถามเชิงวิเคราะห์?",
+        "preview": "อธิบายประเภทแผนภูมิที่สร้างได้จากคำถามเชิงวิเคราะห์ และเมื่อใดที่ควรอ่านผลลัพธ์เป็นตารางมากกว่า",
+        "source": "Genie One · การรองรับการแสดงภาพข้อมูล"
+      },
+      "explainability": {
+        "topic": "แสดงขั้นตอนการทำงาน",
+        "question": "คุณอธิบายเหตุผล, SQL, สมมติฐาน และแหล่งที่มาที่อยู่เบื้องหลังคำตอบได้ไหม?",
+        "preview": "ขอร่องรอยการตรวจสอบ: เหตุผลที่ใช้, SQL ที่รัน, สมมติฐานที่ตั้งไว้ และแหล่งที่มาที่อ่าน",
+        "source": "Genie One · ที่มาของคำตอบ"
+      },
+      "follow-ups": {
+        "topic": "คำถามต่อเนื่อง",
+        "question": "หลังจากได้คำตอบแรกแล้ว ฉันถามคำถามต่อเนื่องแบบใดได้บ้าง?",
+        "preview": "อธิบายสิ่งที่ยังคงอยู่ในบริบทระหว่างการสนทนา เพื่อให้รู้ว่าปรับคำถามส่วนใดได้โดยไม่ต้องทวนคำถามทั้งหมด",
+        "source": "Genie One · บริบทการสนทนา"
+      },
+      "ambiguity": {
+        "topic": "เมื่อจำเป็นต้องถามกลับ",
+        "question": "คำถามแบบใดต้องมีการชี้แจงเพิ่มเติมเพราะข้อมูลหรือคำศัพท์กำกวม?",
+        "preview": "ระบุกรณีที่จะถามเพื่อขอความชัดเจนแทนการคาดเดา — คำศัพท์กำกวม, เมตริกที่ทับซ้อนกัน, ช่วงเวลาที่ไม่ระบุวันที่",
+        "source": "Genie One · การจัดการความกำกวม"
+      },
+      "structured-vs-documents": {
+        "topic": "ข้อมูลกับเอกสาร",
+        "question": "คุณตอบคำถามใดได้จากข้อมูล Databricks แบบมีโครงสร้าง เทียบกับเอกสารที่เชื่อมต่ออยู่?",
+        "preview": "แยกให้เห็นว่าอะไรตอบจากตารางที่อยู่ภายใต้การกำกับดูแล และอะไรตอบจากเอกสารที่เชื่อมต่ออยู่",
+        "source": "Genie One · ครอบคลุมข้อมูลแบบมีโครงสร้าง & ไม่มีโครงสร้าง"
+      },
+      "connectors": {
+        "topic": "แหล่งข้อมูลที่เชื่อมต่อ",
+        "question": "คุณใช้แหล่งข้อมูลที่เชื่อมต่อ เช่น Google Drive, SharePoint, Slack, Glean, Jira หรือ Confluence ได้ไหม?",
+        "preview": "รายงานว่าแหล่งข้อมูลภายนอกใดเชื่อมต่อให้คุณอยู่จริง ไม่ใช่แหล่งใดที่รองรับได้ในทางทฤษฎี",
+        "source": "Genie One · แหล่งข้อมูลที่เชื่อมต่อ"
+      },
+      "file-with-data": {
+        "topic": "ไฟล์ + ข้อมูลของคุณ",
+        "question": "คุณวิเคราะห์ไฟล์ร่วมกับข้อมูล Databricks ของฉันได้ไหม?",
+        "preview": "ครอบคลุมว่าไฟล์ที่อัปโหลดสามารถวิเคราะห์ควบคู่กับตารางที่อยู่ภายใต้การกำกับดูแลได้หรือไม่ และมีการกำกับดูแลใดบ้างเมื่อทำเช่นนั้น",
+        "source": "Genie One · การวิเคราะห์ไฟล์"
+      },
+      "create-agent": {
+        "topic": "Agent ที่ใช้ซ้ำได้",
+        "question": "คุณสร้าง Genie Agent ที่ใช้ซ้ำได้จากการสนทนานี้ได้ไหม?",
+        "preview": "ถามว่าสามารถยกระดับการสนทนานี้ให้เป็น Genie Agent ที่ใช้ซ้ำได้เพื่อให้ผู้อื่นรันได้หรือไม่",
+        "source": "Genie One · การสร้าง Agent"
+      },
+      "scheduled-briefing": {
+        "topic": "บรีฟตามกำหนดเวลา",
+        "question": "คุณสร้างบรีฟตามกำหนดเวลาหรือรายงานประจำได้ไหม?",
+        "preview": "ครอบคลุมการเปลี่ยนคำตอบให้เป็นบรีฟหรือรายงานประจำตามกำหนดเวลา และใครเป็นผู้รับ",
+        "source": "Genie One · การจัดกำหนดการ"
+      },
+      "draft-document": {
+        "topic": "ร่างเอกสาร",
+        "question": "คุณช่วยร่างเอกสารจากการวิเคราะห์ได้ไหม?",
+        "preview": "ครอบคลุมการเขียนผลการวิเคราะห์เป็นเอกสาร โดยคงตัวเลขและแหล่งที่มาไว้ แทนการพิมพ์ใหม่",
+        "source": "Genie One · การสร้างเอกสาร"
+      },
+      "external-actions": {
+        "topic": "ดำเนินการในระบบอื่น",
+        "question": "คุณดำเนินการในระบบภายนอกได้ไหม และต้องใช้สิทธิ์หรือการอนุมัติอะไรบ้าง?",
+        "preview": "คำถามเรื่องผลลัพธ์: ดำเนินการอะไรนอก Databricks ได้บ้าง และแต่ละอย่างต้องมีสิทธิ์หรือการอนุมัติใดก่อน",
+        "source": "Genie One · สิทธิ์การดำเนินการ"
+      },
+      "limitations": {
+        "topic": "ข้อจำกัดที่ทราบ",
+        "question": "มีข้อจำกัดที่ทราบ ข้อจำกัดด้านความสดใหม่ของข้อมูล และขอบเขตสิทธิ์อะไรบ้าง?",
+        "preview": "ถามถึงขอบเขตตามจริง: ทำอะไรไม่ได้บ้าง ข้อมูลอาจไม่อัปเดตแค่ไหน และสิทธิ์ของคุณจำกัดคำตอบไว้ตรงไหน",
+        "source": "Genie One · ขอบเขตความสามารถ"
+      },
+      "avoid-questions": {
+        "topic": "คำถามที่ไม่ควรถาม",
+        "question": "ฉันควรหลีกเลี่ยงคำถามใด เพราะข้อมูลที่มีไม่สามารถตอบได้อย่างน่าเชื่อถือ?",
+        "preview": "กลับด้านจากคำถามแรก: คำถามใดที่ข้อมูลที่มีรองรับไม่ได้ เพื่อที่คุณจะไม่ตัดสินใจจากตัวเลขที่ไม่น่าเชื่อถือ",
+        "source": "Genie One · ขอบเขตความน่าเชื่อถือ"
+      }
+    }
+  },
+  "tr-TR": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Kapsam ve Alan",
+      "Data & Trust": "Veri ve Güven",
+      "Answers & Explainability": "Yanıtlar ve Açıklanabilirlik",
+      "Documents & Connectors": "Belgeler ve Bağlayıcılar",
+      "Actions & Automation": "Eylemler ve Otomasyon",
+      "Limits & Boundaries": "Sınırlar ve Kısıtlar",
+      "Platform & Concepts": "Platform ve Kavramlar"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Yanıtlayabileceğiniz konular",
+        "question": "Erişebildiğim verileri kullanarak ne tür iş sorularını yanıtlayabilirsin?",
+        "preview": "Genie One, kendi izinlerinizin erişebildiği verilerden karşılayabileceği soru türlerini bildirir — genel katalog için değil, sizin kapsamınızda.",
+        "source": "Genie One · erişilebilir alanlar"
+      },
+      "domain-inventory": {
+        "topic": "Bana sunulanlar",
+        "question": "Hangi iş alanları, Genie Agents, dashboardlar, metric viewlar ve sorgular bana açık?",
+        "preview": "Gerçekten kullanabileceğiniz yönetilen varlıkları listeler: iş alanları, Genie Agents, dashboardlar, metric viewlar ve kaydedilmiş sorgular.",
+        "source": "Genie One · alan ve varlık envanteri"
+      },
+      "analysis-types": {
+        "topic": "Desteklenen analiz",
+        "question": "Bu alanlarda hangi analiz türleri destekleniyor?",
+        "preview": "Genel bir şey vadetmek yerine, alan bazında desteklediği analizleri açıklar — toplama, trend, karşılaştırma, sıralama, kohort.",
+        "source": "Genie One · analiz yetenekleri"
+      },
+      "combine-domains": {
+        "topic": "Alanları birleştirme",
+        "question": "Bir soruyu yanıtlarken hangi alanları birleştirebilirsin?",
+        "preview": "Tek bir yanıtta birleştirebileceği alanları ve bunları bağlamak için yönetilen bir ilişkinin nerede bulunduğunu belirtir.",
+        "source": "Genie One · alanlar arası birleştirmeler"
+      },
+      "sources-and-trust": {
+        "topic": "Güvendiği kaynaklar",
+        "question": "Soruları yanıtlamak için hangi veri kaynaklarını kullanıyorsun ve hangi kaynağa güveneceğine nasıl karar veriyorsun?",
+        "preview": "Yanıtlarını hangi kaynakların desteklediğini ve iki kaynak çeliştiğinde uyguladığı önceliği açıklar — yanıt ile tahmin arasındaki farkı gösterir.",
+        "source": "Genie One · kaynak seçimi"
+      },
+      "business-terms": {
+        "topic": "Anladığı terimler",
+        "question": "Hangi iş terimlerini, metrikleri ve ilişkileri anlıyorsun?",
+        "preview": "Öğretilmiş olduğu söz varlığını bildirir: iş terimleri, metrik tanımları ve varlıklar arasındaki ilişkiler.",
+        "source": "Genie One · anlamsal model"
+      },
+      "certified-metrics": {
+        "topic": "Sertifikalı metrikler",
+        "question": "Hangi metriklerin yönetilen veya sertifikalı tanımları var?",
+        "preview": "Yönetilen, sertifikalı tanımı olan metrikleri anlık hesaplananlardan ayırır; böylece hangi sayıların güvenle paylaşılabileceğini bilirsiniz.",
+        "source": "Genie One · sertifikalı metrik tanımları"
+      },
+      "visualizations": {
+        "topic": "Görselleştirmeler",
+        "question": "Analitik sorulardan hangi görselleştirmeleri oluşturabilirsiniz?",
+        "preview": "Üretebildiği grafik türlerini ve bir sonucun ne zaman tablo olarak okunmasının daha uygun olduğunu açıklar.",
+        "source": "Genie One · görselleştirme desteği"
+      },
+      "explainability": {
+        "topic": "Gerekçeyi göster",
+        "question": "Bir yanıtın arkasındaki gerekçeyi, SQL sorgusunu, varsayımları ve kaynakları açıklayabilir misiniz?",
+        "preview": "Denetim izini ister: izlediği gerekçe, çalıştırdığı SQL, yaptığı varsayımlar ve okuduğu kaynaklar.",
+        "source": "Genie One · yanıt kaynağı"
+      },
+      "follow-ups": {
+        "topic": "Takip soruları",
+        "question": "İlk yanıttan sonra ne tür takip soruları sorabilirim?",
+        "preview": "Tur geçişleri arasında bağlamda ne tuttuğunu açıklar; böylece tüm soruyu tekrar etmeden neyi netleştirebileceğinizi bilirsiniz.",
+        "source": "Genie One · konuşma bağlamı"
+      },
+      "ambiguity": {
+        "topic": "Ne zaman sormalı",
+        "question": "Veri veya terminoloji belirsiz olduğu için hangi sorular açıklama gerektirir?",
+        "preview": "Tahmin etmek yerine açıklayıcı bir soru soracağı durumları belirtir — belirsiz terimler, çakışan metrikler, tarihsiz aralıklar.",
+        "source": "Genie One · belirsizlik yönetimi"
+      },
+      "structured-vs-documents": {
+        "topic": "Veriler ve belgeler",
+        "question": "Yapılandırılmış Databricks verilerinden ve bağlı belgelerden hangi soruları yanıtlayabilirsiniz?",
+        "preview": "Yönetişim altındaki tablolardan yanıtladıkları ile bağlı belgelerden yanıtladıkları arasındaki sınırı çizer.",
+        "source": "Genie One · yapılandırılmış ve yapılandırılmamış kapsam"
+      },
+      "connectors": {
+        "topic": "Bağlı kaynaklar",
+        "question": "Google Drive, SharePoint, Slack, Glean, Jira veya Confluence gibi bağlı kaynakları kullanabilir misiniz?",
+        "preview": "Teorik olarak desteklenenler yerine sizin için gerçekten bağlı olan dış kaynakları bildirir.",
+        "source": "Genie One · bağlı kaynaklar"
+      },
+      "file-with-data": {
+        "topic": "Dosya + verileriniz",
+        "question": "Bir dosyayı Databricks verilerimle birlikte analiz edebilir misiniz?",
+        "preview": "Yüklenen bir dosyanın yönetişim altındaki tablolarla birlikte analiz edilip edilemeyeceğini ve bu durumda hangi yönetişimin geçerli olduğunu kapsar.",
+        "source": "Genie One · dosya analizi"
+      },
+      "create-agent": {
+        "topic": "Yeniden kullanılabilir agent",
+        "question": "Bu konuşmadan yeniden kullanılabilir bir Genie Agent oluşturabilir misiniz?",
+        "preview": "Bu konuşmanın başkalarının çalıştırabileceği yeniden kullanılabilir bir Genie Agent haline getirilip getirilemeyeceğini sorar.",
+        "source": "Genie One · agent yazma"
+      },
+      "scheduled-briefing": {
+        "topic": "Zamanlanmış bilgilendirme",
+        "question": "Zamanlanmış bir bilgilendirme veya yinelenen rapor oluşturabilir misiniz?",
+        "preview": "Bir yanıtı belirli bir takvime göre yinelenen bilgilendirme veya rapora dönüştürmeyi ve bunu kimlerin alacağını kapsar.",
+        "source": "Genie One · zamanlama"
+      },
+      "draft-document": {
+        "topic": "Belge taslağı oluştur",
+        "question": "Bir analize dayanarak belge taslağı oluşturabilir misin?",
+        "preview": "Analizi; şekilleri ve kaynakları yeniden yazmak yerine koruyarak bir belgeye dönüştürmeyi kapsar.",
+        "source": "Genie One · belge oluşturma"
+      },
+      "external-actions": {
+        "topic": "Diğer sistemlerde işlem yapma",
+        "question": "Harici sistemlerde işlem yapabilir misin ve hangi izinler veya onaylar gerekir?",
+        "preview": "Etkisiyle ilgili soru: Databricks dışında hangi işlemleri yapabileceği ve her biri için önce hangi izinlerin veya onayların gerektiği.",
+        "source": "Genie One · işlem izinleri"
+      },
+      "limitations": {
+        "topic": "Bilinen sınırlar",
+        "question": "Bilinen sınırlamalar, veri güncelliği kısıtları ve izin sınırları nelerdir?",
+        "preview": "Neleri yapamadığını, verilerin ne kadar eski olabileceğini ve izinlerinizin yanıtı nerede sınırladığını sorar.",
+        "source": "Genie One · yetenek sınırları"
+      },
+      "avoid-questions": {
+        "topic": "Sormamanız gerekenler",
+        "question": "Mevcut veriler güvenilir şekilde yanıtlayamayacağı için hangi soruları sormaktan kaçınmalıyım?",
+        "preview": "İlk sorunun tersi: mevcut verilerin hangi soruları destekleyemeyeceğini gösterir; böylece sağlam olmayan bir sayıya göre hareket etmezsiniz.",
+        "source": "Genie One · güvenilirlik sınırları"
+      }
+    }
+  },
+  "vi-VN": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "Phạm vi bao phủ",
+      "Data & Trust": "Dữ liệu & độ tin cậy",
+      "Answers & Explainability": "Câu trả lời & khả năng giải thích",
+      "Documents & Connectors": "Tài liệu & trình kết nối",
+      "Actions & Automation": "Hành động & tự động hóa",
+      "Limits & Boundaries": "Giới hạn & ranh giới",
+      "Platform & Concepts": "Nền tảng & khái niệm"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "Những gì bạn có thể trả lời",
+        "question": "Bạn có thể trả lời những loại câu hỏi kinh doanh nào bằng dữ liệu mà tôi có quyền truy cập?",
+        "preview": "Genie One cho biết các loại câu hỏi có thể xử lý dựa trên dữ liệu mà quyền của riêng bạn truy cập được — theo phạm vi của bạn, không phải toàn bộ catalog.",
+        "source": "Genie One · miền có thể truy cập"
+      },
+      "domain-inventory": {
+        "topic": "Những gì có sẵn cho tôi",
+        "question": "Những miền kinh doanh, Genie Agents, dashboard, metric view và truy vấn nào có sẵn cho tôi?",
+        "preview": "Liệt kê các tài sản được quản trị mà bạn thực sự có thể sử dụng: miền kinh doanh, Genie Agents, dashboard, metric view và truy vấn đã lưu.",
+        "source": "Genie One · kiểm kê miền & tài sản"
+      },
+      "analysis-types": {
+        "topic": "Phân tích được hỗ trợ",
+        "question": "Những loại phân tích nào được hỗ trợ trên các miền này?",
+        "preview": "Mô tả phân tích được hỗ trợ theo từng miền — tổng hợp, xu hướng, so sánh, xếp hạng, cohort — thay vì đưa ra cam kết chung chung.",
+        "source": "Genie One · khả năng phân tích"
+      },
+      "combine-domains": {
+        "topic": "Kết hợp các miền",
+        "question": "Bạn có thể kết hợp những miền nào khi trả lời một câu hỏi?",
+        "preview": "Nêu các miền có thể kết nối trong một câu trả lời, và nơi có quan hệ được quản trị để kết nối chúng.",
+        "source": "Genie One · kết nối liên miền"
+      },
+      "sources-and-trust": {
+        "topic": "Nguồn được tin cậy",
+        "question": "Bạn dùng những nguồn dữ liệu nào để trả lời câu hỏi, và bạn quyết định tin nguồn nào như thế nào?",
+        "preview": "Giải thích các nguồn hỗ trợ câu trả lời và thứ tự ưu tiên được áp dụng khi hai nguồn không khớp nhau — sự khác biệt giữa một câu trả lời và một phỏng đoán.",
+        "source": "Genie One · lựa chọn nguồn"
+      },
+      "business-terms": {
+        "topic": "Thuật ngữ được hiểu",
+        "question": "Bạn hiểu những thuật ngữ kinh doanh, chỉ số và mối quan hệ nào?",
+        "preview": "Báo cáo vốn từ vựng đã được dạy: thuật ngữ kinh doanh, định nghĩa chỉ số và các mối quan hệ giữa các thực thể.",
+        "source": "Genie One · mô hình ngữ nghĩa"
+      },
+      "certified-metrics": {
+        "topic": "Chỉ số được chứng nhận",
+        "question": "Những chỉ số nào có định nghĩa được quản trị hoặc chứng nhận?",
+        "preview": "Tách các chỉ số có định nghĩa được quản trị, chứng nhận khỏi các chỉ số được tính tùy thời điểm, để bạn biết con số nào an toàn để trích dẫn.",
+        "source": "Genie One · định nghĩa chỉ số được chứng nhận"
+      },
+      "visualizations": {
+        "topic": "Trực quan hóa",
+        "question": "Bạn có thể tạo những dạng trực quan hóa nào từ các câu hỏi phân tích?",
+        "preview": "Mô tả các loại biểu đồ có thể tạo từ một câu hỏi phân tích, và khi nào kết quả nên được đọc dưới dạng bảng.",
+        "source": "Genie One · hỗ trợ trực quan hóa"
+      },
+      "explainability": {
+        "topic": "Trình bày cách làm",
+        "question": "Bạn có thể giải thích lập luận, SQL, giả định và nguồn đằng sau một câu trả lời không?",
+        "preview": "Yêu cầu dấu vết kiểm tra: lập luận đã theo, SQL đã chạy, giả định đã đưa ra và các nguồn đã đọc.",
+        "source": "Genie One · nguồn gốc câu trả lời"
+      },
+      "follow-ups": {
+        "topic": "Câu hỏi tiếp theo",
+        "question": "Tôi có thể hỏi những loại câu hỏi tiếp theo nào sau câu trả lời ban đầu?",
+        "preview": "Giải thích những gì được giữ trong ngữ cảnh giữa các lượt, để bạn biết có thể tinh chỉnh gì mà không cần nêu lại toàn bộ câu hỏi.",
+        "source": "Genie One · ngữ cảnh hội thoại"
+      },
+      "ambiguity": {
+        "topic": "Khi cần hỏi lại",
+        "question": "Những câu hỏi nào cần làm rõ vì dữ liệu hoặc thuật ngữ chưa rõ ràng?",
+        "preview": "Nêu các trường hợp hệ thống sẽ hỏi lại để làm rõ thay vì đoán — thuật ngữ mơ hồ, chỉ số chồng lấn, khoảng thời gian không có ngày.",
+        "source": "Genie One · xử lý điểm mơ hồ"
+      },
+      "structured-vs-documents": {
+        "topic": "Dữ liệu so với tài liệu",
+        "question": "Bạn có thể trả lời những câu hỏi nào từ dữ liệu Databricks có cấu trúc so với tài liệu được kết nối?",
+        "preview": "Phân định ranh giới giữa những gì hệ thống trả lời từ các bảng được quản trị và những gì trả lời từ tài liệu được kết nối.",
+        "source": "Genie One · phạm vi có cấu trúc & phi cấu trúc"
+      },
+      "connectors": {
+        "topic": "Nguồn được kết nối",
+        "question": "Bạn có thể dùng các nguồn được kết nối như Google Drive, SharePoint, Slack, Glean, Jira hoặc Confluence không?",
+        "preview": "Cho biết những nguồn bên ngoài nào thực sự được kết nối cho bạn, thay vì những nguồn chỉ được hỗ trợ về mặt lý thuyết.",
+        "source": "Genie One · nguồn được kết nối"
+      },
+      "file-with-data": {
+        "topic": "Tệp + dữ liệu của bạn",
+        "question": "Bạn có thể phân tích một tệp cùng với dữ liệu Databricks của tôi không?",
+        "preview": "Đề cập liệu một tệp đã tải lên có thể được phân tích cùng với các bảng được quản trị hay không, và cơ chế quản trị nào áp dụng khi thực hiện.",
+        "source": "Genie One · phân tích tệp"
+      },
+      "create-agent": {
+        "topic": "Agent tái sử dụng",
+        "question": "Bạn có thể tạo một Genie Agent tái sử dụng từ cuộc trò chuyện này không?",
+        "preview": "Hỏi liệu cuộc trò chuyện này có thể được nâng cấp thành một Genie Agent tái sử dụng để người khác chạy hay không.",
+        "source": "Genie One · tạo agent"
+      },
+      "scheduled-briefing": {
+        "topic": "Bản tóm tắt theo lịch",
+        "question": "Bạn có thể tạo một bản tóm tắt theo lịch hoặc báo cáo định kỳ không?",
+        "preview": "Đề cập việc chuyển một câu trả lời thành bản tóm tắt hoặc báo cáo định kỳ theo lịch, và ai sẽ nhận được.",
+        "source": "Genie One · lập lịch"
+      },
+      "draft-document": {
+        "topic": "Soạn thảo tài liệu",
+        "question": "Bạn có thể soạn thảo tài liệu dựa trên một phân tích không?",
+        "preview": "Bao gồm việc chuyển một phân tích thành tài liệu, với các hình và nguồn được giữ lại thay vì nhập lại.",
+        "source": "Genie One · tạo tài liệu"
+      },
+      "external-actions": {
+        "topic": "Hành động trong hệ thống khác",
+        "question": "Bạn có thể thực hiện hành động trong các hệ thống bên ngoài không, và cần quyền hoặc phê duyệt nào?",
+        "preview": "Câu hỏi về tác động: có thể thực hiện hành động nào bên ngoài Databricks, và mỗi hành động cần quyền hoặc phê duyệt nào trước.",
+        "source": "Genie One · quyền thực hiện hành động"
+      },
+      "limitations": {
+        "topic": "Giới hạn đã biết",
+        "question": "Các giới hạn đã biết, ràng buộc về độ mới của dữ liệu và phạm vi quyền là gì?",
+        "preview": "Hỏi thẳng về các giới hạn: không thể làm gì, dữ liệu có thể cũ đến mức nào, và quyền của bạn chặn câu trả lời ở đâu.",
+        "source": "Genie One · ranh giới khả năng"
+      },
+      "avoid-questions": {
+        "topic": "Những điều không nên hỏi",
+        "question": "Tôi nên tránh hỏi những câu nào vì dữ liệu hiện có không thể trả lời đáng tin cậy?",
+        "preview": "Ngược lại với câu hỏi đầu tiên: dữ liệu hiện có không hỗ trợ những câu hỏi nào, để bạn không hành động dựa trên một con số thiếu chắc chắn.",
+        "source": "Genie One · ranh giới độ tin cậy"
+      }
+    }
+  },
+  "zh-CN": {
+    "_sourceHash": "5b90cef3c2cca533",
+    "categories": {
+      "Coverage & Scope": "覆盖范围与作用域",
+      "Data & Trust": "数据与信任",
+      "Answers & Explainability": "答案与可解释性",
+      "Documents & Connectors": "文档与连接器",
+      "Actions & Automation": "操作与自动化",
+      "Limits & Boundaries": "限制与边界",
+      "Platform & Concepts": "平台与概念"
+    },
+    "topics": {
+      "answerable-questions": {
+        "topic": "你可以回答什么",
+        "question": "基于我有权访问的数据，你可以回答哪些业务问题？",
+        "preview": "Genie One 会说明它可以基于你本人权限可访问的数据回答哪些问题类型 — 范围限定于你，而不是整个 catalog。",
+        "source": "Genie One · 可访问的业务域"
+      },
+      "domain-inventory": {
+        "topic": "我可使用的内容",
+        "question": "我可以使用哪些业务域、Genie Agents、dashboard、metric view 和查询？",
+        "preview": "列出你实际可以使用的受治理资产：业务域、Genie Agents、dashboard、metric view 和已保存查询。",
+        "source": "Genie One · 业务域和资产清单"
+      },
+      "analysis-types": {
+        "topic": "支持的分析",
+        "question": "这些业务域支持哪些类型的分析？",
+        "preview": "按业务域说明其支持的分析 — 聚合、趋势、对比、排名、队列 — 而不是泛泛承诺。",
+        "source": "Genie One · 分析能力"
+      },
+      "combine-domains": {
+        "topic": "组合业务域",
+        "question": "回答问题时，你可以组合哪些业务域？",
+        "preview": "说明它可以在同一个答案中联接哪些业务域，以及可用于联接这些业务域的受治理关系在哪里。",
+        "source": "Genie One · 跨业务域联接"
+      },
+      "sources-and-trust": {
+        "topic": "它信任的来源",
+        "question": "你使用哪些数据源来回答问题，又如何决定信任哪个来源？",
+        "preview": "说明其答案所依据的来源，以及当两个来源不一致时采用的优先级 — 这就是答案与猜测的区别。",
+        "source": "Genie One · 来源选择"
+      },
+      "business-terms": {
+        "topic": "它理解的术语",
+        "question": "你理解哪些业务术语、指标和关系？",
+        "preview": "报告它已学习的词汇：业务术语、指标定义，以及实体之间的关系。",
+        "source": "Genie One · 语义模型"
+      },
+      "certified-metrics": {
+        "topic": "认证指标",
+        "question": "哪些指标具有受治理或认证的定义？",
+        "preview": "将具有受治理、认证定义的指标与临时计算的指标区分开来，让你知道哪些数字可以放心引用。",
+        "source": "Genie One · 认证指标定义"
+      },
+      "visualizations": {
+        "topic": "可视化",
+        "question": "你能根据分析问题生成哪些可视化？",
+        "preview": "说明它可根据分析问题生成的图表类型，以及哪些结果更适合以表格查看。",
+        "source": "Genie One · 可视化支持"
+      },
+      "explainability": {
+        "topic": "说明你的依据",
+        "question": "你能解释答案背后的推理、SQL、假设和来源吗？",
+        "preview": "请求审计线索：它遵循的推理、运行的 SQL、做出的假设以及读取的来源。",
+        "source": "Genie One · 答案溯源"
+      },
+      "follow-ups": {
+        "topic": "后续问题",
+        "question": "在获得初始答案后，我可以问哪些后续问题？",
+        "preview": "说明它在多轮对话中会保留哪些上下文，帮助你了解无需重述完整问题即可细化的内容。",
+        "source": "Genie One · 对话上下文"
+      },
+      "ambiguity": {
+        "topic": "何时需要追问",
+        "question": "哪些问题会因为数据或术语不明确而需要澄清？",
+        "preview": "列出它会提出澄清问题而不是猜测的情况——术语不明确、指标重叠、范围未指定日期。",
+        "source": "Genie One · 歧义处理"
+      },
+      "structured-vs-documents": {
+        "topic": "数据与文档",
+        "question": "对于结构化 Databricks 数据和已连接文档，你分别能回答哪些问题？",
+        "preview": "划分它从受治理表回答的内容，以及从已连接文档回答的内容。",
+        "source": "Genie One · 结构化和非结构化覆盖范围"
+      },
+      "connectors": {
+        "topic": "已连接来源",
+        "question": "你能使用 Google Drive、SharePoint、Slack、Glean、Jira 或 Confluence 等已连接来源吗？",
+        "preview": "说明哪些外部来源已为你实际连接，而不是哪些在理论上受支持。",
+        "source": "Genie One · 已连接来源"
+      },
+      "file-with-data": {
+        "topic": "文件 + 你的数据",
+        "question": "你能将一个文件与我的 Databricks 数据一起分析吗？",
+        "preview": "说明上传的文件能否与受治理表一起分析，以及这样做时适用哪些治理。",
+        "source": "Genie One · 文件分析"
+      },
+      "create-agent": {
+        "topic": "可复用 agent",
+        "question": "你能基于这段对话创建一个可复用的 Genie Agent 吗？",
+        "preview": "询问这段对话是否可以提升为其他人可运行的可复用 Genie Agent。",
+        "source": "Genie One · agent 创作"
+      },
+      "scheduled-briefing": {
+        "topic": "定时简报",
+        "question": "你能创建定时简报或周期性报告吗？",
+        "preview": "说明如何将答案转换为按计划发送的周期性简报或报告，以及接收人是谁。",
+        "source": "Genie One · 定时安排"
+      },
+      "draft-document": {
+        "topic": "起草文档",
+        "question": "能根据一份分析起草文档吗？",
+        "preview": "涵盖将分析撰写成文档，并保留其中的图表和来源，而不是重新输入。",
+        "source": "Genie One · 文档生成"
+      },
+      "external-actions": {
+        "topic": "在其他系统中执行操作",
+        "question": "能在外部系统中执行操作吗？需要哪些权限或审批？",
+        "preview": "询问可执行的外部操作：它能在 Databricks 之外执行哪些操作，以及每项操作事先需要哪些权限或审批。",
+        "source": "Genie One · 操作权限"
+      },
+      "limitations": {
+        "topic": "已知限制",
+        "question": "有哪些已知限制、数据新鲜度约束和权限边界？",
+        "preview": "询问真实边界：它不能做什么、数据可能有多滞后，以及你的权限会在哪里限制答案。",
+        "source": "Genie One · 能力边界"
+      },
+      "avoid-questions": {
+        "topic": "不该问什么",
+        "question": "哪些问题应避免询问，因为可用数据无法可靠回答？",
+        "preview": "第一个问题的反面：可用数据无法支持哪些问题，避免你基于不可靠的数字采取行动。",
+        "source": "Genie One · 可靠性边界"
+      }
+    }
+  }
+}

@@ -6,8 +6,10 @@ off-corpus question returns NO matches so the agent has nothing to answer from.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
+from genie_voice.i18n import LANGUAGE_SPECS, content_language
 from realtime_api import knowledge_tools
 from realtime_api.profiles import get_profile
 
@@ -66,6 +68,49 @@ def test_published_topics_are_all_live_and_carry_no_canned_answer():
         assert topic["question"].strip()
         assert topic["source"].strip()
         assert topic["category"] in knowledge_tools.KNOWLEDGE_CATEGORIES
+        assert topic["canonical_question"] == topic["question"]
+
+
+def test_localized_topics_keep_the_canonical_genie_query_separate():
+    english = {topic["id"]: topic for topic in knowledge_tools.knowledge_topics("en-US")}
+    hindi = {topic["id"]: topic for topic in knowledge_tools.knowledge_topics("hi-IN")}
+
+    assert set(hindi) == set(english)
+    for topic_id, localized in hindi.items():
+        assert localized["canonical_question"] == english[topic_id]["question"]
+        assert localized["question"] != english[topic_id]["question"]
+        assert localized["preview"] != english[topic_id]["preview"]
+        assert localized["source"] != english[topic_id]["source"]
+
+
+def test_localized_topic_asset_covers_every_product_language():
+    catalogs = knowledge_tools._topic_locales()
+    expected = {content_language(language) for language in LANGUAGE_SPECS}
+    assert expected <= set(catalogs)
+
+    source = {
+        "categories": list(knowledge_tools.KNOWLEDGE_CATEGORIES),
+        "topics": {
+            prompt["id"]: {
+                field: prompt[field]
+                for field in ("topic", "question", "preview", "source")
+            }
+            for prompt in knowledge_tools.WORKSPACE_PROMPTS
+        },
+    }
+    source_hash = hashlib.sha256(
+        json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+
+    expected_ids = {prompt["id"] for prompt in knowledge_tools.WORKSPACE_PROMPTS}
+    for language in expected:
+        catalog = catalogs[language]
+        assert catalog["_sourceHash"] == source_hash
+        assert set(catalog["categories"]) == set(knowledge_tools.KNOWLEDGE_CATEGORIES)
+        assert set(catalog["topics"]) == expected_ids
+        for topic in catalog["topics"].values():
+            assert set(topic) == {"topic", "question", "preview", "source"}
+            assert all(str(value).strip() for value in topic.values())
 
 
 def test_every_match_carries_a_citation():

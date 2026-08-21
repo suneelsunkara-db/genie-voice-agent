@@ -31,16 +31,17 @@ async def greeting(language: str = "en-US", name: str = "") -> dict:
 
 
 @router.get("/corpus")
-async def corpus() -> dict:
-    """The questions the page offers, grouped by category and tagged with their lane.
+async def corpus(language: str = "en-US") -> dict:
+    """Caller-language questions grouped by localized category.
 
-    ``categories`` is the stable display order. Each topic names the ``lane`` that
-    answers it (``pack`` = the cited docs corpus, ``workspace`` = a live Genie One
-    round-trip against the caller's governed workspace) and the ``source`` the answer
-    comes from. Pack topics carry the cited ``answer``; workspace topics carry a
-    ``preview`` of what asking will do, because their answer only exists once Genie
-    One actually runs.
+    ``categories`` keeps a stable display order. Every topic is a live Genie One
+    workspace question and carries localized display text plus its canonical source
+    question; there is no canned answer.
     """
-    from realtime_api.knowledge_tools import KNOWLEDGE_CATEGORIES, knowledge_topics
+    from realtime_api.knowledge_tools import knowledge_categories, knowledge_topics
 
-    return {"categories": list(KNOWLEDGE_CATEGORIES), "topics": knowledge_topics()}
+    return {
+        "categories": knowledge_categories(language),
+        "topics": knowledge_topics(language),
+        "language": language,
+    }
