@@ -259,20 +259,20 @@ Audio duration was not stored, so language rank is not a causal claim. Next meas
 
 ---
 
-## Slide 12 (deck eyebrow 11) — Deployment controls that changed latency and reliability
+## Slide 12 (deck eyebrow 11) — Four lessons from running these models in production
 
-REPRODUCIBLE GPU RUNTIME  
-Pin `torch==2.7.1`, `torchaudio==2.7.1`, and `torchvision==0.22.1`. Unpinned dependency resolution selected incompatible CUDA operators and failed at inference time—not during model registration.
+01  PIN THE SOFTWARE STACK  
+The serving GPU shipped a CUDA build our model libraries could not load, so speech recognition failed on the first real request — not at deploy time. Fixing the library versions made it reliable.
 
-REMOVE COLD-PATH COMPILATION  
-Serve each model on `GPU_MEDIUM` / `Small` with scale-to-zero disabled. Repeated STT warm-up reduced observed requests from ~24 s to ~16 s to ~1.5 s. Precompiling standard and voice-cloned TTS shapes avoids a ~15 s first-use stall.
+02  KEEP THE MODELS WARM  
+A cold endpoint answered the first request in about 24 seconds; once warm, about 1.5. We keep the models loaded and warm both the normal and voice-cloned paths before taking real traffic.
 
-CACHE VOICE REFERENCES BY IDENTITY  
-After the first upload, send `voice_id` instead of the ~500 KB base64 recording. This removed ~1.7 s of repeated transport; endpoint materialization is ~25 ms. The LRU cache is replica-local, so a cache miss explicitly requests re-upload.
+03  SEND THE VOICE ONCE  
+Resending the reference voice sample on every turn added about 1.7 seconds. We upload it once and refer to it by an ID on later turns, so the lookup is near-instant.
 
-PROFILE THE DIFFUSION OPERATING POINT  
-VoxCPM2 runs at six inference steps and CFG 2.0. Four steps reduced latency, but Thai-only round-trip similarity fell from 1.00 to 0.76. Treat this as a serving ablation—not evidence of multilingual perceptual quality.
+04  DON'T RUSH VOICE GENERATION  
+Using fewer generation steps was faster but made the Thai voice noticeably less like the reference. Six steps was the point where speed and voice quality were both acceptable.
 
-**Implementation references:** `scripts/ml_asr/register_realtime_voice_agent.py:36–40`; `scripts/ml_asr/realtime_tts_agent.py:82–220`; `realtime_api/services.py:229`; `config/config.yaml:358–360`.
+_Footer:_ These are practical lessons from operating the system — not results from the recognition benchmark.
 
-**External references:** MLflow ResponsesAgent; Databricks GPU Model Serving; VoxCPM2 model card.
+**Speaker notes (provenance, not on slide):** pinned stack `torch==2.7.1` / `torchaudio==2.7.1` / `torchvision==0.22.1`; `GPU_MEDIUM` / Small, scale-to-zero off; cold-start ~24 s → warm ~1.5 s; voice reference ~500 KB → `voice_id` lookup ~25 ms; VoxCPM2 six steps at CFG 2.0, four steps drop Thai similarity 1.00 → 0.76. Implementation: `register_realtime_voice_agent.py:36–40`; `realtime_tts_agent.py:82–220`; `realtime_api/services.py:229`; `config/config.yaml:358–360`. References: MLflow ResponsesAgent; Databricks GPU Model Serving; VoxCPM2 model card.
