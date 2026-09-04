@@ -7,9 +7,9 @@ Qwen3-ASR-1.7B and VoxCPM2 on one serving path
 Cohere Labs · Open Science  
 Suneel Sunkara · Databricks
 
-Main deck: 13 content slides. Two backup slides follow.
+Main deck: 13 content slides plus the title.
 
-**Story:** Multilingual requirement → language challenges → model choice → model-serving architecture → why ontology → why tool calling → multilingual evaluation → findings → deployment lessons → bounded claims → next experiments.
+**Story:** Multilingual requirement → language challenges → Qwen3-ASR → VoxCPM2 → why the pair → model-serving architecture → ontology → tool calling → multilingual evaluation → findings → deployment lessons.
 
 **Visual system:** Inter · warm off-white / ink navy / coral accent · direct labels · no decorative dashboards.
 
@@ -55,7 +55,62 @@ These differences set the requirements for model selection and evaluation.
 
 ---
 
-## Slide 4 — The models: why these two models fit the experiment
+## Slide 4 (deck eyebrow 03) — Qwen3-ASR-1.7B: multilingual speech recognition
+
+Built from Qwen3-Omni: a 300M-parameter AuT audio encoder feeds speech representations through a projector to a Qwen3-1.7B language decoder. [Model card](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) · [Technical report](https://arxiv.org/abs/2601.21337)
+
+_Architecture visual:_ 16 kHz audio → AuT encoder (300M, 12.5 Hz representation rate) → projector → Qwen3 decoder → transcript + language ID.
+
+COVERAGE
+
+- 30 languages plus 22 Chinese dialects
+- The six focal Asian languages and English are in the published language list
+- The dialect count refers specifically to Chinese dialects; it does not imply uniform low-resource performance
+
+INFERENCE
+
+- The upstream model supports offline and vLLM streaming inference
+- This deployment calls `transcribe()` after the utterance is complete
+- The benchmark therefore measures completed-utterance recognition, not streaming latency
+
+FORCED ALIGNMENT
+
+- The optional Qwen3-ForcedAligner-0.6B timestamps a supplied text–speech pair in 11 languages
+- It does not validate or repair the recognized transcript
+- It is not used in this deployed endpoint
+
+Sources: [Qwen3-ASR model card](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) · [Qwen3-ASR technical report](https://arxiv.org/abs/2601.21337) · [deployed wrapper](https://github.com/suneelsunkara-db/genie-voice-agent/blob/main/scripts/ml_asr/realtime_stt_agent.py)
+
+---
+
+## Slide 5 (deck eyebrow 04) — VoxCPM2: tokenizer-free speech generation
+
+2B parameters · 30 languages · 48 kHz output · text-designed voices or cloning from a short recording. [Model card](https://huggingface.co/openbmb/VoxCPM2) · [Repository](https://github.com/OpenBMB/VoxCPM)
+
+_Architecture visual:_ text + optional voice reference → TSLM semantic/prosodic plan → RALM acoustic sequence → LocDiT diffusion + AudioVAE → 48 kHz waveform.
+
+CONTINUOUS AUDIO
+
+- Unlike codec-token TTS, VoxCPM2 models continuous AudioVAE representations
+- Its diffusion-autoregressive stack is designed to preserve fine acoustic and prosodic detail
+
+TWO VOICE CONTROLS
+
+- Voice design creates a new voice from a natural-language description
+- Voice cloning preserves a speaker from a short reference recording
+- These are separate operating modes; text-designed voice is not reference-free cloning
+
+HOW THIS DEPLOYMENT USES IT
+
+- Reference cloning maintains one agent voice across turns
+- `generate_streaming()` emits PCM audio chunks
+- Six diffusion steps at CFG 2.0 were the lowest tested setting that preserved the Thai reference voice
+
+Sources: [VoxCPM2 model card](https://huggingface.co/openbmb/VoxCPM2) · [official repository](https://github.com/OpenBMB/VoxCPM) · [VoxCPM architecture paper](https://arxiv.org/abs/2509.24650)
+
+---
+
+## Slide 6 (deck eyebrow 05) — The models: why these two models fit the experiment
 
 RECOGNITION · Qwen3-ASR-1.7B
 
@@ -75,7 +130,7 @@ The models overlap on 24 languages. Detailed analysis uses the seven-language fo
 
 ---
 
-## Slide 5 — Model serving architecture: Two voice models around a tool-calling LLM
+## Slide 7 (deck eyebrow 06) — Model serving architecture: Two voice models around a tool-calling LLM
 
 _Visualization: three-plane architecture diagram (`charts/serving_architecture.png`)._
 
@@ -95,7 +150,7 @@ Governance: Unity Catalog governs the self-registered STT/TTS endpoints and the 
 
 ---
 
-## Slide 6 (deck eyebrow 05) — Why ontology: grounding spoken requests in a governed semantic layer
+## Slide 8 (deck eyebrow 07) — Why ontology: grounding spoken requests in a governed semantic layer
 
 A correct transcript still lacks the entities, definitions, and relationships an answer requires.
 
@@ -112,7 +167,7 @@ Grounding begins after transcription; it cannot recover an entity or amount that
 
 ---
 
-## Slide 7 (deck eyebrow 06) — Why tool calling: tool calling keeps business facts outside the model
+## Slide 9 (deck eyebrow 08) — Why tool calling: tool calling keeps business facts outside the model
 
 Native realtime APIs can call tools; this design keeps multilingual speech and governed reasoning as separate, replaceable components.
 
@@ -133,7 +188,7 @@ Read tools execute immediately; account-changing actions require explicit confir
 
 ---
 
-## Slide 8 (deck eyebrow 07) — Multilingual evaluation: language-appropriate metrics and scarce matched data constrain evaluation
+## Slide 10 (deck eyebrow 09) — Multilingual evaluation: language-appropriate metrics and scarce matched data constrain evaluation
 
 Error metrics must follow the script, and public corpora matching spoken business use are limited for these languages.
 
@@ -163,7 +218,7 @@ Reported here: FLEURS recognition, plus synthesis latency and completion. Busine
 
 ---
 
-## Slide 9 (deck eyebrow 08) — Asian-language recognition: recognition error across six Asian languages and English
+## Slide 11 (deck eyebrow 10) — Asian-language recognition: recognition error across six Asian languages and English
 
 _Visualization: forest plot (`charts/focal_forest.png`) — all seven focal languages, with point estimate as a colored dot, 95% bootstrap interval as the bar, and separate WER and CER panels._
 
@@ -186,7 +241,7 @@ Dot = measured error; line = 95% uncertainty interval. Compare values only withi
 
 ---
 
-## Slide 10 (deck eyebrow 09) — Asian languages in the 24-language view: where the six Asian languages sit among 24
+## Slide 12 (deck eyebrow 11) — Asian languages in the 24-language view: where the six Asian languages sit among 24
 
 _Visualization: sorted horizontal bar chart (`charts/all24_bars.png`) — focal WER languages in coral, the three focal CER scripts in teal, and the other 17 benchmark languages in gray._
 
@@ -229,7 +284,7 @@ Why only three CER bars? Japanese, Mandarin, and Thai are the three scripts scor
 
 ---
 
-## Slide 11 (deck eyebrow 10) — Latency benchmarks: STT scales with utterance length; TTS startup is stable
+## Slide 13 (deck eyebrow 12) — Latency benchmarks: STT scales with utterance length; TTS startup is stable
 
 Same decomposition in every language, from 700 FLEURS samples (`20260830T080032Z`).
 
@@ -259,7 +314,7 @@ Audio duration was not stored, so language rank is not a causal claim. Next meas
 
 ---
 
-## Slide 12 (deck eyebrow 11) — Four lessons from running these models in production
+## Slide 14 (deck eyebrow 13) — Four lessons from running these models in production
 
 01  PIN THE SOFTWARE STACK  
 The serving GPU shipped a CUDA build our model libraries could not load, so speech recognition failed on the first real request — not at deploy time. Fixing the library versions made it reliable.
