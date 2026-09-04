@@ -218,62 +218,85 @@ def render_all_languages() -> None:
 
 
 def render_tts_latency() -> None:
+    # Sample-level FLEURS run 20260830T080032Z. STT p50/p95 in seconds;
+    # TTS server first-audio and delivery overhead in milliseconds.
+    # short/long = within-language reference-length quartiles 1 and 4.
     rows = [
-        ("English · baseline", 482, 553, 640, 712),
-        ("Indonesian", 485, 519, 642, 676),
-        ("Japanese", 486, 530, 643, 694),
-        ("Mandarin", 486, 563, 643, 691),
-        ("Filipino", 488, 522, 647, 681),
-        ("Thai", 503, 555, 662, 708),
-        ("Hindi", 504, 540, 662, 698),
+        # name, stt_p50_s, stt_p95_s, stt_short, stt_long, tts_p50, del_p50, ttfa_p50, r_stt
+        ("Mandarin", 0.93, 1.71, 0.72, 1.30, 486, 158, 643, 0.84),
+        ("English · baseline", 1.07, 1.67, 0.74, 1.45, 482, 158, 639, 0.87),
+        ("Indonesian", 1.38, 2.42, 1.00, 2.16, 485, 158, 642, 0.97),
+        ("Japanese", 1.41, 2.10, 1.03, 1.90, 485, 158, 643, 0.93),
+        ("Filipino", 2.03, 3.46, 1.37, 2.72, 488, 158, 647, 0.95),
+        ("Thai", 2.47, 4.18, 1.61, 3.23, 503, 157, 660, 0.84),
+        ("Hindi", 3.99, 7.07, 2.90, 6.46, 503, 157, 662, 0.99),
     ]
 
-    fig, (engine_ax, client_ax) = plt.subplots(
+    fig, (stt_ax, tts_ax) = plt.subplots(
         1,
         2,
-        figsize=(9.0, 3.65),
+        figsize=(9.0, 3.85),
         dpi=220,
-        gridspec_kw={"wspace": 0.32},
+        gridspec_kw={"wspace": 0.28, "width_ratios": [1.15, 1]},
     )
     fig.patch.set_facecolor(OFF_WHITE)
+    positions = list(range(len(rows)))[::-1]
 
-    def percentile_plot(ax, p50_index, p95_index, title):
-        positions = list(range(len(rows)))[::-1]
-        ax.set_facecolor(OFF_WHITE)
-        for row, y in zip(rows, positions):
-            p50, p95 = row[p50_index], row[p95_index]
-            ax.hlines(y, p50, p95, color=INTERVAL, linewidth=3, zorder=2)
-            ax.scatter(p50, y, s=90, color=CORAL, edgecolors=OFF_WHITE, linewidths=1.2, zorder=3)
-            ax.scatter(p95, y, s=70, marker="D", color=TEAL, edgecolors=OFF_WHITE, linewidths=1.0, zorder=3)
-            ax.text(p50 - 8, y + 0.18, str(p50), ha="right", va="bottom", fontsize=8, color=CORAL)
-            ax.text(p95 + 8, y - 0.18, str(p95), ha="left", va="top", fontsize=8, color=TEAL)
+    stt_ax.set_facecolor(OFF_WHITE)
+    for row, y in zip(rows, positions):
+        stt_p50, stt_p95 = row[1], row[2]
+        stt_ax.hlines(y, 0, 8.0, color=TRACK, linewidth=6, zorder=1)
+        stt_ax.hlines(y, stt_p50, stt_p95, color=INTERVAL, linewidth=6, zorder=2)
+        stt_ax.scatter([stt_p50], [y], s=90, color=CORAL, edgecolors=OFF_WHITE, linewidths=1.2, zorder=4)
+        stt_ax.scatter([stt_p95], [y], s=70, marker="D", color=TEAL, edgecolors=OFF_WHITE, linewidths=1.0, zorder=4)
+        stt_ax.text(
+            8.15,
+            y,
+            f"{stt_p50:.2f}s  {stt_p95:.2f}s   r={row[8]:.2f}",
+            va="center",
+            ha="left",
+            fontsize=7.6,
+            color=INK,
+            clip_on=False,
+        )
+    stt_ax.set_yticks(positions)
+    stt_ax.set_yticklabels([row[0] for row in rows], fontsize=9.0, color=INK)
+    stt_ax.set_xlim(0, 11.4)
+    stt_ax.set_xticks([0, 2, 4, 6, 8])
+    stt_ax.set_xticklabels(["0", "2", "4", "6", "8 s"], fontsize=8.0)
+    stt_ax.set_title("STT  ·  p50–p95  ·  r WITH UTTERANCE LENGTH", loc="left",
+                     fontsize=9.4, color=INK, fontweight="bold", pad=8)
 
-        ax.set_yticks(positions)
-        ax.set_yticklabels([row[0] for row in rows], fontsize=9.2, color=INK)
-        ax.set_xlim(440, 750)
-        ax.set_xticks([450, 500, 550, 600, 650, 700, 750])
-        ax.set_xticklabels(["450", "500", "550", "600", "650", "700", "750 ms"], fontsize=8.2)
+    tts_ax.set_facecolor(OFF_WHITE)
+    for row, y in zip(rows, positions):
+        tts, delivery, ttfa = row[5], row[6], row[7]
+        tts_ax.barh(y, tts, height=0.42, color=CORAL, zorder=3)
+        tts_ax.barh(y, delivery, left=tts, height=0.42, color=TEAL, zorder=3)
+        tts_ax.text(ttfa + 8, y, f"{ttfa} ms", va="center", ha="left", fontsize=7.8, color=INK)
+    tts_ax.set_yticks(positions)
+    tts_ax.set_yticklabels([])
+    tts_ax.set_xlim(0, 820)
+    tts_ax.set_xticks([0, 200, 400, 600, 800])
+    tts_ax.set_xticklabels(["0", "200", "400", "600", "800 ms"], fontsize=8.0)
+    tts_ax.set_title("TTS  ·  GENERATION + DELIVERY = CLIENT TTFA", loc="left",
+                     fontsize=9.4, color=INK, fontweight="bold", pad=8)
+
+    for ax in (stt_ax, tts_ax):
         ax.tick_params(axis="both", length=0, colors=INK)
         ax.grid(axis="x", color=GRID, linewidth=0.7, zorder=0)
+        ax.set_axisbelow(True)
+        ax.set_ylim(-0.55, len(rows) - 0.45)
         for side in ("top", "right", "left"):
             ax.spines[side].set_visible(False)
         ax.spines["bottom"].set_color(GRID)
-        ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold", pad=10)
 
-    percentile_plot(engine_ax, 1, 2, "SPEECH-TO-TEXT")
-    percentile_plot(client_ax, 3, 4, "TEXT-TO-SPEECH (TTFA)")
-    client_ax.set_yticklabels([])
-
-    fig.text(
-        0.50,
-        0.018,
-        "p50 (coral circle): half of requests were faster than this value.   "
-        "p95 (teal diamond): 95% of requests were faster than this value.",
-        color=INK,
-        fontsize=8.6,
-        ha="center",
-    )
-    plt.subplots_adjust(left=0.16, right=0.985, top=0.90, bottom=0.16)
+    fig.text(0.16, 0.018,
+             "p50 coral  ·  p95 teal diamond  ·  r = correlation of STT time with reference length within that language",
+             color=INK, fontsize=7.6, ha="left")
+    fig.text(0.585, 0.018,
+             "Coral bar: TTS generation   Teal bar: delivery (~158 ms, language-invariant)",
+             color=INK, fontsize=7.6, ha="left")
+    plt.subplots_adjust(left=0.155, right=0.98, top=0.90, bottom=0.14)
     fig.savefig(OUT / "tts_latency.png", facecolor=OFF_WHITE, dpi=220)
     plt.close(fig)
 
