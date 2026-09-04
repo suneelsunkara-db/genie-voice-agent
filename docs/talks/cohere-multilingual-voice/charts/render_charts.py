@@ -260,8 +260,8 @@ def render_tts_latency() -> None:
         ax.spines["bottom"].set_color(GRID)
         ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold", pad=10)
 
-    percentile_plot(engine_ax, 1, 2, "TTS ENGINE FIRST AUDIO")
-    percentile_plot(client_ax, 3, 4, "CLIENT FIRST AUDIO")
+    percentile_plot(engine_ax, 1, 2, "SPEECH-GENERATION SERVICE")
+    percentile_plot(client_ax, 3, 4, "APPLICATION RECEIVES AUDIO")
     client_ax.set_yticklabels([])
 
     fig.text(
