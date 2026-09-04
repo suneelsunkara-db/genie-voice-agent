@@ -6,6 +6,8 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
+import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 
 
 OUT = Path(__file__).parent
@@ -19,6 +21,9 @@ WHITE = "#ffffff"
 GRID = "#cfd6de"
 TRACK = "#e3e0d7"
 INTERVAL = "#9aa6b2"
+MUTED = "#6b7686"
+SOFT_CORAL = "#f6c9c0"
+TEAL_BAND = "#e4f1ee"
 NAVY_GRID = "#26344a"
 NAVY_LABEL = "#b9c3cf"
 NON_FOCAL = "#64748a"
@@ -235,68 +240,84 @@ def render_tts_latency() -> None:
     fig, (stt_ax, tts_ax) = plt.subplots(
         1,
         2,
-        figsize=(9.0, 3.85),
+        figsize=(9.4, 4.0),
         dpi=220,
-        gridspec_kw={"wspace": 0.28, "width_ratios": [1.15, 1]},
+        gridspec_kw={"wspace": 0.30, "width_ratios": [1.32, 1]},
     )
     fig.patch.set_facecolor(OFF_WHITE)
     positions = list(range(len(rows)))[::-1]
 
+    # ---- LEFT: STT latency scales with utterance length ----
     stt_ax.set_facecolor(OFF_WHITE)
     for row, y in zip(rows, positions):
-        stt_p50, stt_p95 = row[1], row[2]
-        stt_ax.hlines(y, 0, 8.0, color=TRACK, linewidth=6, zorder=1)
-        stt_ax.hlines(y, stt_p50, stt_p95, color=INTERVAL, linewidth=6, zorder=2)
-        stt_ax.scatter([stt_p50], [y], s=90, color=CORAL, edgecolors=OFF_WHITE, linewidths=1.2, zorder=4)
-        stt_ax.scatter([stt_p95], [y], s=70, marker="D", color=TEAL, edgecolors=OFF_WHITE, linewidths=1.0, zorder=4)
-        stt_ax.text(
-            8.15,
-            y,
-            f"{stt_p50:.2f}s  {stt_p95:.2f}s   r={row[8]:.2f}",
-            va="center",
-            ha="left",
-            fontsize=7.6,
-            color=INK,
-            clip_on=False,
-        )
+        _, stt_p50, stt_p95, short_p50, long_p50, _, _, _, r = row
+        # length band: short-quartile median -> long-quartile median
+        stt_ax.hlines(y, short_p50, long_p50, color=SOFT_CORAL, linewidth=9, zorder=1)
+        # p50 -> p95 interval
+        stt_ax.hlines(y, stt_p50, stt_p95, color=INTERVAL, linewidth=2.4, zorder=2)
+        stt_ax.scatter([stt_p50], [y], s=95, color=CORAL, edgecolors=OFF_WHITE,
+                       linewidths=1.3, zorder=4)
+        stt_ax.scatter([stt_p95], [y], s=64, marker="D", color=TEAL, edgecolors=OFF_WHITE,
+                       linewidths=1.0, zorder=4)
+        stt_ax.text(stt_p95 + 0.18, y, f"{stt_p50:.2f}\u2013{stt_p95:.2f}s   r={r:.2f}",
+                    va="center", ha="left", fontsize=7.8, color=INK, clip_on=False)
     stt_ax.set_yticks(positions)
-    stt_ax.set_yticklabels([row[0] for row in rows], fontsize=9.0, color=INK)
-    stt_ax.set_xlim(0, 11.4)
-    stt_ax.set_xticks([0, 2, 4, 6, 8])
-    stt_ax.set_xticklabels(["0", "2", "4", "6", "8 s"], fontsize=8.0)
-    stt_ax.set_title("STT  ·  p50–p95  ·  r WITH UTTERANCE LENGTH", loc="left",
-                     fontsize=9.4, color=INK, fontweight="bold", pad=8)
+    stt_ax.set_yticklabels([row[0] for row in rows], fontsize=9.4, color=INK)
+    stt_ax.set_xlim(0, 8.0)
+    stt_ax.set_xticks([0, 2, 4, 6])
+    stt_ax.set_xticklabels(["0", "2", "4", "6 s"], fontsize=8.2)
+    stt_ax.set_title("SPEECH-TO-TEXT", loc="left", fontsize=11.5, color=INK,
+                     fontweight="bold", pad=17)
+    stt_ax.annotate("Latency grows with utterance length (r \u2265 0.84)",
+                    xy=(0, 1.015), xycoords="axes fraction", fontsize=8.4,
+                    color=MUTED, fontweight="bold")
 
+    # ---- RIGHT: TTS first audio is stable across languages ----
     tts_ax.set_facecolor(OFF_WHITE)
+    ttfa_values = [row[7] for row in rows]
+    tts_ax.axvspan(min(ttfa_values), max(ttfa_values), color=TEAL_BAND, zorder=0)
     for row, y in zip(rows, positions):
-        tts, delivery, ttfa = row[5], row[6], row[7]
-        tts_ax.barh(y, tts, height=0.42, color=CORAL, zorder=3)
-        tts_ax.barh(y, delivery, left=tts, height=0.42, color=TEAL, zorder=3)
-        tts_ax.text(ttfa + 8, y, f"{ttfa} ms", va="center", ha="left", fontsize=7.8, color=INK)
+        gen, delivery, ttfa = row[5], row[6], row[7]
+        tts_ax.barh(y, gen, height=0.5, color=CORAL, zorder=3)
+        tts_ax.barh(y, delivery, left=gen, height=0.5, color=TEAL, zorder=3)
+        tts_ax.text(ttfa + 12, y, f"{ttfa} ms", va="center", ha="left", fontsize=8.0, color=INK)
     tts_ax.set_yticks(positions)
     tts_ax.set_yticklabels([])
     tts_ax.set_xlim(0, 820)
     tts_ax.set_xticks([0, 200, 400, 600, 800])
-    tts_ax.set_xticklabels(["0", "200", "400", "600", "800 ms"], fontsize=8.0)
-    tts_ax.set_title("TTS  ·  GENERATION + DELIVERY = CLIENT TTFA", loc="left",
-                     fontsize=9.4, color=INK, fontweight="bold", pad=8)
+    tts_ax.set_xticklabels(["0", "200", "400", "600", "800 ms"], fontsize=8.2)
+    tts_ax.set_title("TEXT-TO-SPEECH (TTFA)", loc="left", fontsize=11.5, color=INK,
+                     fontweight="bold", pad=17)
+    tts_ax.annotate("First audio stable at 639\u2013662 ms across all languages",
+                    xy=(0, 1.015), xycoords="axes fraction", fontsize=8.4,
+                    color=MUTED, fontweight="bold")
 
     for ax in (stt_ax, tts_ax):
         ax.tick_params(axis="both", length=0, colors=INK)
         ax.grid(axis="x", color=GRID, linewidth=0.7, zorder=0)
         ax.set_axisbelow(True)
-        ax.set_ylim(-0.55, len(rows) - 0.45)
+        ax.set_ylim(-0.6, len(rows) - 0.4)
         for side in ("top", "right", "left"):
             ax.spines[side].set_visible(False)
         ax.spines["bottom"].set_color(GRID)
 
-    fig.text(0.16, 0.018,
-             "p50 coral  ·  p95 teal diamond  ·  r = correlation of STT time with reference length within that language",
-             color=INK, fontsize=7.6, ha="left")
-    fig.text(0.585, 0.018,
-             "Coral bar: TTS generation   Teal bar: delivery (~158 ms, language-invariant)",
-             color=INK, fontsize=7.6, ha="left")
-    plt.subplots_adjust(left=0.155, right=0.98, top=0.90, bottom=0.14)
+    # ---- shared legend + provenance ----
+    handles = [
+        mlines.Line2D([], [], color=SOFT_CORAL, linewidth=8, label="STT short\u2013long quartile"),
+        mlines.Line2D([], [], color=CORAL, marker="o", linestyle="None", markersize=8,
+                      markeredgecolor=OFF_WHITE, label="p50 median"),
+        mlines.Line2D([], [], color=TEAL, marker="D", linestyle="None", markersize=7,
+                      markeredgecolor=OFF_WHITE, label="p95 tail"),
+        mpatches.Patch(color=CORAL, label="TTS generation"),
+        mpatches.Patch(color=TEAL, label="Delivery \u2248158 ms"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False,
+               fontsize=8.0, bbox_to_anchor=(0.5, -0.005), handletextpad=0.5,
+               columnspacing=1.6)
+    fig.text(0.5, 0.955,
+             "700 FLEURS samples  \u00b7  run 20260830T080032Z  \u00b7  100 clips per language",
+             color=MUTED, fontsize=7.6, ha="center")
+    plt.subplots_adjust(left=0.135, right=0.985, top=0.85, bottom=0.15)
     fig.savefig(OUT / "tts_latency.png", facecolor=OFF_WHITE, dpi=220)
     plt.close(fig)
 
