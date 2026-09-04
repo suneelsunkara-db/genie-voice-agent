@@ -264,7 +264,14 @@ def render_tts_latency() -> None:
     percentile_plot(client_ax, 3, 4, "CLIENT FIRST AUDIO")
     client_ax.set_yticklabels([])
 
-    fig.text(0.50, 0.02, "Coral circle: p50   ·   Teal diamond: p95", color=INK, fontsize=9, ha="center")
+    fig.text(
+        0.50,
+        0.02,
+        "Coral circle: median (p50)   ·   Teal diamond: 95th percentile (p95)",
+        color=INK,
+        fontsize=9,
+        ha="center",
+    )
     plt.subplots_adjust(left=0.16, right=0.985, top=0.90, bottom=0.14)
     fig.savefig(OUT / "tts_latency.png", facecolor=OFF_WHITE, dpi=220)
     plt.close(fig)
