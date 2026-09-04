@@ -260,19 +260,20 @@ def render_tts_latency() -> None:
         ax.spines["bottom"].set_color(GRID)
         ax.set_title(title, loc="left", fontsize=11, color=INK, fontweight="bold", pad=10)
 
-    percentile_plot(engine_ax, 1, 2, "SPEECH-GENERATION SERVICE")
-    percentile_plot(client_ax, 3, 4, "APPLICATION RECEIVES AUDIO")
+    percentile_plot(engine_ax, 1, 2, "SPEECH-TO-TEXT")
+    percentile_plot(client_ax, 3, 4, "TEXT-TO-SPEECH (TTFA)")
     client_ax.set_yticklabels([])
 
     fig.text(
         0.50,
-        0.02,
-        "Coral circle: median (p50)   ·   Teal diamond: 95th percentile (p95)",
+        0.018,
+        "p50 (coral circle): half of requests were faster than this value.   "
+        "p95 (teal diamond): 95% of requests were faster than this value.",
         color=INK,
-        fontsize=9,
+        fontsize=8.6,
         ha="center",
     )
-    plt.subplots_adjust(left=0.16, right=0.985, top=0.90, bottom=0.14)
+    plt.subplots_adjust(left=0.16, right=0.985, top=0.90, bottom=0.16)
     fig.savefig(OUT / "tts_latency.png", facecolor=OFF_WHITE, dpi=220)
     plt.close(fig)
 
