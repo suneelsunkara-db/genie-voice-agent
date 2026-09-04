@@ -119,7 +119,19 @@ Sources: [VoxCPM2 model card](https://huggingface.co/openbmb/VoxCPM2) · [VoxCPM
 
 ---
 
-## Slide 6 (deck eyebrow 05) — The models: why these two models fit the experiment
+## Slide 6 (deck eyebrow 05) — Model evolution: two parallel shifts in speech modeling
+
+_Visualization: parallel STT/TTS timeline widget (`charts/evolution_timeline.png`), four eras (Statistical → Early Deep Learning → End-to-End → Foundation Models)._
+
+SPEECH-TO-TEXT — GMM–HMM (1990s) → DNN–HMM (2011) → Deep Speech / CTC (2014) → Listen-Attend-Spell (2016) → wav2vec 2.0 + Conformer (2020) → Whisper (2022) → FastConformer (2023) → **Qwen3-ASR-1.7B (2026)** → Qwen3.5-Omni (2026)
+
+TEXT-TO-SPEECH — Unit-selection / concatenative (1990s) → statistical parametric (2013) → WaveNet (2016) → Tacotron 2 (2017) → FastSpeech (2019) → VITS (2021) → VALL-E / AudioLM (2022–23) → GPT-4o Voice + Moshi (2024) → **VoxCPM2 (2026)**
+
+Coral hero nodes mark the two models deployed in this study. Horizontal position shows progression within each era, not a linear time scale. Full citations in speaker notes.
+
+---
+
+## Slide 7 (deck eyebrow 06) — The models: why these two models fit the experiment
 
 RECOGNITION · Qwen3-ASR-1.7B
 
@@ -139,7 +151,7 @@ The models overlap on 24 languages. Detailed analysis uses the seven-language fo
 
 ---
 
-## Slide 7 (deck eyebrow 06) — Model serving architecture: Two voice models around a tool-calling LLM
+## Slide 8 (deck eyebrow 07) — Model serving architecture: Two voice models around a tool-calling LLM
 
 _Visualization: three-plane architecture diagram (`charts/serving_architecture.png`)._
 
@@ -159,7 +171,7 @@ Governance: Unity Catalog governs the self-registered STT/TTS endpoints and the 
 
 ---
 
-## Slide 8 (deck eyebrow 07) — Why ontology: grounding spoken requests in a governed semantic layer
+## Slide 9 (deck eyebrow 08) — Why ontology: grounding spoken requests in a governed semantic layer
 
 A correct transcript still lacks the entities, definitions, and relationships an answer requires.
 
@@ -176,7 +188,7 @@ Grounding begins after transcription; it cannot recover an entity or amount that
 
 ---
 
-## Slide 9 (deck eyebrow 08) — Why tool calling: tool calling keeps business facts outside the model
+## Slide 10 (deck eyebrow 09) — Why tool calling: tool calling keeps business facts outside the model
 
 Native realtime APIs can call tools; this design keeps multilingual speech and governed reasoning as separate, replaceable components.
 
@@ -197,7 +209,7 @@ Read tools execute immediately; account-changing actions require explicit confir
 
 ---
 
-## Slide 10 (deck eyebrow 09) — Multilingual evaluation: language-appropriate metrics and scarce matched data constrain evaluation
+## Slide 11 (deck eyebrow 10) — Multilingual evaluation: language-appropriate metrics and scarce matched data constrain evaluation
 
 Error metrics must follow the script, and public corpora matching spoken business use are limited for these languages.
 
@@ -227,7 +239,7 @@ Reported here: FLEURS recognition, plus synthesis latency and completion. Busine
 
 ---
 
-## Slide 11 (deck eyebrow 10) — Asian-language recognition: recognition error across six Asian languages and English
+## Slide 12 (deck eyebrow 11) — Asian-language recognition: recognition error across six Asian languages and English
 
 _Visualization: forest plot (`charts/focal_forest.png`) — all seven focal languages, with point estimate as a colored dot, 95% bootstrap interval as the bar, and separate WER and CER panels._
 
@@ -250,7 +262,7 @@ Dot = measured error; line = 95% uncertainty interval. Compare values only withi
 
 ---
 
-## Slide 12 (deck eyebrow 11) — Asian languages in the 24-language view: where the six Asian languages sit among 24
+## Slide 13 (deck eyebrow 12) — Asian languages in the 24-language view: where the six Asian languages sit among 24
 
 _Visualization: sorted horizontal bar chart (`charts/all24_bars.png`) — focal WER languages in coral, the three focal CER scripts in teal, and the other 17 benchmark languages in gray._
 
@@ -293,7 +305,7 @@ Why only three CER bars? Japanese, Mandarin, and Thai are the three scripts scor
 
 ---
 
-## Slide 13 (deck eyebrow 12) — Latency benchmarks: STT scales with utterance length; TTS startup is stable
+## Slide 14 (deck eyebrow 13) — Latency benchmarks: STT scales with utterance length; TTS startup is stable
 
 Same decomposition in every language, from 700 FLEURS samples (`20260830T080032Z`).
 
@@ -323,7 +335,7 @@ Audio duration was not stored, so language rank is not a causal claim. Next meas
 
 ---
 
-## Slide 14 (deck eyebrow 13) — Four lessons from running these models in production
+## Slide 15 (deck eyebrow 14) — Four lessons from running these models in production
 
 01  PIN THE SOFTWARE STACK  
 The serving GPU shipped a CUDA build our model libraries could not load, so speech recognition failed on the first real request — not at deploy time. Fixing the library versions made it reliable.
