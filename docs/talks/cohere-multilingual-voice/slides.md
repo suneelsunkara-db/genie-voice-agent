@@ -55,58 +55,67 @@ These differences set the requirements for model selection and evaluation.
 
 ---
 
-## Slide 4 (deck eyebrow 03) — Qwen3-ASR-1.7B: multilingual speech recognition
+## Slide 4 (deck eyebrow 03) — Qwen3-ASR: an LLM decoder for speech recognition
 
-Built from Qwen3-Omni: a 300M-parameter AuT audio encoder feeds speech representations through a projector to a Qwen3-1.7B language decoder. [Model card](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) · [Technical report](https://arxiv.org/abs/2601.21337)
+Audio features are decoded by a language model with textual context—not by an acoustic decoder alone.
 
-_Architecture visual:_ 16 kHz audio → AuT encoder (300M, 12.5 Hz representation rate) → projector → Qwen3 decoder → transcript + language ID.
+MODEL EVOLUTION
 
-COVERAGE
+- **wav2vec 2.0 (2020):** self-supervised masked prediction learns representations from unlabeled audio; a separately fine-tuned CTC head maps them to text.
+- **Whisper (2022):** an encoder–decoder Transformer trained on 680k hours of weakly supervised audio maps speech features directly to autoregressive text tokens.
+- **Qwen3-ASR (2026):** a 300M AuT encoder and projector feed Qwen3-1.7B. Post-training from Qwen3-Omni brings language-model context into transcription.
 
-- 30 languages plus 22 Chinese dialects
-- The six focal Asian languages and English are in the published language list
-- The dialect count refers specifically to Chinese dialects; it does not imply uniform low-resource performance
+INSIDE QWEN3-ASR
 
-INFERENCE
+16 kHz audio → 128-dimensional Fbank → AuT encoder (8× downsample; 12.5 Hz) → projector → Qwen3-1.7B → language ID + transcript
 
-- The upstream model supports offline and vLLM streaming inference
-- This deployment calls `transcribe()` after the utterance is complete
-- The benchmark therefore measures completed-utterance recognition, not streaming latency
+MECHANISM & TRAINING
 
-FORCED ALIGNMENT
+- AuT pretraining uses ~40M hours of pseudo-labeled speech, mostly Chinese and English.
+- Qwen3-Omni pretraining adds 3T multimodal tokens; ASR fine-tuning adds multilingual, context-biasing, and streaming-enhancement data.
+- The LLM decoder can use context to resolve ambiguous acoustics, but plausible language can also introduce substitutions; entity accuracy still requires direct evaluation.
 
-- The optional Qwen3-ForcedAligner-0.6B timestamps a supplied text–speech pair in 11 languages
-- It does not validate or repair the recognized transcript
-- It is not used in this deployed endpoint
+STREAMING & ALIGNMENT
 
-Sources: [Qwen3-ASR model card](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) · [Qwen3-ASR technical report](https://arxiv.org/abs/2601.21337) · [deployed wrapper](https://github.com/suneelsunkara-db/genie-voice-agent/blob/main/scripts/ml_asr/realtime_stt_agent.py)
+- FastConformer reduces encoder cost with 8× convolutional subsampling and optional local attention.
+- Qwen uses dynamic 1–8 second attention windows in AuT, followed by an LLM decoder; streaming is currently available only with the vLLM backend.
+- This endpoint waits for a completed utterance.
+- The separate non-autoregressive aligner supports 11 languages and up to five minutes. It timestamps known text–audio pairs; it cannot repair recognition and is not deployed here.
+
+Sources: [Qwen3-ASR report](https://arxiv.org/abs/2601.21337) · [model card](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) · [wav2vec 2.0](https://arxiv.org/abs/2006.11477) · [Whisper](https://arxiv.org/abs/2212.04356) · [FastConformer](https://arxiv.org/abs/2305.05084) · [deployed wrapper](https://github.com/suneelsunkara-db/genie-voice-agent/blob/main/scripts/ml_asr/realtime_stt_agent.py)
 
 ---
 
-## Slide 5 (deck eyebrow 04) — VoxCPM2: tokenizer-free speech generation
+## Slide 5 (deck eyebrow 04) — VoxCPM2: semantic planning, acoustic rendering
 
-2B parameters · 30 languages · 48 kHz output · text-designed voices or cloning from a short recording. [Model card](https://huggingface.co/openbmb/VoxCPM2) · [Repository](https://github.com/OpenBMB/VoxCPM)
+Tokenizer-free means no external speech-codec vocabulary—not an absence of quantization inside the model.
 
-_Architecture visual:_ text + optional voice reference → TSLM semantic/prosodic plan → RALM acoustic sequence → LocDiT diffusion + AudioVAE → 48 kHz waveform.
+WHY TOKENIZER-FREE?
 
-CONTINUOUS AUDIO
+- **Discrete-codec TTS:** neural codecs turn speech into token IDs. This gives a language model a stable vocabulary, but quantization can discard fine acoustic detail; many systems then require a separate diffusion decoder.
+- **VoxCPM2’s nuance:** it removes the external speech tokenizer, not quantization altogether. It generates continuous AudioVAE latents while an internal differentiable FSQ bottleneck creates a semi-discrete semantic/prosodic skeleton.
 
-- Unlike codec-token TTS, VoxCPM2 models continuous AudioVAE representations
-- Its diffusion-autoregressive stack is designed to preserve fine acoustic and prosodic detail
+HIERARCHICAL GENERATION
 
-TWO VOICE CONTROLS
+Past audio latents → LocEnc → compact acoustic history  
+Text + history → TSLM (MiniCPM-4-1B) → FSQ semantic/prosodic skeleton  
+Skeleton + RALM residual detail → LocDiT denoising → AudioVAE decoder → 48 kHz waveform
 
-- Voice design creates a new voice from a natural-language description
-- Voice cloning preserves a speaker from a short reference recording
-- These are separate operating modes; text-designed voice is not reference-free cloning
+WHAT EACH STAGE DOES
 
-HOW THIS DEPLOYMENT USES IT
+- TSLM predicts the content-and-prosody plan.
+- FSQ regularizes its hidden state into a semi-discrete skeleton without an external codec vocabulary.
+- RALM restores residual acoustic detail omitted by the skeleton.
+- LocDiT uses flow-matching diffusion to generate each continuous latent patch; AudioVAE V2 decodes it to 48 kHz.
 
-- Reference cloning maintains one agent voice across turns
-- `generate_streaming()` emits PCM audio chunks
-- Six diffusion steps at CFG 2.0 were the lowest tested setting that preserved the Thai reference voice
+CAPABILITIES & DEPLOYMENT
 
-Sources: [VoxCPM2 model card](https://huggingface.co/openbmb/VoxCPM2) · [official repository](https://github.com/OpenBMB/VoxCPM) · [VoxCPM architecture paper](https://arxiv.org/abs/2509.24650)
+- 2B parameters; 2M+ training hours; 30 languages; 48 kHz output.
+- Voice design creates a voice from text; voice cloning preserves a speaker from audio. They are different modes.
+- This endpoint uses reference cloning and streaming at six diffusion steps / CFG 2.0.
+- Published RTX 4090 real-time factors are hardware-specific. The model card reports variation across languages and instability on long or highly expressive inputs.
+
+Sources: [VoxCPM2 model card](https://huggingface.co/openbmb/VoxCPM2) · [VoxCPM paper](https://arxiv.org/abs/2509.24650) · [official repository](https://github.com/OpenBMB/VoxCPM) · [deployed wrapper](https://github.com/suneelsunkara-db/genie-voice-agent/blob/main/scripts/ml_asr/realtime_tts_agent.py)
 
 ---
 
