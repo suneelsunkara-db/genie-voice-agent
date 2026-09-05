@@ -7,9 +7,9 @@ Qwen3-ASR-1.7B and VoxCPM2 on one serving path
 Cohere Labs · Open Science  
 Suneel Sunkara · Databricks
 
-Main deck: 13 content slides plus the title.
+Main deck: 15 content slides plus the title.
 
-**Story:** Multilingual requirement → language challenges → Qwen3-ASR → VoxCPM2 → why the pair → model-serving architecture → ontology → tool calling → multilingual evaluation → findings → deployment lessons.
+**Story:** Multilingual requirement → language challenges → Qwen3-ASR → VoxCPM2 → model evolution → why the pair → model-serving architecture → ontology → tool calling → multilingual evaluation → findings → deployment lessons → runtime guardrails.
 
 **Visual system:** Inter · warm off-white / ink navy / coral accent · direct labels · no decorative dashboards.
 
@@ -335,20 +335,72 @@ Audio duration was not stored, so language rank is not a causal claim. Next meas
 
 ---
 
-## Slide 15 (deck eyebrow 14) — Four lessons from running these models in production
+## Slide 15 (deck eyebrow 14) — Deployment learnings: system controls changed first-turn behavior more than model choice
 
-01  PIN THE SOFTWARE STACK  
-The serving GPU shipped a CUDA build our model libraries could not load, so speech recognition failed on the first real request — not at deploy time. Fixing the library versions made it reliable.
+_Visualization: four evidence-and-control cards (`charts/deployment_learnings_research.png`)._
 
-02  KEEP THE MODELS WARM  
-A cold endpoint answered the first request in about 24 seconds; once warm, about 1.5. We keep the models loaded and warm both the normal and voice-cloned paths before taking real traffic.
+01  REPRODUCIBILITY — LOAD SUCCESS IS NOT INFERENCE READINESS
 
-03  SEND THE VOICE ONCE  
-Resending the reference voice sample on every turn added about 1.7 seconds. We upload it once and refer to it by an ID on later turns, so the lookup is near-instant.
+- Evidence: the endpoint deployed, then failed on its first real request because the CUDA and PyTorch builds could not load together.
+- Control: pin exact versions and run a real warm-up inference before declaring readiness.
 
-04  DON'T RUSH VOICE GENERATION  
-Using fewer generation steps was faster but made the Thai voice noticeably less like the reference. Six steps was the point where speed and voice quality were both acceptable.
+02  READINESS — WARM BOTH EXECUTION PATHS
 
-_Footer:_ These are practical lessons from operating the system — not results from the recognition benchmark.
+- Evidence: first request was ~24 s cold and ~1.5 s warm; normal synthesis and voice cloning initialize different paths.
+- Control: keep scale-to-zero off for the latency-sensitive endpoint and warm both paths before traffic.
 
-**Speaker notes (provenance, not on slide):** pinned stack `torch==2.7.1` / `torchaudio==2.7.1` / `torchvision==0.22.1`; `GPU_MEDIUM` / Small, scale-to-zero off; cold-start ~24 s → warm ~1.5 s; voice reference ~500 KB → `voice_id` lookup ~25 ms; VoxCPM2 six steps at CFG 2.0, four steps drop Thai similarity 1.00 → 0.76. Implementation: `register_realtime_voice_agent.py:36–40`; `realtime_tts_agent.py:82–220`; `realtime_api/services.py:229`; `config/config.yaml:358–360`. References: MLflow ResponsesAgent; Databricks GPU Model Serving; VoxCPM2 model card.
+03  SESSION STATE — MOVE REUSABLE AUDIO OUT OF THE TURN
+
+- Evidence: resending the reference voice added ~1.7 s; reusing a `voice_id` reduced lookup to ~25 ms.
+- Control: upload the reference once and reuse it through session state.
+
+04  DECODING POLICY — TREAT SPEED AND VOICE FIDELITY AS A FRONTIER
+
+- Evidence: Thai similarity fell from 1.00 to 0.76 at four steps; six diffusion steps / CFG 2.0 was the operating point.
+- Control: tune against an explicit quality target rather than minimizing latency alone.
+
+Interpretation: report environment compatibility, endpoint readiness, session-data movement, and decoding settings alongside model metrics.
+
+---
+
+## Slide 16 (deck eyebrow 15) — Guardrails in the tool path: the runtime—not the prompt—decides what the agent may do
+
+_Visualization: five enforcement stages plus an implementation boundary (`charts/runtime_guardrails.png`)._
+
+01  ROUTE — POLICY GATE
+
+- The semantic classifier proposes a capability.
+- Runtime policy checks the profile allowlist, confidence ≥ 0.80, user identity requirements, and conversation ownership.
+
+02  SCOPE — LIMIT TOOLS
+
+- Only tools owned by the policy-approved capability are exposed to the language model.
+
+03  AUTHORIZE — USER-BOUND ACCESS
+
+- Genie and workspace calls use the caller's forwarded on-behalf-of token.
+- Missing authorization fails closed rather than falling back to the application's identity.
+
+04  ACT — CONFIRM MUTATION
+
+- A billing action requires an open offer and explicit confirmation in session state.
+- The `confirm_mutate` effect gateway checks the approval again when the tool executes.
+
+05  ANSWER — CITE OR STAY SILENT
+
+- Factual speech requires tabular citations or attributed upstream evidence.
+- Missing evidence produces a typed refusal instead of an invented answer.
+
+BOUNDED + OBSERVABLE
+
+- Maximum three tool iterations, route-specific timeouts, and stale/noise-turn suppression.
+- Each guard reports pass, fire, or not evaluated in the per-turn guard roster.
+
+NOT YET CLAIMED
+
+- Realtime PII/PCI redaction
+- Downstream prompt-injection blocking
+- Trace-retention TTL
+- A general pre-TTS output guard
+
+Research position: only code-, policy-, and identity-enforced controls are presented as implemented. Planned controls in the application catalog are not presented as deployed protection.
