@@ -119,66 +119,114 @@ def render_deployment() -> None:
 
 
 def render_guardrails() -> None:
-    fig, ax = base(
-        "15 / GUARDRAILS IN THE TOOL PATH",
-        "Enforcement lives in the runtime, not in the prompt",
-        "Each stage is a code, policy, or identity check on the realtime voice path \u00b7 file-level references in speaker notes.",
-    )
+    """Data-driven guardrail slide built from real stored voice traces.
 
-    ax.text(5, 41.4, "STAGE", color=STEEL, fontsize=7.2, fontweight="bold", va="center")
-    ax.text(20, 41.4, "RUNTIME MECHANISM (enforced in code)", color=STEEL,
-            fontsize=7.2, fontweight="bold", va="center")
-    ax.text(66, 41.4, "IN PLAIN ENGLISH", color=STEEL, fontsize=7.2,
-            fontweight="bold", va="center")
-    ax.plot([5, 95], [39.6, 39.6], color=GRID, lw=1.0)
+    Source: partner_demo_catalog.genie_voice_contact_center.voice_traces
+    95 turns / 46 sessions (Jul 2026). Numbers below are query results, not
+    illustrations:
+      - turn status: ok 67, empty_transcript 14, language_mismatch 13, error 1
+      - speech-pipeline llm_iterations histogram: {0: 32, 1: 14, 2: 41}
+      - apply_billing_action_called turns: 6; account-lookup turns: 17
+    """
+    fig = plt.figure(figsize=(10, 5.625), dpi=220)
+    fig.patch.set_facecolor(OFF_WHITE)
 
-    rows = [
-        ("ROUTE", TEAL, "Navigation policy gate",
-         "capability admitted only at confidence \u2265 0.80, on the profile allowlist, owner-checked",
-         "The model proposes an intent; separate code allows or blocks it."),
-        ("SCOPE", STEEL, "Capability-scoped tools",
-         "the LLM is offered only the tool set that the admitted capability owns",
-         "It cannot call a tool that was not unlocked for this task."),
-        ("AUTHORIZE", TEAL, "On-behalf-of (OBO) token",
-         "Genie and workspace calls run as the caller's forwarded token; a missing token fails closed",
-         "Data is read as the user, with the user's permissions \u2014 or not at all."),
-        ("ACT", CORAL, "confirm_mutate effect gate",
-         "a billing write needs an open offer + explicit confirmation, re-checked when the tool runs",
-         "It cannot change an account on the model's say-so alone."),
-        ("ANSWER", STEEL, "Cite-or-silence composer",
-         "factual speech requires a tabular citation or attributed source text, otherwise a typed refusal",
-         "With no data behind a number, it declines instead of guessing."),
+    fig.text(0.05, 0.945, "15 / GUARDRAILS \u2014 OBSERVED IN TRACES", color=CORAL,
+             fontsize=8.0, fontweight="bold", va="top")
+    fig.text(0.05, 0.90, "Runtime guardrails, measured on 95 deployed turns",
+             color=INK, fontsize=17.5, fontweight="bold", va="top")
+    fig.text(0.05, 0.845,
+             "Source: voice_traces (partner_demo_catalog.genie_voice_contact_center) \u00b7 "
+             "95 turns \u00b7 46 sessions \u00b7 Jul 2026. Each bar is a query result.",
+             color=MUTED, fontsize=8.2, va="top")
+
+    # ---- Panel 1: turn outcomes ----
+    ax1 = fig.add_axes([0.19, 0.44, 0.29, 0.30])
+    ax1.set_facecolor(OFF_WHITE)
+    outcomes = [
+        ("ok", 67, TEAL),
+        ("empty_transcript", 14, STEEL),
+        ("language_mismatch", 13, CORAL),
+        ("error", 1, FAINT),
     ]
+    ys = list(range(len(outcomes)))[::-1]
+    for (label, val, color), y in zip(outcomes, ys):
+        ax1.barh(y, val, height=0.62, color=color, zorder=3)
+        ax1.text(val + 1.4, y, str(val), va="center", ha="left", fontsize=8.4,
+                 color=INK, fontweight="bold")
+    ax1.set_yticks(ys)
+    ax1.set_yticklabels([o[0] for o in outcomes], fontsize=8.0, color=INK)
+    ax1.set_xlim(0, 82)
+    ax1.set_ylim(-0.6, len(outcomes) - 0.4)
+    ax1.set_title("TURN OUTCOMES  \u00b7  28% altered by a guard", loc="left",
+                  fontsize=8.6, fontweight="bold", color=INK, pad=8)
+    for s in ("top", "right", "left"):
+        ax1.spines[s].set_visible(False)
+    ax1.spines["bottom"].set_color(GRID)
+    ax1.tick_params(length=0)
+    ax1.set_xticks([])
 
-    top = 37.6
-    row_h = 5.3
-    for i, (stage, color, term, detail, plain) in enumerate(rows):
-        cy = top - i * row_h
-        chip(ax, 5, cy, stage, color)
-        ax.text(20, cy + 1.1, term, color=INK, fontsize=8.0, fontweight="bold", va="center")
-        ax.text(20, cy - 1.6, detail, color=MUTED, fontsize=6.7, va="center")
-        ax.text(66, cy, plain, color=INK, fontsize=6.9, va="center")
-        if i < len(rows) - 1:
-            ax.plot([5, 95], [cy - 2.65, cy - 2.65], color=GRID, lw=0.7)
+    # ---- Panel 2: bounded tool loop ----
+    ax2 = fig.add_axes([0.60, 0.44, 0.35, 0.30])
+    ax2.set_facecolor(OFF_WHITE)
+    iters = [(0, 32), (1, 14), (2, 41)]
+    for x, val in iters:
+        ax2.bar(x, val, width=0.62, color=STEEL, zorder=3)
+        ax2.text(x, val + 1.4, str(val), ha="center", va="bottom", fontsize=8.4,
+                 color=INK, fontweight="bold")
+    ax2.axvline(3, color=CORAL, lw=1.6, ls=(0, (4, 3)), zorder=2)
+    ax2.text(3, 46, "hard cap = 3\n(never reached)", color=CORAL, fontsize=7.0,
+             ha="center", va="top", fontweight="bold")
+    ax2.set_xlim(-0.6, 3.7)
+    ax2.set_ylim(0, 52)
+    ax2.set_xticks([0, 1, 2, 3])
+    ax2.set_xticklabels(["0", "1", "2", "3"], fontsize=8.0, color=INK)
+    ax2.set_title("LLM TOOL ITERATIONS  \u00b7  speech turns", loc="left",
+                  fontsize=8.6, fontweight="bold", color=INK, pad=8)
+    for s in ("top", "right", "left"):
+        ax2.spines[s].set_visible(False)
+    ax2.spines["bottom"].set_color(GRID)
+    ax2.tick_params(length=0)
+    ax2.set_yticks([])
+    ax2.set_xlabel("tool rounds per turn", fontsize=6.8, color=MUTED)
 
-    ax.text(5, 9.9,
-            "Bounded + observable:  \u2264 3 tool iterations  \u00b7  per-route timeouts  \u00b7  "
-            "stale / empty / noise turns dropped  \u00b7  every guard logs pass / fire / not-evaluated per turn.",
-            color=MUTED, fontsize=6.9, va="center")
+    # ---- mapping strip: observed signal -> enforcing mechanism (file) ----
+    fig.text(0.055, 0.365, "WHAT ENFORCED IT (code on the realtime path)",
+             color=STEEL, fontsize=7.4, fontweight="bold", va="top")
+    maps = [
+        ("Language gate", "13 turns switched language before any LLM call",
+         "navigation / _shared.language_mismatch"),
+        ("No-speech suppression", "14 empty-transcript turns dropped, no reply generated",
+         "speech pipeline stt stage"),
+        ("Bounded tool loop", "speech turns ran 0\u20132 rounds; capped at 3",
+         "config max_tool_iterations"),
+        ("confirm_mutate gate", "6 billing writes vs 17 read-lookups; writes need a confirm turn",
+         "goal_frame.enforce_effect"),
+    ]
+    top = 0.315
+    for i, (name, obs, ref) in enumerate(maps):
+        y = top - i * 0.052
+        fig.text(0.065, y, name, color=INK, fontsize=7.4, fontweight="bold", va="top")
+        fig.text(0.235, y, obs, color=MUTED, fontsize=7.2, va="top")
+        fig.text(0.72, y, ref, color=TEAL, fontsize=6.6, va="top", fontstyle="italic")
 
-    ax.add_patch(FancyBboxPatch((5, 1.6), 90, 6.0,
-                                boxstyle="round,pad=0,rounding_size=0.8",
-                                linewidth=0, facecolor=NAVY, zorder=2))
-    ax.text(7, 5.6, "ENFORCED NOW", color=TEAL, fontsize=6.8, fontweight="bold", va="center")
-    ax.text(24.5, 5.6,
-            "capability scoping \u00b7 OBO authorization \u00b7 confirm_mutate \u00b7 cite-or-silence \u00b7 iteration + turn budgets",
-            color=WHITE, fontsize=6.9, va="center")
-    ax.text(7, 3.2, "NOT YET CLAIMED", color=CORAL, fontsize=6.8, fontweight="bold", va="center")
-    ax.text(26, 3.2,
-            "realtime PII/PCI redaction \u00b7 downstream prompt-injection filtering \u00b7 trace-retention TTL \u00b7 pre-TTS output guard",
-            color="#d7dee8", fontsize=6.9, va="center")
+    # ---- honesty band ----
+    band = FancyBboxPatch((0.055, 0.028), 0.895, 0.072,
+                          boxstyle="round,pad=0,rounding_size=0.02",
+                          transform=fig.transFigure, linewidth=0,
+                          facecolor=NAVY, zorder=2)
+    fig.patches.append(band)
+    fig.text(0.07, 0.082, "ALSO ENFORCED (code, not a per-turn counter):", color=TEAL,
+             fontsize=6.8, fontweight="bold", va="top")
+    fig.text(0.37, 0.082,
+             "capability-scoped tools \u00b7 OBO user-token (fail-closed) \u00b7 cite-or-silence evidence",
+             color=WHITE, fontsize=6.9, va="top")
+    fig.text(0.07, 0.052, "NOT YET CLAIMED (design-only):", color=CORAL,
+             fontsize=6.8, fontweight="bold", va="top")
+    fig.text(0.30, 0.052,
+             "realtime PII/PCI redaction \u00b7 prompt-injection filtering \u00b7 trace-retention TTL \u00b7 pre-TTS output guard",
+             color="#d7dee8", fontsize=6.9, va="top")
 
-    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
     fig.savefig(OUT / "runtime_guardrails.png", facecolor=OFF_WHITE, dpi=220)
     plt.close(fig)
 
