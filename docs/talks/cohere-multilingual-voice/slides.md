@@ -363,30 +363,28 @@ Interpretation: reproducing these numbers means reporting the serving image, com
 
 ---
 
-## Slide 16 (deck eyebrow 15) — Guardrails in the tool path: enforcement lives in the runtime, not in the prompt
+## Slide 16 (deck eyebrow 15) — Guardrails, observed in traces: runtime guardrails measured on 95 deployed turns
 
-_Visualization: five-row table — stage · runtime mechanism (enforced in code) · plain English (`charts/runtime_guardrails.png`)._
+_Visualization: two charts from stored traces plus an enforcement map (`charts/runtime_guardrails.png`). Source: `partner_demo_catalog.genie_voice_contact_center.voice_traces` — 95 turns · 46 sessions · Jul 2026. Every bar is a query result._
 
-ROUTE — Navigation policy gate (`realtime_api/runtime/navigation.py`)
+TURN OUTCOMES (95 turns) — ~28% altered by a guard
 
-- Capability admitted only at confidence ≥ 0.80 (`navigation.min_confidence`), on the profile allowlist, owner-checked. Plain: the model proposes an intent; separate code allows or blocks it.
+- `ok` 67 · `empty_transcript` 14 · `language_mismatch` 13 · `error` 1.
+- `language_mismatch` = language gate fired (13 turns switched language before any LLM call). `empty_transcript` = no-speech suppression (14 turns dropped, no reply).
 
-SCOPE — Capability-scoped tools (`realtime_api/runtime/capabilities.py`)
+LLM TOOL ITERATIONS (speech turns) — bounded loop
 
-- The LLM is offered only the tool set owned by the admitted capability, not the full registry. Plain: it cannot call a tool that was not unlocked for this task.
+- Iterations 0/1/2 = 32/14/41 turns; the hard cap of 3 (`max_tool_iterations`) was never reached.
 
-AUTHORIZE — On-behalf-of (OBO) token (`realtime_api/runtime/identity.py`)
+WHAT ENFORCED IT (code on the realtime path)
 
-- Genie/workspace calls run as the caller's forwarded token; a missing token fails closed. Plain: data is read as the user, with the user's permissions — or not at all.
+- Language gate → `navigation` / `_shared.language_mismatch`.
+- No-speech suppression → speech-pipeline STT stage.
+- Bounded tool loop → `config max_tool_iterations` (`services.py`).
+- `confirm_mutate` gate → `goal_frame.enforce_effect` — 6 billing writes vs 17 read-lookup turns; writes occur on a separate confirmation turn.
 
-ACT — `confirm_mutate` effect gate (`realtime_api/runtime/goal_frame.py`)
+ALSO ENFORCED (code, not a per-turn counter): capability-scoped tools · OBO user-token (fail-closed) · cite-or-silence evidence.
 
-- A billing write needs an open offer + explicit confirmation, re-checked when the tool runs. Plain: it cannot change an account on the model's say-so alone.
+NOT YET CLAIMED (design-only, `docs/guardrails-and-observability.md`): realtime PII/PCI redaction · downstream prompt-injection filtering · trace-retention TTL · general pre-TTS output guard.
 
-ANSWER — Cite-or-silence composer (`realtime_api/runtime/evidence.py`)
-
-- Factual speech requires a tabular citation or attributed source text, otherwise a typed refusal. Plain: with no data behind a number, it declines instead of guessing.
-
-Bounded + observable: ≤ 3 tool iterations (`max_tool_iterations`), per-route timeouts, stale/empty/noise turns dropped, every guard logs pass/fire/not-evaluated per turn (`realtime_api/guardrails/ledger.py`).
-
-NOT YET CLAIMED (design-only, `docs/guardrails-and-observability.md`): realtime PII/PCI redaction · downstream prompt-injection filtering · trace-retention TTL · general pre-TTS output guard. Only code-, policy-, and identity-enforced controls are presented as implemented.
+Provenance note: the live per-guard roster (pass/fire/delegated) is written to Lakebase; the UC mirror queried here exposes promoted columns (status, language, iterations, billing action), which is what these bars use.
