@@ -335,72 +335,58 @@ Audio duration was not stored, so language rank is not a causal claim. Next meas
 
 ---
 
-## Slide 15 (deck eyebrow 14) — Deployment learnings: system controls changed first-turn behavior more than model choice
+## Slide 15 (deck eyebrow 14) — Deployment learnings: the serving environment, not the model weights, set first-turn latency
 
-_Visualization: four evidence-and-control cards (`charts/deployment_learnings_research.png`)._
+_Visualization: four-row table — effect · what we measured and what it means · control (`charts/deployment_learnings_research.png`)._
 
-01  REPRODUCIBILITY — LOAD SUCCESS IS NOT INFERENCE READINESS
+DEPENDENCIES — CUDA/PyTorch compatibility
 
-- Evidence: the endpoint deployed, then failed on its first real request because the CUDA and PyTorch builds could not load together.
-- Control: pin exact versions and run a real warm-up inference before declaring readiness.
+- The GPU image's CUDA build did not match the model wheels; unpinned, resolution drifts to an incompatible wheel and the missing-operator error appears on the first inference, not at deploy. Plain: the endpoint reports healthy, then the GPU kernels fail on the first forward pass.
+- Control: pin the whole stack — `torch==2.7.1` (cu118) with matching `torchvision`.
 
-02  READINESS — WARM BOTH EXECUTION PATHS
+STARTUP GRAPH — `torch.compile` shape specialization
 
-- Evidence: first request was ~24 s cold and ~1.5 s warm; normal synthesis and voice cloning initialize different paths.
-- Control: keep scale-to-zero off for the latency-sensitive endpoint and warm both paths before traffic.
+- `torch.compile` optimizes for one input tensor shape; the voice-clone path prepends reference-audio tokens (a new shape), forcing a ~15 s recompile on the first cloned turn. Plain: the model re-optimizes when input shape changes, so we trigger every shape before traffic.
+- Control: warm both shapes at container startup; scale-to-zero off.
 
-03  SESSION STATE — MOVE REUSABLE AUDIO OUT OF THE TURN
+REFERENCE AUDIO — session-scoped caching
 
-- Evidence: resending the reference voice added ~1.7 s; reusing a `voice_id` reduced lookup to ~25 ms.
-- Control: upload the reference once and reuse it through session state.
+- A ~500 KB reference clip re-sent every turn cost ~1.7 s of time-to-first-audio, while materializing it server-side is ~25 ms — the cost was upload, not cloning. Plain: the delay was re-sending the voice sample, not the cloning computation.
+- Control: send the clip once, reuse by `voice_id` (in-process LRU cache; a miss returns `voice_cache_miss` and the client retries with the clip).
 
-04  DECODING POLICY — TREAT SPEED AND VOICE FIDELITY AS A FRONTIER
+SAMPLER STEPS — diffusion timesteps vs intelligibility
 
-- Evidence: Thai similarity fell from 1.00 to 0.76 at four steps; six diffusion steps / CFG 2.0 was the operating point.
-- Control: tune against an explicit quality target rather than minimizing latency alone.
+- Steps 4/6/8/10 are latency-flat (~2.4–3.3 s/sentence, RTF < 1); at 4 steps Thai round-trip intelligibility (transcribe the synthesized audio back, compare to input) falls to 0.76, recovering to 1.00 at 6 across en/th/id/zh. Plain: fewer denoising passes saved no time here, so there is no reason to trade away clarity.
+- Control: fix 6 steps, CFG 2.0 (lowering CFG garbles audio; tone is set by the pinned reference clip).
 
-Interpretation: report environment compatibility, endpoint readiness, session-data movement, and decoding settings alongside model metrics.
+Interpretation: reproducing these numbers means reporting the serving image, compiled graph shapes, reference caching, and sampler settings — not only weights and error rates.
 
 ---
 
-## Slide 16 (deck eyebrow 15) — Guardrails in the tool path: the runtime—not the prompt—decides what the agent may do
+## Slide 16 (deck eyebrow 15) — Guardrails in the tool path: enforcement lives in the runtime, not in the prompt
 
-_Visualization: five enforcement stages plus an implementation boundary (`charts/runtime_guardrails.png`)._
+_Visualization: five-row table — stage · runtime mechanism (enforced in code) · plain English (`charts/runtime_guardrails.png`)._
 
-01  ROUTE — POLICY GATE
+ROUTE — Navigation policy gate (`realtime_api/runtime/navigation.py`)
 
-- The semantic classifier proposes a capability.
-- Runtime policy checks the profile allowlist, confidence ≥ 0.80, user identity requirements, and conversation ownership.
+- Capability admitted only at confidence ≥ 0.80 (`navigation.min_confidence`), on the profile allowlist, owner-checked. Plain: the model proposes an intent; separate code allows or blocks it.
 
-02  SCOPE — LIMIT TOOLS
+SCOPE — Capability-scoped tools (`realtime_api/runtime/capabilities.py`)
 
-- Only tools owned by the policy-approved capability are exposed to the language model.
+- The LLM is offered only the tool set owned by the admitted capability, not the full registry. Plain: it cannot call a tool that was not unlocked for this task.
 
-03  AUTHORIZE — USER-BOUND ACCESS
+AUTHORIZE — On-behalf-of (OBO) token (`realtime_api/runtime/identity.py`)
 
-- Genie and workspace calls use the caller's forwarded on-behalf-of token.
-- Missing authorization fails closed rather than falling back to the application's identity.
+- Genie/workspace calls run as the caller's forwarded token; a missing token fails closed. Plain: data is read as the user, with the user's permissions — or not at all.
 
-04  ACT — CONFIRM MUTATION
+ACT — `confirm_mutate` effect gate (`realtime_api/runtime/goal_frame.py`)
 
-- A billing action requires an open offer and explicit confirmation in session state.
-- The `confirm_mutate` effect gateway checks the approval again when the tool executes.
+- A billing write needs an open offer + explicit confirmation, re-checked when the tool runs. Plain: it cannot change an account on the model's say-so alone.
 
-05  ANSWER — CITE OR STAY SILENT
+ANSWER — Cite-or-silence composer (`realtime_api/runtime/evidence.py`)
 
-- Factual speech requires tabular citations or attributed upstream evidence.
-- Missing evidence produces a typed refusal instead of an invented answer.
+- Factual speech requires a tabular citation or attributed source text, otherwise a typed refusal. Plain: with no data behind a number, it declines instead of guessing.
 
-BOUNDED + OBSERVABLE
+Bounded + observable: ≤ 3 tool iterations (`max_tool_iterations`), per-route timeouts, stale/empty/noise turns dropped, every guard logs pass/fire/not-evaluated per turn (`realtime_api/guardrails/ledger.py`).
 
-- Maximum three tool iterations, route-specific timeouts, and stale/noise-turn suppression.
-- Each guard reports pass, fire, or not evaluated in the per-turn guard roster.
-
-NOT YET CLAIMED
-
-- Realtime PII/PCI redaction
-- Downstream prompt-injection blocking
-- Trace-retention TTL
-- A general pre-TTS output guard
-
-Research position: only code-, policy-, and identity-enforced controls are presented as implemented. Planned controls in the application catalog are not presented as deployed protection.
+NOT YET CLAIMED (design-only, `docs/guardrails-and-observability.md`): realtime PII/PCI redaction · downstream prompt-injection filtering · trace-retention TTL · general pre-TTS output guard. Only code-, policy-, and identity-enforced controls are presented as implemented.
