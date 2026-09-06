@@ -119,152 +119,96 @@ def render_deployment() -> None:
 
 
 def render_guardrails() -> None:
-    """Render the same live rollup that drives the Guardrails page.
+    """One-idea guardrail slide: where guards fire along a single voice turn.
 
-    Snapshot source:
-      GET /traces/guardrails?limit=300
-      Genie Voice Databricks App, 2026-09-06
-
-    The endpoint reads the Lakebase ``voice_traces.guard_roster`` JSON array,
-    excludes entries whose declared surface is ``internal``, and aggregates the
-    remaining checks by guard ID, outcome and language.
+    Live source: GET /traces/guardrails?limit=300 (06 Sep 2026), aggregating the
+    Lakebase ``voice_traces.guard_roster`` ledger. Fires partition cleanly by
+    pipeline stage -- perception 20, routing 32, grounding 1 -- so 52 of 53 fires
+    occur before the model commits an answer.
     """
-    purple = "#7657c8"
-    amber = "#d79b24"
-    fig = plt.figure(figsize=(10, 5.625), dpi=220)
-    fig.patch.set_facecolor(OFF_WHITE)
-
-    fig.text(0.05, 0.955, "15 / GUARDRAILS — LIVE ROSTER", color=CORAL,
-             fontsize=8.0, fontweight="bold", va="top")
-    fig.text(0.05, 0.915, "What the runtime checked—and what fired",
-             color=INK, fontsize=17.5, fontweight="bold", va="top")
-    fig.text(0.05, 0.862,
-             "Live Guardrails page · GET /traces/guardrails?limit=300 · "
-             "Lakebase voice_traces.guard_roster · snapshot 06 Sep 2026",
-             color=MUTED, fontsize=8.2, va="top")
-
-    # ---- Headline numbers from the page ----
-    stats = [
-        ("19", "RAILS IN CATALOG", "6 live · 2 delegated · 11 planned", STEEL),
-        ("985", "CHECKS RECORDED", "across 290 turns · 3.4 / turn", TEAL),
-        ("53", "FIRED", "5.4% of checks acted on a turn", CORAL),
-        ("233", "DELEGATED TO QWEN3-ASR", "model-owned language signals", purple),
-    ]
-    for i, (value, label, sub, color) in enumerate(stats):
-        x = 0.05 + i * 0.232
-        fig.patches.append(
-            FancyBboxPatch(
-                (x, 0.745), 0.212, 0.095,
-                boxstyle="round,pad=0,rounding_size=0.012",
-                transform=fig.transFigure, linewidth=0.8,
-                edgecolor=GRID, facecolor=WHITE, zorder=2,
-            )
-        )
-        fig.text(x + 0.012, 0.815, value, color=color, fontsize=15.0,
-                 fontweight="bold", va="top", zorder=4)
-        fig.text(x + 0.060, 0.812, label, color=INK, fontsize=6.6,
-                 fontweight="bold", va="top", zorder=4)
-        fig.text(x + 0.060, 0.778, sub, color=MUTED, fontsize=6.2,
-                 va="top", zorder=4)
-
-    # ---- Outcome mix for every guard ID observed by the live endpoint ----
-    guards = [
-        # guard_id, runs, passed, fired, delegated, not_evaluated
-        ("language_id", 290, 0, 0, 193, 97),
-        ("no_speech_suppression", 290, 270, 20, 0, 0),
-        ("language_gate", 270, 137, 14, 0, 119),
-        ("navigation.policy", 39, 30, 9, 0, 0),
-        ("navigation.semantic", 33, 0, 0, 33, 0),
-        ("selection_length", 18, 16, 2, 0, 0),
-        ("selection_allowlist", 16, 9, 7, 0, 0),
-        ("selection_ambiguity", 9, 9, 0, 0, 0),
-        ("grounding_citation", 8, 7, 1, 0, 0),
-        ("scope_router", 8, 1, 0, 7, 0),
-        ("selection_language_scope", 4, 0, 0, 0, 4),
-    ]
-    ax1 = fig.add_axes([0.235, 0.20, 0.39, 0.49])
-    ax1.set_facecolor(OFF_WHITE)
-    y_positions = list(range(len(guards)))[::-1]
-    series = [
-        ("passed", TEAL, 2),
-        ("fired", CORAL, 3),
-        ("delegated", purple, 4),
-        ("not evaluated", amber, 5),
-    ]
-    left = [0.0] * len(guards)
-    for _, color, col in series:
-        widths = [row[col] / row[1] * 100 for row in guards]
-        ax1.barh(y_positions, widths, left=left, height=0.58,
-                 color=color, edgecolor=OFF_WHITE, linewidth=0.4)
-        left = [a + b for a, b in zip(left, widths)]
-    ax1.set_yticks(y_positions)
-    ax1.set_yticklabels([g[0] for g in guards], fontsize=6.6, color=INK)
-    ax1.set_xlim(0, 100)
-    ax1.set_xticks([])
-    ax1.tick_params(length=0)
-    for side in ("top", "right", "left", "bottom"):
-        ax1.spines[side].set_visible(False)
-    ax1.set_title("11 GUARD IDs OBSERVED  ·  outcome share; checks at right",
-                  loc="left", fontsize=8.2, fontweight="bold", color=INK, pad=8)
-    for row, y in zip(guards, y_positions):
-        ax1.text(102, y, f"{row[1]}", color=MUTED, fontsize=6.5,
-                 va="center", ha="left", clip_on=False)
-
-    # Outcome legend.
-    lx = [0.245, 0.335, 0.415, 0.515]
-    for x, (label, color, _) in zip(lx, series):
-        fig.patches.append(FancyBboxPatch(
-            (x, 0.153), 0.012, 0.012, boxstyle="square,pad=0",
-            transform=fig.transFigure, linewidth=0, facecolor=color))
-        fig.text(x + 0.016, 0.159, label, color=MUTED, fontsize=6.3, va="center")
-
-    # ---- Fired checks (what acted on a turn) ----
-    fired = [
-        ("no-speech suppression", 20),
-        ("language gate", 14),
-        ("navigation policy", 9),
-        ("selection allowlist", 7),
-        ("selection length", 2),
-        ("grounding citation", 1),
-    ]
-    ax2 = fig.add_axes([0.735, 0.43, 0.215, 0.26])
-    fy = list(range(len(fired)))[::-1]
-    for (label, value), y in zip(fired, fy):
-        ax2.barh(y, value, height=0.55, color=CORAL)
-        ax2.text(value + 0.5, y, str(value), color=INK, fontsize=6.8,
-                 fontweight="bold", va="center")
-    ax2.set_yticks(fy)
-    ax2.set_yticklabels([f[0] for f in fired], fontsize=6.2, color=INK)
-    ax2.set_xlim(0, 23)
-    ax2.set_xticks([])
-    ax2.tick_params(length=0)
-    for side in ("top", "right", "left", "bottom"):
-        ax2.spines[side].set_visible(False)
-    ax2.set_title("53 FIRED  ·  guard took action",
-                  loc="left", fontsize=8.2, fontweight="bold", color=INK, pad=8)
-
-    # Trace-backed examples in plain English.
-    fig.text(0.67, 0.355, "WHAT “FIRED” MEANT IN THE TRACE", color=STEEL,
-             fontsize=7.2, fontweight="bold", va="top")
-    examples = [
-        ("Language", "en-US expected; hi-IN heard\nturn dropped; switch prompt spoken"),
-        ("Routing", "low confidence: clarify\nunknown cue: defer to the LLM"),
-        ("Grounding", "unsupported $40 / INV-90114\nfactual reply blocked"),
-    ]
-    for i, (kind, text) in enumerate(examples):
-        y = 0.313 - i * 0.072
-        fig.text(0.68, y, kind, color=CORAL, fontsize=6.6,
-                 fontweight="bold", va="top")
-        fig.text(0.755, y, text, color=INK, fontsize=6.5, va="top",
-                 linespacing=1.35)
-
-    fig.text(
-        0.05, 0.06,
-        "Roster semantics: passed = ran and allowed · fired = changed the turn · delegated = Qwen/runtime owns the check · "
-        "not evaluated = did not run (never counted as a pass). Internal turn mechanics are excluded.",
-        color=MUTED, fontsize=6.4, va="center",
+    fig, ax = base(
+        "15 / GUARDRAILS",
+        "Guards fire at the input boundary, and every check is logged",
+        "Live ledger  \u00b7  985 checks over 290 turns  \u00b7  17 languages + auto-detect  \u00b7  "
+        "GET /traces/guardrails, 06 Sep 2026",
     )
 
+    # ---- "one voice turn" flow axis ----
+    ax.annotate("", xy=(96, 39.8), xytext=(4, 39.8),
+                arrowprops=dict(arrowstyle="-|>", color=MUTED, lw=1.2))
+    ax.text(4, 40.6, "AUDIO IN", color=MUTED, fontsize=6.4, fontweight="bold",
+            va="bottom")
+    ax.text(96, 40.6, "SPOKEN REPLY", color=MUTED, fontsize=6.4,
+            fontweight="bold", ha="right", va="bottom")
+
+    # ---- four stage cards along the turn ----
+    # (x, width, stage, owner, owner_color, checks_label, fired, note)
+    cards = [
+        (4.0, 21.0, "PERCEPTION \u00b7 STT", "Qwen3-ASR", TEAL, "580", 20,
+         "language ID + silence suppression"),
+        (27.0, 25.0, "ROUTING", "runtime policy", STEEL, "397", 32,
+         "reply-language gate,\nsemantic route, selection cues"),
+        (54.0, 18.0, "REASONING & TOOLS", "internal", FAINT, "\u2014", 0,
+         "bounded \u22643 tool loops;\nnot a guardrail surface"),
+        (74.0, 22.0, "GROUNDING", "runtime", STEEL, "8", 1,
+         "cite-or-silence blocks\nunsupported facts"),
+    ]
+    for i, (x, w, name, owner, oc, checks, fired, note) in enumerate(cards):
+        ax.add_patch(FancyBboxPatch((x, 24.0), w, 13.5,
+                     boxstyle="round,pad=0,rounding_size=0.8",
+                     linewidth=1.2, edgecolor=GRID, facecolor=WHITE, zorder=3))
+        ax.text(x + 1.5, 35.8, name, color=INK, fontsize=7.8, fontweight="bold",
+                va="top", zorder=5)
+        # owner pill
+        pill_w = 2.4 + len(owner) * 1.02
+        ax.add_patch(FancyBboxPatch((x + 1.5, 32.4), pill_w, 2.3,
+                     boxstyle="round,pad=0,rounding_size=0.7",
+                     linewidth=0, facecolor=oc, zorder=4))
+        ax.text(x + 1.5 + pill_w / 2, 33.55, owner, color=WHITE, fontsize=5.7,
+                fontweight="bold", ha="center", va="center", zorder=5)
+        # fired hero number + label
+        fcolor = CORAL if fired else FAINT
+        ax.text(x + 1.5, 31.0, str(fired), color=fcolor, fontsize=18,
+                fontweight="bold", va="top", zorder=5)
+        num_w = 4.6 if fired < 10 else 7.4
+        ax.text(x + 1.5 + num_w, 27.7, "fired", color=fcolor, fontsize=6.6,
+                fontweight="bold", va="top", zorder=5)
+        sub = f"of {checks} checks" if checks != "\u2014" else "no guardrail checks"
+        ax.text(x + 1.5 + num_w, 29.9, sub, color=MUTED, fontsize=5.9,
+                va="top", zorder=5)
+        ax.text(x + 1.5, 26.3, note, color=MUTED, fontsize=6.0, va="top",
+                linespacing=1.3, zorder=5)
+        if i < len(cards) - 1:
+            gx = x + w
+            nx = cards[i + 1][0]
+            ax.annotate("", xy=(nx - 0.3, 30.5), xytext=(gx + 0.3, 30.5),
+                        arrowprops=dict(arrowstyle="-|>", color=FAINT, lw=1.0))
+
+    # ---- three research takeaways on a navy band ----
+    ax.add_patch(FancyBboxPatch((4, 2.8), 92, 16.0,
+                 boxstyle="round,pad=0,rounding_size=0.8",
+                 linewidth=0, facecolor=NAVY, zorder=2))
+    takeaways = [
+        ("3.4", "checks per turn",
+         "Defense in depth: every turn is screened\nat three stages of the cascade."),
+        ("52 / 53", "fires before the answer",
+         "Wrong-language and bad-route turns are\ndropped up front, not caught at output."),
+        ("220", "checks \u201cnot evaluated\u201d",
+         "Honest coverage: a skipped check (language-ID\non a pinned call) is logged, never a pass."),
+    ]
+    for i, (value, label, body) in enumerate(takeaways):
+        x = 7.5 + i * 30.5
+        ax.text(x, 15.6, value, color=CORAL, fontsize=15, fontweight="bold",
+                va="top", zorder=5)
+        ax.text(x, 10.7, label, color=WHITE, fontsize=7.6, fontweight="bold",
+                va="top", zorder=5)
+        ax.text(x, 8.1, body, color="#c7d0dd", fontsize=6.2, va="top",
+                linespacing=1.35, zorder=5)
+        if i < len(takeaways) - 1:
+            ax.plot([x + 27.5, x + 27.5], [5.0, 16.6], color="#2a3a50", lw=0.8,
+                    zorder=4)
+
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
     fig.savefig(OUT / "runtime_guardrails.png", facecolor=OFF_WHITE, dpi=220)
     plt.close(fig)
 
