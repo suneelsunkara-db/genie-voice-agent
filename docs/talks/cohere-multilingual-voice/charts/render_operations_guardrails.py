@@ -119,94 +119,88 @@ def render_deployment() -> None:
 
 
 def render_guardrails() -> None:
-    """One-idea guardrail slide: where guards fire along a single voice turn.
+    """Behavioral-policy view: how the agent acts when a guardrail fires.
 
-    Live source: GET /traces/guardrails?limit=300 (06 Sep 2026), aggregating the
-    Lakebase ``voice_traces.guard_roster`` ledger. Fires partition cleanly by
-    pipeline stage -- perception 20, routing 32, grounding 1 -- so 52 of 53 fires
-    occur before the model commits an answer.
+    The research point is not the count of checks but the agent's constrained
+    action space under uncertainty, and where control lives. Each row is a
+    (condition -> bounded behavior) policy; the model contributes perception
+    signals while deterministic runtime code owns every gate, refusal, and
+    state change. Behaviors and owners are grounded in the realtime_api runtime;
+    the observed example is from GET /traces/guardrails (06 Sep 2026).
     """
     fig, ax = base(
         "15 / GUARDRAILS",
-        "Guards fire at the input boundary, and every check is logged",
-        "Live ledger  \u00b7  985 checks over 290 turns  \u00b7  17 languages + auto-detect  \u00b7  "
-        "GET /traces/guardrails, 06 Sep 2026",
+        "How the agent behaves when a guardrail fires",
+        "Each rail maps an uncertain or unsafe moment to one bounded behavior \u2014 "
+        "the model perceives, the deterministic runtime decides.",
     )
 
-    # ---- "one voice turn" flow axis ----
-    ax.annotate("", xy=(96, 39.8), xytext=(4, 39.8),
-                arrowprops=dict(arrowstyle="-|>", color=MUTED, lw=1.2))
-    ax.text(4, 40.6, "AUDIO IN", color=MUTED, fontsize=6.4, fontweight="bold",
-            va="bottom")
-    ax.text(96, 40.6, "SPOKEN REPLY", color=MUTED, fontsize=6.4,
-            fontweight="bold", ha="right", va="bottom")
+    # ---- behavioral policy table ----
+    xA, xB, xC = 5.0, 41.0, 84.0
+    hdr_y = 43.4
+    ax.text(xA, hdr_y, "WHEN THE AGENT ENCOUNTERS", color=STEEL, fontsize=7.0,
+            fontweight="bold", va="center")
+    ax.text(xB, hdr_y, "IT TAKES ONE BOUNDED ACTION \u2014 NOT FREE GENERATION",
+            color=STEEL, fontsize=7.0, fontweight="bold", va="center")
+    ax.text(xC, hdr_y, "CONTROL", color=STEEL, fontsize=7.0, fontweight="bold",
+            va="center")
+    ax.plot([5, 96], [42.0, 42.0], color=GRID, lw=1.0)
 
-    # ---- four stage cards along the turn ----
-    # (x, width, stage, owner, owner_color, checks_label, fired, note)
-    cards = [
-        (4.0, 21.0, "PERCEPTION \u00b7 STT", "Qwen3-ASR", TEAL, "580", 20,
-         "language ID + silence suppression"),
-        (27.0, 25.0, "ROUTING", "runtime policy", STEEL, "397", 32,
-         "reply-language gate,\nsemantic route, selection cues"),
-        (54.0, 18.0, "REASONING & TOOLS", "internal", FAINT, "\u2014", 0,
-         "bounded \u22643 tool loops;\nnot a guardrail surface"),
-        (74.0, 22.0, "GROUNDING", "runtime", STEEL, "8", 1,
-         "cite-or-silence blocks\nunsupported facts"),
+    # (condition, behavior, "instead of", owner_label, owner_color)
+    rows = [
+        ("Silence or noise \u2014 an empty transcript from ASR",
+         "Withholds the reply and re-prompts",
+         "not a response assembled from noise", "ASR-signaled", TEAL),
+        ("Detected language differs from the session language",
+         "Speaks a localized switch-prompt",
+         "not an answer in the wrong language", "runtime", STEEL),
+        ("No confident route for the spoken request",
+         "Asks to clarify, or defers to the LLM",
+         "not a guessed action", "runtime", STEEL),
+        ("A drafted fact is absent from the retrieved tool evidence",
+         "Blocks the unsupported claim (cite-or-silence)",
+         "not an unverified number spoken as fact", "runtime", STEEL),
+        ("A tool call would change account or billing state",
+         "Requires explicit confirmation before acting",
+         "not a mutation on a single utterance", "runtime", STEEL),
     ]
-    for i, (x, w, name, owner, oc, checks, fired, note) in enumerate(cards):
-        ax.add_patch(FancyBboxPatch((x, 24.0), w, 13.5,
-                     boxstyle="round,pad=0,rounding_size=0.8",
-                     linewidth=1.2, edgecolor=GRID, facecolor=WHITE, zorder=3))
-        ax.text(x + 1.5, 35.8, name, color=INK, fontsize=7.8, fontweight="bold",
-                va="top", zorder=5)
+    top = 39.3
+    row_h = 5.55
+    for i, (cond, beh, instead, owner, ocolor) in enumerate(rows):
+        cy = top - i * row_h
+        ax.text(xA, cy + 0.2, cond, color=INK, fontsize=7.6, va="center")
+        ax.text(xB, cy + 1.15, beh, color=INK, fontsize=8.4, fontweight="bold",
+                va="center")
+        ax.text(xB, cy - 1.55, instead, color=MUTED, fontsize=6.5,
+                fontstyle="italic", va="center")
         # owner pill
-        pill_w = 2.4 + len(owner) * 1.02
-        ax.add_patch(FancyBboxPatch((x + 1.5, 32.4), pill_w, 2.3,
+        pill_w = 2.6 + len(owner) * 1.02
+        ax.add_patch(FancyBboxPatch((xC, cy - 1.15), pill_w, 2.3,
                      boxstyle="round,pad=0,rounding_size=0.7",
-                     linewidth=0, facecolor=oc, zorder=4))
-        ax.text(x + 1.5 + pill_w / 2, 33.55, owner, color=WHITE, fontsize=5.7,
+                     linewidth=0, facecolor=ocolor, zorder=4))
+        ax.text(xC + pill_w / 2, cy, owner, color=WHITE, fontsize=5.8,
                 fontweight="bold", ha="center", va="center", zorder=5)
-        # fired hero number + label
-        fcolor = CORAL if fired else FAINT
-        ax.text(x + 1.5, 31.0, str(fired), color=fcolor, fontsize=18,
-                fontweight="bold", va="top", zorder=5)
-        num_w = 4.6 if fired < 10 else 7.4
-        ax.text(x + 1.5 + num_w, 27.7, "fired", color=fcolor, fontsize=6.6,
-                fontweight="bold", va="top", zorder=5)
-        sub = f"of {checks} checks" if checks != "\u2014" else "no guardrail checks"
-        ax.text(x + 1.5 + num_w, 29.9, sub, color=MUTED, fontsize=5.9,
-                va="top", zorder=5)
-        ax.text(x + 1.5, 26.3, note, color=MUTED, fontsize=6.0, va="top",
-                linespacing=1.3, zorder=5)
-        if i < len(cards) - 1:
-            gx = x + w
-            nx = cards[i + 1][0]
-            ax.annotate("", xy=(nx - 0.3, 30.5), xytext=(gx + 0.3, 30.5),
-                        arrowprops=dict(arrowstyle="-|>", color=FAINT, lw=1.0))
+        if i < len(rows) - 1:
+            ax.plot([5, 96], [cy - row_h / 2, cy - row_h / 2], color=GRID,
+                    lw=0.6)
 
-    # ---- three research takeaways on a navy band ----
-    ax.add_patch(FancyBboxPatch((4, 2.8), 92, 16.0,
+    # ---- control boundary + observed trace + honest limit (navy band) ----
+    ax.add_patch(FancyBboxPatch((4, 2.4), 92, 9.6,
                  boxstyle="round,pad=0,rounding_size=0.8",
                  linewidth=0, facecolor=NAVY, zorder=2))
-    takeaways = [
-        ("3.4", "checks per turn",
-         "Defense in depth: every turn is screened\nat three stages of the cascade."),
-        ("52 / 53", "fires before the answer",
-         "Wrong-language and bad-route turns are\ndropped up front, not caught at output."),
-        ("220", "checks \u201cnot evaluated\u201d",
-         "Honest coverage: a skipped check (language-ID\non a pinned call) is logged, never a pass."),
-    ]
-    for i, (value, label, body) in enumerate(takeaways):
-        x = 7.5 + i * 30.5
-        ax.text(x, 15.6, value, color=CORAL, fontsize=15, fontweight="bold",
-                va="top", zorder=5)
-        ax.text(x, 10.7, label, color=WHITE, fontsize=7.6, fontweight="bold",
-                va="top", zorder=5)
-        ax.text(x, 8.1, body, color="#c7d0dd", fontsize=6.2, va="top",
-                linespacing=1.35, zorder=5)
-        if i < len(takeaways) - 1:
-            ax.plot([x + 27.5, x + 27.5], [5.0, 16.6], color="#2a3a50", lw=0.8,
-                    zorder=4)
+    ax.text(7.5, 10.4, "OBSERVED TURN", color=CORAL, fontsize=6.6,
+            fontweight="bold", va="center", zorder=5)
+    ax.text(7.5, 8.3,
+            "Session pinned to en-US; the caller speaks Hindi. The language gate fires and the "
+            "agent answers with a Hindi switch-prompt \u2014 one of 14 language-gate fires seen "
+            "across 290 live turns (17 languages).",
+            color="#e7ecf3", fontsize=6.6, va="center", zorder=5)
+    ax.text(7.5, 5.7, "WHERE CONTROL LIVES", color=CORAL, fontsize=6.6,
+            fontweight="bold", va="center", zorder=5)
+    ax.text(7.5, 3.7,
+            "The model perceives; deterministic runtime owns every gate, refusal, and mutation. "
+            "Open limit: delegated perception can err, and tool-output injection is not yet gated.",
+            color="#c7d0dd", fontsize=6.4, va="center", zorder=5)
 
     plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
     fig.savefig(OUT / "runtime_guardrails.png", facecolor=OFF_WHITE, dpi=220)
