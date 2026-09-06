@@ -363,28 +363,39 @@ Interpretation: reproducing these numbers means reporting the serving image, com
 
 ---
 
-## Slide 16 (deck eyebrow 15) — Guardrails, observed in traces: runtime guardrails measured on 95 deployed turns
+## Slide 16 (deck eyebrow 15) — Guardrails live roster: what the runtime checked—and what fired
 
-_Visualization: two charts from stored traces plus an enforcement map (`charts/runtime_guardrails.png`). Source: `partner_demo_catalog.genie_voice_contact_center.voice_traces` — 95 turns · 46 sessions · Jul 2026. Every bar is a query result._
+_Visualization: the live Guardrails page rollup (`charts/runtime_guardrails.png`). Source: `GET /traces/guardrails?limit=300`, queried 06 Sep 2026. The endpoint reads Lakebase `voice_traces.guard_roster`, excludes `surface=internal`, and aggregates by guard ID, outcome, and language._
 
-TURN OUTCOMES (95 turns) — ~28% altered by a guard
+HEADLINE (same values as the Guardrails page)
 
-- `ok` 67 · `empty_transcript` 14 · `language_mismatch` 13 · `error` 1.
-- `language_mismatch` = language gate fired (13 turns switched language before any LLM call). `empty_transcript` = no-speech suppression (14 turns dropped, no reply).
+- 19 rails in catalog — 6 live · 2 delegated · 11 planned.
+- 985 checks recorded across 290 roster-bearing turns — 3.4 checks per turn.
+- 53 fired — 5.4% of checks changed what happened on a turn.
+- 233 delegated to Qwen3-ASR — model-owned language signals.
 
-LLM TOOL ITERATIONS (speech turns) — bounded loop
+11 GUARD IDs OBSERVED — outcome mix
 
-- Iterations 0/1/2 = 32/14/41 turns; the hard cap of 3 (`max_tool_iterations`) was never reached.
+- `language_id`: 290 — delegated 193 · not evaluated 97.
+- `no_speech_suppression`: 290 — passed 270 · fired 20.
+- `language_gate`: 270 — passed 137 · fired 14 · not evaluated 119.
+- `navigation.policy`: 39 — passed 30 · fired 9.
+- `navigation.semantic`: 33 — delegated 33.
+- `selection_length`: 18 — passed 16 · fired 2.
+- `selection_allowlist`: 16 — passed 9 · fired 7.
+- `selection_ambiguity`: 9 — passed 9.
+- `grounding_citation`: 8 — passed 7 · fired 1.
+- `scope_router`: 8 — delegated 7 · passed 1.
+- `selection_language_scope`: 4 — not evaluated 4.
 
-WHAT ENFORCED IT (code on the realtime path)
+53 FIRED — guard took action
 
-- Language gate → `navigation` / `_shared.language_mismatch`.
-- No-speech suppression → speech-pipeline STT stage.
-- Bounded tool loop → `config max_tool_iterations` (`services.py`).
-- `confirm_mutate` gate → `goal_frame.enforce_effect` — 6 billing writes vs 17 read-lookup turns; writes occur on a separate confirmation turn.
+- No-speech suppression 20 · language gate 14 · navigation policy 9 · selection allowlist 7 · selection length 2 · grounding citation 1.
 
-ALSO ENFORCED (code, not a per-turn counter): capability-scoped tools · OBO user-token (fail-closed) · cite-or-silence evidence.
+TRACE-BACKED EXAMPLES
 
-NOT YET CLAIMED (design-only, `docs/guardrails-and-observability.md`): realtime PII/PCI redaction · downstream prompt-injection filtering · trace-retention TTL · general pre-TTS output guard.
+- Language: expected `en-US`, detected `hi-IN`; turn dropped and localized switch prompt spoken.
+- Routing: low confidence asks for clarification; unknown cue defers to the LLM rather than guessing.
+- Grounding: unsupported `$40` / `INV-90114` blocks the factual reply.
 
-Provenance note: the live per-guard roster (pass/fire/delegated) is written to Lakebase; the UC mirror queried here exposes promoted columns (status, language, iterations, billing action), which is what these bars use.
+Roster semantics: `passed` = ran and allowed · `fired` = changed the turn · `delegated` = Qwen/runtime owns the check · `not_evaluated` = did not run (never counted as a pass). Catalog coverage and observed coverage are different: 19 describes the guardrail program; 11 guard IDs appeared in this 300-turn window.
