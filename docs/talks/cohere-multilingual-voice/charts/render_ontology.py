@@ -1,14 +1,12 @@
-"""Render the ontology (Genie semantic layer) knowledge-graph diagram for slide 05.
+"""Render the ontology knowledge-graph diagram for the Why Ontology slide.
 
-The diagram shows the "business ontology" as a governed knowledge graph: business
-entities (Customer, Account, Invoice, Billing Cycle, Adjustment, Plan, Payment,
-Usage) linked by named relationships. A spoken question enters on the left and a
-coral resolution path highlights the entities that answer it. A bottom strip lists
-what the semantic layer adds on top of the graph (definitions, governance, sources,
-continuity).
+The diagram shows a business ontology as a knowledge graph: entities
+(Customer, Account, Invoice, Billing Cycle, Adjustment, Plan, Payment, Usage)
+linked by named relationships. A spoken question enters on the left and a
+coral path highlights the entities that answer it.
 
-"Business ontology" == the Genie semantic layer (Unity Catalog tables + instructions
-+ entity matching that turn natural language into governed SQL).
+Vendor-neutral: no product names. The bottom four caption chips are omitted
+so the graph can use the full frame.
 """
 from pathlib import Path
 
@@ -33,7 +31,6 @@ MUTED = "#6b7686"
 
 TEAL_BAND = "#e4f1ee"
 CARD_CORAL = "#fdeee9"
-CARD_TEAL = "#eef7f4"
 
 font_manager.fontManager.addfont(FONT)
 plt.rcParams["font.family"] = "Helvetica Neue"
@@ -92,17 +89,6 @@ def edge(ax, p0, p1, label, highlight=False, rad=0.0, ldy=0.0, ldx=0.0):
             bbox=dict(boxstyle="round,pad=0.12", fc=OFF_WHITE, ec="none", alpha=0.9))
 
 
-def chip(ax, x, y, w, h, title, body):
-    ax.add_patch(
-        FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.1",
-                       linewidth=1.3, edgecolor=TEAL, facecolor=CARD_TEAL, zorder=3)
-    )
-    ax.text(x + w / 2, y + h - 3.0, title, fontsize=7.4, color=TEAL,
-            fontweight="bold", ha="center", va="top", zorder=6)
-    ax.text(x + w / 2, y + h - 6.6, body, fontsize=6.6, color=MUTED,
-            ha="center", va="top", zorder=6)
-
-
 def render_ontology() -> None:
     fig, ax = plt.subplots(figsize=(9.9, 4.75), dpi=220)
     fig.patch.set_facecolor(OFF_WHITE)
@@ -111,24 +97,24 @@ def render_ontology() -> None:
     ax.set_ylim(0, 100)
     ax.axis("off")
 
-    # ---- semantic-layer frame ----
+    # ---- ontology frame (full height; no bottom chips) ----
     ax.add_patch(
-        FancyBboxPatch((21, 22), 77, 74, boxstyle="round,pad=0,rounding_size=1.6",
+        FancyBboxPatch((21, 4), 77, 92, boxstyle="round,pad=0,rounding_size=1.6",
                        linewidth=0, facecolor=TEAL_BAND, zorder=0)
     )
-    ax.text(23.5, 92.5, "GENIE SEMANTIC LAYER  ·  BUSINESS ONTOLOGY",
+    ax.text(23.5, 92.5, "BUSINESS ONTOLOGY LAYER  ·  SEMANTIC LAYER",
             fontsize=8.2, color=TEAL, fontweight="bold", ha="left", va="top", zorder=6)
 
     # ---- node coordinates ----
     P = {
-        "customer": (32, 68),
-        "account": (49, 85),
-        "invoice": (63, 64),
-        "cycle": (84, 82),
-        "adjust": (86, 55),
-        "plan": (49, 47),
-        "payment": (31, 46),
-        "usage": (66, 39),
+        "customer": (32, 62),
+        "account": (49, 80),
+        "invoice": (63, 58),
+        "cycle": (84, 76),
+        "adjust": (86, 48),
+        "plan": (49, 38),
+        "payment": (31, 36),
+        "usage": (66, 28),
     }
 
     # ---- edges (draw before nodes) ----
@@ -153,28 +139,22 @@ def render_ontology() -> None:
 
     # ---- spoken question callout (left) ----
     ax.add_patch(
-        FancyBboxPatch((1.5, 58), 16.5, 20, boxstyle="round,pad=0,rounding_size=1.6",
+        FancyBboxPatch((1.5, 52), 16.5, 20, boxstyle="round,pad=0,rounding_size=1.6",
                        linewidth=1.6, edgecolor=CORAL, facecolor=WHITE, zorder=5)
     )
-    ax.text(9.8, 74.0, "SPOKEN REQUEST", fontsize=6.6, color=CORAL,
+    ax.text(9.8, 68.0, "SPOKEN REQUEST", fontsize=6.6, color=CORAL,
             fontweight="bold", ha="center", va="center", zorder=6)
-    ax.text(9.8, 67.0, "\u201cWhy did my\nbill increase?\u201d", fontsize=8.6, color=INK,
+    ax.text(9.8, 61.0, "\u201cWhy did my\nbill increase?\u201d", fontsize=8.6, color=INK,
             fontweight="bold", ha="center", va="center", zorder=6)
     ax.add_patch(
-        FancyArrowPatch((18, 68), (24.2, 68), arrowstyle="-|>", mutation_scale=13,
+        FancyArrowPatch((18, 62), (24.2, 62), arrowstyle="-|>", mutation_scale=13,
                         linewidth=2.4, color=CORAL, zorder=6)
     )
-    ax.text(21, 71.3, "grounds in", fontsize=6.3, color=CORAL, fontweight="bold",
+    ax.text(21, 65.3, "grounds in", fontsize=6.3, color=CORAL, fontweight="bold",
             ha="center", va="center", zorder=7)
 
-    # ---- what the layer adds (bottom strip) ----
-    chip(ax, 2, 3, 22.5, 14, "DEFINITIONS", "certified metrics\n& term meanings")
-    chip(ax, 26.5, 3, 22.5, 14, "GOVERNANCE", "permission-aware,\naccount-scoped")
-    chip(ax, 51, 3, 22.5, 14, "SOURCES", "governed Unity\nCatalog tables")
-    chip(ax, 75.5, 3, 22.5, 14, "CONTINUITY", "carried across\nfollow-up questions")
-
     # ---- legend ----
-    ax.text(97.5, 20.0, "Coral path = the entities that answer the example question",
+    ax.text(97.5, 8.0, "Coral path = the entities that answer the example question",
             fontsize=6.6, color=CORAL, ha="right", va="center", zorder=7)
 
     plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
