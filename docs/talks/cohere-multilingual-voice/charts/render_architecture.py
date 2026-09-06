@@ -1,14 +1,10 @@
 """Render the model-serving architecture diagram for the Cohere talk.
 
-Professional hub-and-spoke layout in three planes:
-  - Voice serving plane  : self-registered Qwen3-ASR (STT) and VoxCPM2 (TTS) endpoints
-  - Reasoning plane       : Qwen3-Next LLM tool-calling loop (the middle stage)
-  - Data / ontology plane : Genie semantic layer + Lakebase + Genie One (governed data)
-A governance strip underneath ties Unity Catalog registration + Model Serving together.
-
-Grounded in scripts/ml_asr/{register,deploy}_realtime_voice_models and config.yaml
-`realtime_voice:`. "Business ontology" == the Genie semantic layer (UC tables +
-instructions + entity matching), accessed by the LLM through tool calls.
+Three planes, no vendor branding:
+  - Voice serving plane   : Qwen3-ASR (STT) and VoxCPM2 (TTS) endpoints
+  - Reasoning plane       : LLM tool-calling loop
+  - Data / ontology plane : business ontology, semantic layer + data,
+                            low-latency serving database
 """
 from pathlib import Path
 
@@ -127,83 +123,64 @@ def render_architecture() -> None:
     ax.set_ylim(0, 100)
     ax.axis("off")
 
-    # ---- plane bands ----
-    band(ax, 2, 20, 26, 76, CORAL_BAND, "VOICE SERVING PLANE")
-    band(ax, 30, 20, 30, 76, STEEL_BAND, "REASONING PLANE")
-    band(ax, 62, 20, 36, 76, TEAL_BAND, "DATA & ONTOLOGY PLANE")
+    # ---- plane bands (full height; no governance strip) ----
+    band(ax, 2, 4, 26, 92, CORAL_BAND, "VOICE SERVING PLANE")
+    band(ax, 30, 4, 30, 92, STEEL_BAND, "REASONING PLANE")
+    band(ax, 62, 4, 36, 92, TEAL_BAND, "DATA & ONTOLOGY PLANE")
 
     # ---- voice serving plane ----
-    card(ax, 4, 66, 22, 22, CORAL, "SPEECH-TO-TEXT", "Qwen3-ASR-1.7B",
-         ["realtime_voice_stt_qwen3_asr_1_7b", "GPU_MEDIUM · agent/v1/responses"])
-    card(ax, 4, 30, 22, 22, CORAL, "TEXT-TO-SPEECH", "VoxCPM2",
-         ["realtime_voice_tts_voxcpm2", "streaming PCM · 6 diffusion steps"])
+    card(ax, 4, 64, 22, 24, CORAL, "SPEECH-TO-TEXT", "Qwen3-ASR-1.7B",
+         ["GPU serving endpoint", "audio to transcript + language"])
+    card(ax, 4, 16, 22, 24, CORAL, "TEXT-TO-SPEECH", "VoxCPM2",
+         ["GPU serving endpoint", "streaming PCM \u00b7 6 diffusion steps"])
 
     # ---- reasoning plane ----
-    card(ax, 33, 52, 24, 30, STEEL, "REASONING LLM", "Qwen3-Next-80B",
-         ["Databricks foundation-model endpoint", "tool-calling loop · \u22643 iterations",
-          "temperature 0.4 · 512 tokens"], dark=True)
+    card(ax, 33, 50, 24, 32, STEEL, "REASONING LLM", "Qwen3-Next-80B",
+         ["hosted LLM endpoint", "tool-calling loop \u00b7 \u22643 iterations",
+          "temperature 0.4 \u00b7 512 tokens"], dark=True)
     ax.add_patch(
-        FancyBboxPatch((33, 30), 24, 15, boxstyle="round,pad=0,rounding_size=1.0",
+        FancyBboxPatch((33, 16), 24, 26, boxstyle="round,pad=0,rounding_size=1.0",
                        linewidth=1.2, edgecolor=STEEL, facecolor=CARD_STEEL, zorder=3)
     )
-    ax.text(45, 42.2, "SEMANTIC NAVIGATION", fontsize=7.8, color=STEEL,
+    ax.text(45, 38.2, "SEMANTIC NAVIGATION", fontsize=7.8, color=STEEL,
             fontweight="bold", ha="center", va="top", zorder=6)
-    ax.text(45, 38.2, "Classifies the utterance and\nexposes only the matching tool set",
+    ax.text(45, 33.6, "Classifies the utterance and\nexposes only the matching tool set",
             fontsize=7.4, color=MUTED, ha="center", va="top", zorder=6)
-    ax.text(45, 26.5, "Tools:  ask_genie · lookup_account · workspace_query",
+    ax.text(45, 22.5, "Tools:  semantic query \u00b7 account lookup\nknowledge query",
             fontsize=6.9, color=MUTED, ha="center", va="center", zorder=6)
 
     # ---- data / ontology plane ----
-    card(ax, 64, 68, 32, 20, TEAL, "GENIE SEMANTIC LAYER  (business ontology)",
-         "UC tables + instructions",
-         ["entity matching · natural language to governed SQL"])
-    card(ax, 64, 46, 32, 18, TEAL, "LAKEBASE SERVING", None,
+    card(ax, 64, 70, 32, 20, TEAL, "BUSINESS ONTOLOGY LAYER",
+         None,
+         ["Entities, definitions, relationships",
+          "agreed meaning for spoken business terms"])
+    card(ax, 64, 43, 32, 22, TEAL, "SEMANTIC LAYER  \u00b7  DATA",
+         None,
+         ["Source tables + query instructions",
+          "natural language to SQL over those tables"])
+    card(ax, 64, 16, 32, 22, TEAL, "LOW-LATENCY SERVING DATABASE",
+         None,
          ["Sub-millisecond account & billing facts",
-          "Postgres CU_1 · hot-path lookups"])
-    card(ax, 64, 24, 32, 18, TEAL, "GENIE ONE  (managed MCP)", None,
-         ["Governed workspace answers",
-          "on-behalf-of the calling user"])
+          "hot-path lookups for live turns"])
 
     # ---- runtime arrows ----
-    arrow(ax, (0.5, 77), (4, 77), CORAL, "caller speech", label_dy=2.0, fontsize=7.4)
-    arrow(ax, (26, 77), (33, 70), CORAL, "transcript\n+ language", rad=-0.15,
+    arrow(ax, (0.5, 76), (4, 76), CORAL, "caller speech", label_dy=2.0, fontsize=7.4)
+    arrow(ax, (26, 76), (33, 70), CORAL, "transcript\n+ language", rad=-0.15,
           label_dy=2.6, fontsize=7.4)
-    arrow(ax, (33, 58), (26, 41), STEEL, "response\ntext", rad=-0.15,
+    arrow(ax, (33, 58), (26, 28), STEEL, "response\ntext", rad=-0.15,
           label_dy=-2.4, fontsize=7.4)
-    arrow(ax, (4, 41), (0.5, 41), CORAL, "streamed audio", label_dy=2.0, fontsize=7.4)
+    arrow(ax, (4, 28), (0.5, 28), CORAL, "streamed audio", label_dy=2.0, fontsize=7.4)
 
     # ---- tool bus between LLM and data plane ----
-    ax.plot([61, 61], [33, 78], color=TEAL, linewidth=1.4, zorder=2)
-    arrow(ax, (57, 71), (61, 71), STEEL, None, lw=2.2)
-    arrow(ax, (61, 60), (57, 60), TEAL, None, lw=2.2)
-    ax.text(59, 76, "tool calls", fontsize=7.4, color=STEEL, ha="center",
+    ax.plot([61, 61], [27, 80], color=TEAL, linewidth=1.4, zorder=2)
+    arrow(ax, (57, 72), (61, 72), STEEL, None, lw=2.2)
+    arrow(ax, (61, 54), (57, 54), TEAL, None, lw=2.2)
+    ax.text(59, 78, "tool calls", fontsize=7.4, color=STEEL, ha="center",
             va="center", fontweight="bold", zorder=7)
-    ax.text(59, 55, "ontology\nresults", fontsize=7.2, color=TEAL, ha="center",
+    ax.text(59, 48, "ontology\nresults", fontsize=7.2, color=TEAL, ha="center",
             va="center", fontweight="bold", zorder=7)
-    for ty in (78, 55, 33):
+    for ty in (80, 54, 27):
         arrow(ax, (61, ty), (64, ty), TEAL, None, lw=1.6)
-
-    # ---- governance strip ----
-    ax.add_patch(
-        FancyBboxPatch((2, 4), 96, 12, boxstyle="round,pad=0,rounding_size=1.2",
-                       linewidth=0, facecolor=INK, zorder=2)
-    )
-    ax.text(4, 12.6, "GOVERNANCE & DEPLOYMENT", fontsize=8.4, color=CORAL,
-            fontweight="bold", va="center", ha="left", zorder=6)
-    ax.text(
-        4, 7.6,
-        "Unity Catalog  ·  partner_demo_catalog.genie_voice_contact_center      "
-        "Serverless MLflow registration (candidate alias) governs the STT/TTS endpoints      "
-        "Lakebase CDF into UC history",
-        fontsize=7.6, color="#c7d0dd", va="center", ha="left", zorder=6,
-    )
-    # dashed governance link up to the self-registered serving endpoints
-    ax.add_patch(
-        FancyArrowPatch((15, 16), (15, 30), arrowstyle="-|>", mutation_scale=10,
-                        linewidth=1.2, color="#8a97a8", linestyle=(0, (4, 3)), zorder=2)
-    )
-    ax.text(16.5, 23, "registers\n& governs", fontsize=6.6, color=MUTED,
-            ha="left", va="center", zorder=7)
 
     plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
     fig.savefig(OUT / "serving_architecture.png", facecolor=OFF_WHITE, dpi=220)
