@@ -363,21 +363,20 @@ Interpretation: reproducing these numbers means reporting the serving image, com
 
 ---
 
-## Slide 16 (deck eyebrow 15) — Guardrails: guards fire at the input boundary, and every check is logged
+## Slide 16 (deck eyebrow 15) — Guardrails: how the agent behaves when a guardrail fires
 
-_Visualization: one voice turn as a left-to-right pipeline (`charts/runtime_guardrails.png`). Source: `GET /traces/guardrails?limit=300`, queried 06 Sep 2026 — 985 checks over 290 roster-bearing turns, 17 languages + auto-detect. Fires partition by pipeline stage, so the figure shows where guards act rather than a per-rail bar dashboard._
+_Visualization: a behavioral-policy table (`charts/runtime_guardrails.png`) — each rail maps an uncertain or unsafe moment to one bounded agent action, not a free-form generation. Framing: the model perceives, the deterministic runtime decides. The observed example is drawn from `GET /traces/guardrails?limit=300`, queried 06 Sep 2026 (290 live turns, 17 languages)._
 
-THE TURN, STAGE BY STAGE (fired / checks)
+CONDITION → BOUNDED BEHAVIOR (owner)
 
-- Perception · STT (Qwen3-ASR): **20 fired** of 580 — language ID + silence suppression; a fire is an empty transcript that stops the turn.
-- Routing (runtime policy): **32 fired** of 397 — reply-language gate, semantic route, selection cues; fires drop wrong-language turns or defer low-confidence routes to the LLM.
-- Reasoning & tools (internal): **no guardrail checks** — the tool loop is bounded to ≤3 iterations but is not a guardrail surface.
-- Grounding (runtime): **1 fired** of 8 — cite-or-silence blocked an answer citing an unsupported `$40` / `INV-90114`.
+- Silence or noise, empty ASR transcript → **withholds the reply and re-prompts** (ASR-signaled, runtime action) — not a response assembled from noise.
+- Detected language differs from the session language → **speaks a localized switch-prompt** (runtime) — not an answer in the wrong language.
+- No confident route for the request → **asks to clarify, or defers to the LLM** (runtime) — not a guessed action.
+- A drafted fact is absent from the retrieved tool evidence → **blocks the unsupported claim** via cite-or-silence (runtime) — not an unverified number spoken as fact.
+- A tool call would change account/billing state → **requires explicit confirmation first** (runtime) — not a mutation on a single utterance.
 
-THREE TAKEAWAYS
+WHERE CONTROL LIVES
 
-- **3.4 checks per turn** — defense in depth across three stages of the cascade.
-- **52 of 53 fires happen before the answer** — bad input is rejected or redirected up front, not caught at output.
-- **220 checks logged "not evaluated"** (e.g. language-ID on a pinned-language call) — a skipped check is an auditable abstention, never counted as a pass.
-
-Semantics: `fired` = changed the turn (not an alert); `delegated` = the speech model / runtime owns the signal (233 to Qwen3-ASR); `not_evaluated` = did not run. Rows with `surface=internal` are excluded so mechanics do not inflate the counts.
+- The model contributes perception signals (language identity, no-speech, semantic intent); deterministic runtime code owns every gate, refusal, defer, and mutation — which is why nearly every owner is `runtime`.
+- Observed turn: session pinned to `en-US`, caller speaks Hindi → the language gate fires → the agent answers with a Hindi switch-prompt (one of 14 language-gate fires across 290 live turns).
+- Open limits (stated deliberately): delegated perception can err — language ID is a model prediction, so the gate inherits its mistakes — and adversarial content embedded in tool outputs is not yet gated.
