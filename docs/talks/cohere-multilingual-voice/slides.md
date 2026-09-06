@@ -363,39 +363,21 @@ Interpretation: reproducing these numbers means reporting the serving image, com
 
 ---
 
-## Slide 16 (deck eyebrow 15) — Guardrails live roster: what the runtime checked—and what fired
+## Slide 16 (deck eyebrow 15) — Guardrails: guards fire at the input boundary, and every check is logged
 
-_Visualization: the live Guardrails page rollup (`charts/runtime_guardrails.png`). Source: `GET /traces/guardrails?limit=300`, queried 06 Sep 2026. The endpoint reads Lakebase `voice_traces.guard_roster`, excludes `surface=internal`, and aggregates by guard ID, outcome, and language._
+_Visualization: one voice turn as a left-to-right pipeline (`charts/runtime_guardrails.png`). Source: `GET /traces/guardrails?limit=300`, queried 06 Sep 2026 — 985 checks over 290 roster-bearing turns, 17 languages + auto-detect. Fires partition by pipeline stage, so the figure shows where guards act rather than a per-rail bar dashboard._
 
-HEADLINE (same values as the Guardrails page)
+THE TURN, STAGE BY STAGE (fired / checks)
 
-- 19 rails in catalog — 6 live · 2 delegated · 11 planned.
-- 985 checks recorded across 290 roster-bearing turns — 3.4 checks per turn.
-- 53 fired — 5.4% of checks changed what happened on a turn.
-- 233 delegated to Qwen3-ASR — model-owned language signals.
+- Perception · STT (Qwen3-ASR): **20 fired** of 580 — language ID + silence suppression; a fire is an empty transcript that stops the turn.
+- Routing (runtime policy): **32 fired** of 397 — reply-language gate, semantic route, selection cues; fires drop wrong-language turns or defer low-confidence routes to the LLM.
+- Reasoning & tools (internal): **no guardrail checks** — the tool loop is bounded to ≤3 iterations but is not a guardrail surface.
+- Grounding (runtime): **1 fired** of 8 — cite-or-silence blocked an answer citing an unsupported `$40` / `INV-90114`.
 
-11 GUARD IDs OBSERVED — outcome mix
+THREE TAKEAWAYS
 
-- `language_id`: 290 — delegated 193 · not evaluated 97.
-- `no_speech_suppression`: 290 — passed 270 · fired 20.
-- `language_gate`: 270 — passed 137 · fired 14 · not evaluated 119.
-- `navigation.policy`: 39 — passed 30 · fired 9.
-- `navigation.semantic`: 33 — delegated 33.
-- `selection_length`: 18 — passed 16 · fired 2.
-- `selection_allowlist`: 16 — passed 9 · fired 7.
-- `selection_ambiguity`: 9 — passed 9.
-- `grounding_citation`: 8 — passed 7 · fired 1.
-- `scope_router`: 8 — delegated 7 · passed 1.
-- `selection_language_scope`: 4 — not evaluated 4.
+- **3.4 checks per turn** — defense in depth across three stages of the cascade.
+- **52 of 53 fires happen before the answer** — bad input is rejected or redirected up front, not caught at output.
+- **220 checks logged "not evaluated"** (e.g. language-ID on a pinned-language call) — a skipped check is an auditable abstention, never counted as a pass.
 
-53 FIRED — guard took action
-
-- No-speech suppression 20 · language gate 14 · navigation policy 9 · selection allowlist 7 · selection length 2 · grounding citation 1.
-
-TRACE-BACKED EXAMPLES
-
-- Language: expected `en-US`, detected `hi-IN`; turn dropped and localized switch prompt spoken.
-- Routing: low confidence asks for clarification; unknown cue defers to the LLM rather than guessing.
-- Grounding: unsupported `$40` / `INV-90114` blocks the factual reply.
-
-Roster semantics: `passed` = ran and allowed · `fired` = changed the turn · `delegated` = Qwen/runtime owns the check · `not_evaluated` = did not run (never counted as a pass). Catalog coverage and observed coverage are different: 19 describes the guardrail program; 11 guard IDs appeared in this 300-turn window.
+Semantics: `fired` = changed the turn (not an alert); `delegated` = the speech model / runtime owns the signal (233 to Qwen3-ASR); `not_evaluated` = did not run. Rows with `surface=internal` are excluded so mechanics do not inflate the counts.
