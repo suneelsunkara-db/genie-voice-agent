@@ -7,9 +7,9 @@ Qwen3-ASR-1.7B and VoxCPM2 on one serving path
 Cohere Labs · Open Science  
 Suneel Sunkara · Databricks
 
-Main deck: 15 content slides plus the title.
+Main deck: 20 content slides plus the title.
 
-**Story:** Multilingual requirement → language challenges → Qwen3-ASR → VoxCPM2 → model evolution → why the pair → model-serving architecture → ontology → tool calling → multilingual evaluation → findings → deployment lessons → runtime guardrails.
+**Story:** Multilingual requirement → language challenges → Qwen3-ASR → VoxCPM2 → model evolution → why the pair → model-serving architecture → ontology → tool calling → multilingual evaluation → findings → deployment lessons → runtime guardrails → live-audio conversation gaps → reliability & voice identity → culture as a component → speech-native guardrails.
 
 **Visual system:** Inter · warm off-white / ink navy / coral accent · direct labels · no decorative dashboards.
 
@@ -43,7 +43,7 @@ TONE & PRONUNCIATION
 Thai and Mandarin are tonal — pitch decides the word. A small acoustic slip changes the word itself, not just its spelling.
 
 WORD BOUNDARIES & SCRIPTS  
-Thai, Mandarin, and Japanese write without spaces; Japanese mixes several scripts. Filipino packs tense into affixes: *nagbayad* (paid) vs *magbabayad* (will pay). With no clean word unit, we score characters.
+Thai, Mandarin, and Japanese do not put spaces between words. Japanese also mixes three writing systems in one sentence. Indonesian uses spaces, but tense sits inside the word: *bayar* means pay; *dibayar* means was paid. With no clean word unit, we score characters.
 
 CODE-SWITCHING  
 English names, product terms, and ID numbers appear inside local sentences. The recognizer must transcribe both languages within a single utterance.
@@ -65,9 +65,9 @@ MODEL EVOLUTION
 - **Whisper (2022):** an encoder–decoder Transformer trained on 680k hours of weakly supervised audio maps speech features directly to autoregressive text tokens.
 - **Qwen3-ASR (2026):** a 300M AuT encoder and projector feed Qwen3-1.7B. Post-training from Qwen3-Omni brings language-model context into transcription.
 
-INSIDE QWEN3-ASR
+WHY IT'S DIFFERENT
 
-16 kHz audio → 128-dimensional Fbank → AuT encoder (8× downsample; 12.5 Hz) → projector → Qwen3-1.7B → language ID + transcript
+Most recognizers pick words from sound alone. Here the **AuT encoder** compresses 16 kHz audio (Fbank, 8× downsample to 12.5 Hz) into a sequence a projector can pass to **Qwen3-1.7B**. That language-model decoder uses sentence context and primed names/IDs to choose the transcript, and detects language in the same pass.
 
 MECHANISM & TRAINING
 
@@ -90,30 +90,23 @@ Sources: [Qwen3-ASR report](https://arxiv.org/abs/2601.21337) · [model card](ht
 
 Tokenizer-free means no external speech-codec vocabulary—not an absence of quantization inside the model.
 
-WHY TOKENIZER-FREE?
+MODEL EVOLUTION
 
-- **Discrete-codec TTS:** neural codecs turn speech into token IDs. This gives a language model a stable vocabulary, but quantization can discard fine acoustic detail; many systems then require a separate diffusion decoder.
-- **VoxCPM2’s nuance:** it removes the external speech tokenizer, not quantization altogether. It generates continuous AudioVAE latents while an internal differentiable FSQ bottleneck creates a semi-discrete semantic/prosodic skeleton.
+- **Tacotron 2 · 2017:** neural seq2seq predicts a mel-spectrogram; a separate vocoder renders the waveform — natural, but multi-stage.
+- **VALL-E / AudioLM · 2022:** speech becomes discrete audio tokens an LLM predicts, enabling zero-shot cloning but able to quantize away detail.
+- **VoxCPM2 · 2026:** continuous, flow-matching generation instead of discrete tokens — planned by an LM, rendered directly.
 
-HIERARCHICAL GENERATION
+WHY IT'S DIFFERENT
 
-Past audio latents → LocEnc → compact acoustic history  
-Text + history → TSLM (MiniCPM-4-1B) → FSQ semantic/prosodic skeleton  
-Skeleton + RALM residual detail → LocDiT denoising → AudioVAE decoder → 48 kHz waveform
+Most modern TTS emits discrete codec tokens, so quantization can round off fine acoustic detail. VoxCPM2 is **tokenizer-free** — it generates in a **continuous acoustic space** — so how the voice rises and falls, and what makes it sound like a particular person, are not discarded before the waveform.
 
-WHAT EACH STAGE DOES
+MECHANISM & TRAINING
 
-- TSLM predicts the content-and-prosody plan.
-- FSQ regularizes its hidden state into a semi-discrete skeleton without an external codec vocabulary.
-- RALM restores residual acoustic detail omitted by the skeleton.
-- LocDiT uses flow-matching diffusion to generate each continuous latent patch; AudioVAE V2 decodes it to 48 kHz.
+**TSLM** (MiniCPM-4-1B) plans what to say and how it should sound; an internal FSQ bottleneck forms a compact skeleton; RALM adds residual detail; **LocDiT** (flow-matching diffusion) renders the latents that AudioVAE V2 decodes to 48 kHz. Trained on 2M+ hours across 30 languages (2B parameters).
 
-CAPABILITIES & DEPLOYMENT
+STREAMING & DEPLOYMENT
 
-- 2B parameters; 2M+ training hours; 30 languages; 48 kHz output.
-- Voice design creates a voice from text; voice cloning preserves a speaker from audio. They are different modes.
-- This endpoint uses reference cloning and streaming at six diffusion steps / CFG 2.0.
-- Published RTX 4090 real-time factors are hardware-specific. The model card reports variation across languages and instability on long or highly expressive inputs.
+Our endpoint clones from a cached reference voice and streams at six diffusion steps / CFG 2.0. Voice design (voice from text) and voice cloning (voice from audio) are distinct modes. Published RTX 4090 real-time factors are hardware-specific; the model card notes quality variation across languages and instability on long or expressive inputs.
 
 Sources: [VoxCPM2 model card](https://huggingface.co/openbmb/VoxCPM2) · [VoxCPM paper](https://arxiv.org/abs/2509.24650) · [official repository](https://github.com/OpenBMB/VoxCPM) · [deployed wrapper](https://github.com/suneelsunkara-db/genie-voice-agent/blob/main/scripts/ml_asr/realtime_tts_agent.py)
 
@@ -153,36 +146,29 @@ The models overlap on 24 languages. Detailed analysis uses the seven-language fo
 
 ## Slide 8 (deck eyebrow 07) — Model serving architecture: Two voice models around a tool-calling LLM
 
-_Visualization: three-plane architecture diagram (`charts/serving_architecture.png`)._
+_Visualization: three-plane architecture diagram (`charts/serving_architecture.png`). No vendor branding; governance strip removed._
 
 VOICE SERVING PLANE — the two models we deploy ourselves
 
-- Qwen3-ASR-1.7B (STT) and VoxCPM2 (TTS) are each packaged as an MLflow ResponsesAgent, registered in Unity Catalog under the `candidate` alias, and deployed as separate GPU Model Serving endpoints (`realtime_voice_stt_qwen3_asr_1_7b`, `realtime_voice_tts_voxcpm2`).
+- Qwen3-ASR-1.7B (STT) and VoxCPM2 (TTS) on separate GPU serving endpoints.
 
 REASONING PLANE — the LLM in the middle
 
-- Speech becomes a transcript, which goes to a Databricks foundation-model endpoint (`qwen3-next-80b`). A tool-calling loop (≤3 iterations) decides what information to fetch, then produces the response text sent back to VoxCPM2.
+- Speech becomes a transcript, which goes to a hosted LLM endpoint (Qwen3-Next-80B). A tool-calling loop (≤3 iterations) decides what information to fetch, then produces the response text sent back to VoxCPM2. Semantic navigation classifies the utterance and exposes only the matching tool set.
 
-DATA & ONTOLOGY PLANE — where tool calls gather governed business data
+DATA & ONTOLOGY PLANE — where tool calls gather business data
 
-- Tools reach the **Genie semantic layer** (Unity Catalog tables + instructions + entity matching that turn natural language into governed SQL — this is what the UI calls the "business ontology"), **Lakebase** for sub-millisecond account and billing facts, and **Genie One** for governed workspace answers.
-
-Governance: Unity Catalog governs the self-registered STT/TTS endpoints and the Genie-served data; Lakebase changes flow back into UC history.
+- **Business ontology layer** — entities, definitions, relationships; agreed meaning for spoken business terms.
+- **Semantic layer · data** — source tables plus query instructions; natural language to SQL.
+- **Low-latency serving database** — sub-millisecond account and billing facts for live turns.
 
 ---
 
-## Slide 9 (deck eyebrow 08) — Why ontology: grounding spoken requests in a governed semantic layer
+## Slide 9 (deck eyebrow 08) — Why ontology: grounding spoken requests in a semantic layer
 
 A correct transcript still lacks the entities, definitions, and relationships an answer requires.
 
-_Visualization: ontology knowledge graph (`charts/ontology_graph.png`) — business entities (Customer, Account, Invoice, Billing Cycle, Adjustment, Plan, Payment, Usage) linked by named relationships. The spoken request "Why did my bill increase?" enters on the left; a coral resolution path highlights the customer, invoice, prior billing cycle, and the adjustment that changed the total._
-
-WHAT THE SEMANTIC LAYER ADDS (bottom strip of the diagram)
-
-- Definitions — certified metrics and term meanings
-- Governance — permission-aware, account-scoped access
-- Sources — governed Unity Catalog tables
-- Continuity — carried across follow-up questions
+_Visualization: ontology knowledge graph (`charts/ontology_graph.png`) — business entities (Customer, Account, Invoice, Billing Cycle, Adjustment, Plan, Payment, Usage) linked by named relationships. The spoken request "Why did my bill increase?" enters on the left; a coral resolution path highlights the customer, invoice, prior billing cycle, and the adjustment that changed the total. Frame labeled Business ontology layer · Semantic layer. Bottom caption chips removed._
 
 Grounding begins after transcription; it cannot recover an entity or amount that recognition transcribed incorrectly.
 
@@ -380,3 +366,111 @@ WHERE CONTROL LIVES
 - The model contributes perception signals (language identity, no-speech, semantic intent); deterministic runtime code owns every gate, refusal, defer, and mutation — which is why nearly every owner is `runtime`.
 - Observed turn: session pinned to `en-US`, caller speaks Hindi → the language gate fires → the agent answers with a Hindi switch-prompt (one of 14 language-gate fires across 290 live turns).
 - Open limits (stated deliberately): delegated perception can err — language ID is a model prediction, so the gate inherits its mistakes — and adversarial content embedded in tool outputs is not yet gated.
+
+---
+
+<!-- Closing arc (deck eyebrows 16–19) — four visual slides (native shapes: named cards,
+     rich panels, a component grid, and a speech-path pipeline). Each preserves the
+     prose's *named* hierarchy so the depth reads clearly. Guardrails scope is deliberately
+     the two speech-native boundaries only (ingress + output); infra/orchestration/tool-data
+     controls live in speaker notes. Grounded in 2026 literature. -->
+
+## Slide 17 (deck eyebrow 16) — The gap is no longer "more languages": live-audio conversation
+
+_Visual slide (native shapes). Three named cards — the capabilities the Qwen3-ASR → LLM → VoxCPM2 cascade does not yet learn on complete, single-speaker turns._
+
+**Native conversational audio** ([Moshi](https://arxiv.org/abs/2410.00037) · [Qwen3-Omni](https://arxiv.org/abs/2509.17765))
+- Listening while speaking · interruption vs. backchannel · overlapping speakers · knowing when to stop
+
+**Real code-switching** ([SwitchLingua](https://arxiv.org/abs/2506.00087), NeurIPS 2025)
+- Language changes inside a phrase · borrowed words preserved · business entities survive the switch · meaning, not literal WER
+
+**Speaker separation & acoustic context** (recognition + security boundary)
+- Two voices at once; TV / background · child & elderly speech · 8 kHz telephony · emotion & non-speech cues
+
+Speaker notes:
+- Main message: adding languages is largely solved; conversing in live audio is not. Three named gaps.
+- Full-duplex = talk and listen at once (Moshi, Qwen3-Omni); backchannel = "hmm/yes"; code-switching = changing language mid-sentence; 8 kHz = phone-quality audio.
+- Cascade stays valuable because transcripts/retrieval/tool calls are inspectable — open question is a hybrid that keeps that and adds duplex.
+- Transition: even when the words are right, we don't yet measure whether the system knew it was right.
+
+---
+
+## Slide 18 (deck eyebrow 17) — Reliability and identity the transcript cannot show
+
+_Visual slide (native shapes). Two rich named panels — the production-grade dimensions post-hoc WER cannot capture._
+
+**Calibrated uncertainty** — does the system know when it's unsure?
+- Confidence per language, dialect, channel · uncertainty on names, amounts, IDs · out-of-distribution detection · escalation policy for low-confidence turns · fairness slices (accent, age, gender, impairment)
+- Why: average WER can improve while the worst dialect groups stay poor. ([GigaSpeech 2](https://arxiv.org/abs/2406.11546), ACL 2025)
+
+**Voice identity & provenance** — controllable cloning needs controls.
+- Explicit consent for reference voices · isolate & encrypt speaker embeddings · anti-replay checks · watermark / provenance on generated audio · revocation + impersonation testing
+- Why: a cloning capability is also an impersonation liability. (VoxCPM2 voice design)
+
+Speaker notes:
+- Main message: WER says whether a turn was wrong, not whether the system knew — or whose voice it used.
+- Calibration = says 90% sure and is right ~90% of the time; out-of-distribution = inputs unlike training; provenance = durable marker of which audio we generated.
+- Reliability, not just accuracy, is what lets the agent escalate safely.
+- Transition: correctness handled; the next axis — appropriateness — is culture.
+
+---
+
+## Slide 19 (deck eyebrow 18) — Culture is a system component, not a country code
+
+_Visual slide (native shapes). Left: what culture changes. Right: the four explicit components (2×2 card grid). Principle footer + Tiny Aya source._
+
+CULTURE CHANGES EXPRESSION
+- Honorific level & formality · direct vs. indirect requests · apology & refusal style · names, kinship, dates, numbers · silence vs. acknowledgement · caller–agent–subject relationship
+
+FOUR COMPONENTS (not a prompt)
+1. **Cultural context contract** — language, locale, relationship, setting, formality supplied explicitly, never inferred from ethnicity.
+2. **Regional model — Tiny Aya** — 3.35B, 70 languages, South Asian & APAC variants. A text model: interpret, adapt, evaluate — not ASR.
+3. **Business ontology** — protect canonical amounts, identifiers and actions from cultural paraphrasing.
+4. **Native-speaker evaluation** — rate appropriateness, honorifics, pronunciation, task success, stereotyping — not only WER/MOS.
+
+Principle: culture conditions expression; it never changes permissions, evidence, or business policy.
+
+Source: Cohere Labs — [Aya (Expanse)](https://arxiv.org/abs/2412.04261), open-weights multilingual model family. (On-slide "Tiny Aya" specifics are illustrative; cite the verifiable Aya release.)
+
+Speaker notes:
+- Main message: culture changes HOW a correct answer is said, never the fact or the permission — make it four explicit components, not a prompt.
+- Honorific = polite form set by relationship/status; ontology = the governed list of the business's real facts and permitted actions.
+- Tiny Aya is a TEXT model: cultural interpretation / adaptation / evaluation, not speech recognition.
+- Transition: expression is cultural; the last gap is safety on the audio itself.
+
+---
+
+## Slide 20 (deck eyebrow 19) — Speech-native guardrails: audio introduces threats that transcript filtering cannot observe
+
+_Visual slide (native shapes). A five-stage speech path — Incoming audio → Audio inspection → ASR / reasoning → Output verification → Synthesized speech — with two control panels dropped under the boundaries they protect, plus a navy measurement band. Merges the former audio-boundary and research-framing slides._
+
+Threat: a concealed second instruction rides the same audio as a legitimate caller.
+
+AUDIO INGRESS · before ASR
+
+- Overlapping-speaker detection
+- Speaker verification for sensitive requests
+- Replay & synthetic-speech detection
+- Acoustic prompt-injection detection
+- Reference-voice consent & revocation
+
+BEFORE SPEECH GENERATION
+
+- Verify amounts, dates, identifiers
+- Redact PCI / PII
+- Block unsupported promises
+- Check language & cultural register
+- Attach generated-audio provenance
+
+MEASURE: attack success & false-positive rate · performance by language & acoustic condition · added latency · effect on benign speech.
+
+Sources: [OWASP Securing Agentic Applications Guide v1.0](https://genai.owasp.org/resource/securing-agentic-applications-guide-1-0/) · [SALMONN](https://arxiv.org/abs/2310.13289) (joint audio-speech-text model).
+
+Speaker notes:
+- Main message: some attacks live in the audio, not the words; text filtering runs after transcription and is blind to them, so guardrails must sit on the speech path.
+- Two boundaries carry the controls: audio ingress (before ASR) and output verification (before TTS).
+- ASR = audio to text; acoustic prompt injection = a hidden instruction mixed into the caller's audio; provenance = a marker proving audio was AI-generated.
+- The measurement band is the research ask: attack success and false-alarm rate, results by language and audio condition, added latency, and no degradation of benign speech.
+- NOTES-ONLY (kept off the slide by design): guardrails also belong at three infra/API boundaries, enforced by code not the prompt — (1) Model-serving infrastructure: per-endpoint workload identity, private networking/controlled egress, immutable signed model/tokenizer versions, per-language latency/failure monitoring, GPU/queue/concurrency limits, fallback versions with compatibility contracts, embedding isolation; (2) Orchestration API: typed event schemas, bounded audio duration, session/turn IDs to reject stale results, per-turn language/culture context, explicit uncertainty fields, max tool iterations + turn deadline, capability-scoped tools, idempotency keys, separation of read/prepare/commit; (3) Tool & data APIs: user-scoped OAuth/OBO, short-lived credentials, record/field-level permissions, server-side argument validation, confirmation tokens bound to the exact action/parameters, transactional writes + replay protection, never treat raw tool output as trusted instructions (OWASP Securing Agentic Applications).
+- Closing line: recognition accuracy got us in the door; culture and speech-native safety make a multilingual voice agent trustworthy in production.

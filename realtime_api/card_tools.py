@@ -228,34 +228,59 @@ _START_DEEP_DIVE_SPEC = {
 
 
 def _run_start_deep_dive(arguments: dict[str, Any], ctx: ToolContext) -> str:
-    question = str(arguments.get("question") or "").strip()
-    if not question:
+    source_question = str(arguments.get("question") or "").strip()
+    if not source_question:
         return json.dumps({"error": "question is required"})
-    if ctx.customer_id and ctx.customer_id not in question:
-        question = f"For cardholder {ctx.customer_id}: {question}"
     use_case = ctx.profile_state.get("use_case")
     denied = genie_obo_or_refuse(ctx)
     if denied is not None:
         return denied
+
+    from .runtime.answer_rendering import canonicalize_question_for_agent_mode
+
+    try:
+        canonical_question = canonicalize_question_for_agent_mode(
+            source_question,
+            getattr(ctx, "_detected_language", None),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps(
+            {
+                "status": "failed",
+                "error": {
+                    "code": "deep_dive_input_translation_failed",
+                    "message": f"Could not translate the investigation question to English: {exc}",
+                    "retryable": True,
+                },
+            }
+        )
+
+    if ctx.customer_id and ctx.customer_id not in canonical_question:
+        canonical_question = f"For cardholder {ctx.customer_id}: {canonical_question}"
+
     try:
         from genie_voice.config import get_settings
         from genie_voice.genie.agent_mode import GenieAgentModeClient
 
         from .runtime.identity import workspace_client_for_principal
 
+        # Agent Mode's stable contract is canonical English input/output. Adapt at
+        # this boundary rather than asking the agent itself to reason and report in
+        # the caller's language; the report is localized separately for voice/UI.
         settings = get_settings()
         workspace = workspace_client_for_principal(ctx.principal, settings)
         result = GenieAgentModeClient(
             settings,
             workspace_client=workspace,
         ).ask(
-            question,
+            canonical_question,
             space_name=genie_space_name(ctx, settings.card_issuer.genie_space_name),
         )
         return json.dumps(
             {
                 "status": result.status,
-                "question": question,
+                "question": source_question,
+                "canonical_question": canonical_question,
                 "use_case": use_case,
                 "report": result.report_text,
                 "tables": result.tables,
@@ -266,7 +291,16 @@ def _run_start_deep_dive(arguments: dict[str, Any], ctx: ToolContext) -> str:
             default=str,
         )
     except Exception as exc:  # noqa: BLE001
-        return json.dumps({"error": f"Deep investigation failed: {exc}"})
+        return json.dumps(
+            {
+                "status": "failed",
+                "error": {
+                    "code": "deep_dive_execution_failed",
+                    "message": f"Deep investigation failed: {exc}",
+                    "retryable": True,
+                },
+            }
+        )
 
 
 register(_START_DEEP_DIVE_SPEC, _run_start_deep_dive, profile=_PROFILE)

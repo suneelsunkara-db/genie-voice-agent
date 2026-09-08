@@ -1,25 +1,19 @@
 flowchart TB
-    subgraph inputs [Same eval harness]
-        A[420 clips per locale]
-        B[Human reference transcript]
-        C[Expected entities: invoice ID, amount, waiver phrase, confirmation]
+    subgraph inputs [Benchmark inputs]
+        A[FLEURS human speech]
+        E[Reference text]
     end
-
-    subgraph metrics [Two metric layers]
-        D[WER / CER]
-        E[Critical entity accuracy]
-        F[Unsafe for resolution rate]
+    B[Realtime WebSocket API]
+    subgraph models [Deployed speech models]
+        C[Qwen3-ASR-1.7B]
+        F[VoxCPM2]
     end
-
-    subgraph outcomes [What we observed]
-        G[Thai: low WER, 100% unsafe]
-        H[id-ID: Deepgram partially viable]
-        I[zh-CN: low WER, 97% unsafe]
+    subgraph measures [Independent measurements]
+        D[WER or CER]
+        G[Time to first audio]
     end
-
-    A --> D
-    A --> E
-    E --> F
-    F --> G
-    F --> H
-    F --> I
+    H[Delta benchmark tables]
+    A --> B
+    E --> B
+    B --> C --> D --> H
+    B --> F --> G --> H

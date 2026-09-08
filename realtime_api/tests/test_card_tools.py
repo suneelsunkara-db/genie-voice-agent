@@ -7,6 +7,7 @@ The navigator, not the system prompt, chooses which capability is in reach.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from realtime_api import card_tools
 from realtime_api.contracts import SessionStart
@@ -45,6 +46,89 @@ def test_start_deep_dive_fails_closed_without_obo():
 def test_start_deep_dive_requires_question():
     out = json.loads(card_tools._run_start_deep_dive({"question": "   "}, _ctx()))
     assert "error" in out
+
+
+def test_start_deep_dive_sends_canonical_english_to_agent_mode(monkeypatch):
+    seen: dict[str, str] = {}
+    settings = SimpleNamespace(
+        card_issuer=SimpleNamespace(genie_space_name="Genie Voice - Card Issuer")
+    )
+
+    class _AgentMode:
+        def __init__(self, _settings, *, workspace_client):
+            assert workspace_client == "workspace"
+
+        def ask(self, question, *, space_name):
+            seen["question"] = question
+            seen["space_name"] = space_name
+            return SimpleNamespace(
+                status="completed",
+                report_text="Travel drove the increase.",
+                tables=[],
+                reasoning=[],
+                sql_calls=[],
+                error=None,
+            )
+
+    monkeypatch.setattr(card_tools, "genie_obo_or_refuse", lambda _ctx: None)
+    monkeypatch.setattr(
+        "realtime_api.runtime.answer_rendering.canonicalize_question_for_agent_mode",
+        lambda question, language: (
+            "Why did my expenses increase?"
+            if language == "de-DE" and question.startswith("Warum")
+            else question
+        ),
+    )
+    monkeypatch.setattr("genie_voice.config.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "realtime_api.runtime.identity.workspace_client_for_principal",
+        lambda _principal, _settings: "workspace",
+    )
+    monkeypatch.setattr(
+        "genie_voice.genie.agent_mode.GenieAgentModeClient",
+        _AgentMode,
+    )
+
+    ctx = _ctx(use_case="statement_insights")
+    ctx._detected_language = "de-DE"
+    result = json.loads(
+        card_tools._run_start_deep_dive(
+            {"question": "Warum sind meine Ausgaben gestiegen?"},
+            ctx,
+        )
+    )
+
+    assert seen["question"] == (
+        "For cardholder CH-0001: Why did my expenses increase?"
+    )
+    assert result["question"] == "Warum sind meine Ausgaben gestiegen?"
+    assert result["canonical_question"] == seen["question"]
+    assert result["error"] is None
+
+
+def test_start_deep_dive_returns_structured_error(monkeypatch):
+    monkeypatch.setattr(card_tools, "genie_obo_or_refuse", lambda _ctx: None)
+
+    def _fail(_question, _language):
+        raise ValueError("question translation returned no text")
+
+    monkeypatch.setattr(
+        "realtime_api.runtime.answer_rendering.canonicalize_question_for_agent_mode",
+        _fail,
+    )
+    ctx = _ctx()
+    ctx._detected_language = "de-DE"
+
+    result = json.loads(
+        card_tools._run_start_deep_dive(
+            {"question": "Warum sind meine Ausgaben gestiegen?"},
+            ctx,
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "deep_dive_input_translation_failed"
+    assert "translation returned no text" in result["error"]["message"]
 
 
 def test_select_use_case_records_and_validates():

@@ -55,6 +55,43 @@ def language_name(language: str | None) -> str:
         return tag
 
 
+def canonicalize_question_for_agent_mode(question: str, language: str | None) -> str:
+    """Translate a caller's question to Agent Mode's canonical English input.
+
+    Genie Agent Mode is materially more reliable when both its question and report
+    language are English.  The voice runtime therefore owns an explicit boundary:
+    caller language on the outside, canonical English on the Agent Mode side.
+    Report localization remains the inverse boundary in ``localize_answer_stream``.
+
+    Fail closed when translation produces no text. Sending the original non-English
+    question would violate the Agent Mode contract and recreate a language-dependent
+    failure that is much harder to diagnose.
+    """
+    text = (question or "").strip()
+    if not text or is_english(language):
+        return text
+
+    from ..serving_factory import shared_serving
+
+    _, localize_tokens, endpoint = _render_knobs()
+    source = language_name(language)
+    system = (
+        f"Translate the user's analytical question from {source} into English. "
+        "Preserve names, customer IDs, account IDs, dates, numbers, currency amounts, "
+        "and quoted business terms exactly. Do not answer, summarize, explain, or add "
+        "instructions. Output only the English question."
+    )
+    translated = shared_serving().summarize(
+        system=system,
+        user=text,
+        max_tokens=min(localize_tokens, 512),
+        endpoint=endpoint,
+    ).strip()
+    if not translated:
+        raise ValueError("question translation returned no text")
+    return translated
+
+
 _MAX_REPORT_ROWS = 30
 _MAX_REPORT_COLUMNS = 10
 

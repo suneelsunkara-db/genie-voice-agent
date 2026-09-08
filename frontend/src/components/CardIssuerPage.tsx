@@ -130,7 +130,7 @@ type GenieFact = { id: number; question: string | null; answer: string; rows?: u
 
 type Investigation = {
   id: string;
-  /** What Genie was asked (English, built by the LLM so the SQL planning is sound). */
+  /** Original caller question; the runtime canonicalizes it before Agent Mode. */
   question: string;
   /** What the CALLER said, in their own words — this is what the panel shows. */
   spokenQuestion: string | null;
@@ -142,6 +142,18 @@ type Investigation = {
   report?: DeepDiveReport;
   errorMessage?: string;
 };
+
+function deepDiveErrorMessage(error: unknown, status: unknown): string | undefined {
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error === "object") {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === "string" && message.trim()) return message.trim();
+  }
+  const normalizedStatus = typeof status === "string" ? status.trim().toLowerCase() : "";
+  return normalizedStatus && normalizedStatus !== "completed"
+    ? `Investigation ended with status: ${normalizedStatus}`
+    : undefined;
+}
 
 type Turn = { role: "agent" | "customer"; text: string; turnId: number; key: number };
 type Phase = "idle" | "connecting" | "live";
@@ -524,6 +536,7 @@ export function CardIssuerPage() {
               payload.result && typeof payload.result === "object"
                 ? (payload.result as Record<string, unknown>)
                 : {};
+            const errorMessage = deepDiveErrorMessage(result.error, result.status);
             const tables = Array.isArray(result.tables)
               ? (result.tables as Array<Record<string, unknown>>)
               : [];
@@ -544,12 +557,9 @@ export function CardIssuerPage() {
               if (current) {
                 next.set(id, {
                   ...current,
-                  status: result.error ? "error" : "done",
+                  status: errorMessage ? "error" : "done",
                   report,
-                  errorMessage:
-                    result.error && typeof result.error === "object"
-                      ? String((result.error as Record<string, unknown>).message ?? "Investigation failed")
-                      : undefined,
+                  errorMessage,
                   elapsed: Date.now() - current.startedAt,
                 });
               }

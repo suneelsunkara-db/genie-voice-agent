@@ -113,8 +113,9 @@ class GenieAgentModeClient:
         SQL, emitted "now I'll prepare the final response in Hindi" — and then
         closed the stream with no terminal event, three runs out of three, while
         English, Spanish and Thai completed. English is also the fastest path
-        (~29s vs 43-54s). Localizing the report is therefore the caller's job, not
-        the agent's: see ``realtime_api.deep_dive``.
+        (~29s vs 43-54s). Canonicalizing the question and localizing the report
+        are therefore the caller's boundary responsibilities; see
+        ``realtime_api.runtime.answer_rendering``.
 
         ``on_event`` (optional) is called with a small normalized progress dict as
         each SSE item finalizes, so a caller can surface live reasoning while the

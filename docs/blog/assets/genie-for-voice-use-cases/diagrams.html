@@ -16,15 +16,25 @@
     <section>
       <h2>Diagram 1</h2>
       <pre class="mermaid">
-flowchart LR
-    A[Customer utterance] --> B[STT]
-    B --> C[FM enrich]
-    C --> D[Lakebase read/write]
-    C --> E[Validate facts]
-    E --> F[Agent reply]
-    F --> G[Billing commit]
-    D --> H[UC gold tables]
-    H --> I[Genie portfolio Q&A]
+flowchart TB
+    subgraph inputs [Benchmark inputs]
+        A[FLEURS human speech]
+        E[Reference text]
+    end
+    B[Realtime WebSocket API]
+    subgraph models [Deployed speech models]
+        C[Qwen3-ASR-1.7B]
+        F[VoxCPM2]
+    end
+    subgraph measures [Independent measurements]
+        D[WER or CER]
+        G[Time to first audio]
+    end
+    H[Delta benchmark tables]
+    A --> B
+    E --> B
+    B --> C --> D --> H
+    B --> F --> G --> H
       </pre>
     </section>
   <script type="module">

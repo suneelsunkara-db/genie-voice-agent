@@ -14,7 +14,7 @@ import "../styles/voice-benchmarks.css";
  *
  * Design goals: (1) anyone can understand it without prior benchmark knowledge —
  * every metric is spelled out and colour-coded; (2) it covers ALL benchmarked
- * languages; (3) it highlights where the API shines vs published baselines.
+ * languages; (3) it keeps WER and CER metric families visibly separate.
  *
  * Data comes straight from the Delta benchmark_runs table via the realtime API
  * (GET /realtime/v1/benchmarks). No re-computation of the science here — just a
@@ -34,6 +34,7 @@ const LANG_NAMES: Record<string, string> = {
 
 // Non-spaced scripts scored with Character Error Rate rather than Word ER.
 const CER_LANGS = new Set(["zh", "ja", "th", "lo", "km", "my", "yue"]);
+const SHOW_CROSS_SYSTEM_COMPARISONS = false;
 
 const DATASET_META: Record<
   string,
@@ -102,6 +103,13 @@ function lat(run: VoiceBenchmarkRun, key: string, stat: "p50" | "p95" | "mean" =
 }
 function sScore(run: VoiceBenchmarkRun, key: string): number | null {
   return num((run.scores || {})[key]);
+}
+function sInterval(run: VoiceBenchmarkRun, key: string): [number, number] | null {
+  const value = (run.scores || {})[key];
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const low = num(value[0]);
+  const high = num(value[1]);
+  return low == null || high == null ? null : [low, high];
 }
 // FLEURS primary error honours CER for non-spaced scripts.
 function asrErr(run: VoiceBenchmarkRun): number | null {
@@ -188,10 +196,14 @@ function DatasetSection({
 }) {
   const meta = DATASET_META[dataset] || { title: dataset, blurb: "", asks: "", kind: "error" as const };
   const isErr = meta.kind === "error";
+  const showReference = Object.keys(langRef).length > 0;
   const refLabel = aggRefs[0]?.label || "Reference";
 
   const sorted = useMemo(() => {
     return runs.slice().sort((a, b) => {
+      const familyA = CER_LANGS.has(baseLang(a.language)) ? 1 : 0;
+      const familyB = CER_LANGS.has(baseLang(b.language)) ? 1 : 0;
+      if (familyA !== familyB) return familyA - familyB;
       const sa = score(a);
       const sb = score(b);
       if (sa == null) return 1;
@@ -232,8 +244,8 @@ function DatasetSection({
             <tr>
               <th>Language</th>
               <th>{isErr ? "Transcription error" : "Accuracy"}</th>
-              <th className="num">Detail</th>
-              {isErr && <th className="num">{refLabel}</th>}
+              <th className="num">Uncertainty / aggregation</th>
+              {isErr && showReference && <th className="num">{refLabel}</th>}
               <th>Reliability</th>
               <th className="num" title="Median time-to-first-audio of the text-to-speech engine itself — the voice engine's own speed">Voice engine p50</th>
               <th className="num" title="Median speech-to-text time">STT p50</th>
@@ -254,31 +266,35 @@ function DatasetSection({
                 const cls = classErr(e);
                 const ePct = e == null ? null : e <= 1 ? e * 100 : e;
                 const fill = ePct == null ? 0 : Math.max(0, 100 - ePct); // lower err => fuller
-                barCell = <Bar pct={fill} cls={cls} label={fmtPct(e)} />;
                 const primaryCer = CER_LANGS.has(baseLang(run.language));
+                const primaryLabel = primaryCer ? "CER" : "WER";
+                const ci = sInterval(run, primaryCer ? "cer_ci95" : "wer_ci95");
+                barCell = <Bar pct={fill} cls={cls} label={`${primaryLabel} ${fmtPct(e)}`} />;
                 detailCell = (
                   <span className="vb-muted">
-                    {fmtPct(sScore(run, "wer"))} · {fmtPct(sScore(run, "cer"))}
-                    {primaryCer ? " *" : ""}
+                    {ci ? `95% CI ${fmtPct(ci[0])}–${fmtPct(ci[1])}` : "corpus"}
+                    {" · "}macro {fmtPct(sScore(run, primaryCer ? "cer_macro" : "wer_macro"))}
                   </span>
                 );
-                const rv = langRef[baseLang(run.language)]?.value ?? null;
-                let delta: JSX.Element | null = null;
-                if (rv != null && e != null) {
-                  const d = (e <= 1 ? e * 100 : e) - (rv <= 1 ? rv * 100 : rv);
-                  const better = d < 0;
-                  delta = (
-                    <span className={better ? "vb-delta good" : "vb-delta bad"}>
-                      {better ? "▼" : "▲"}
-                      {Math.abs(Math.round(d * 10) / 10)}
-                    </span>
+                if (showReference) {
+                  const rv = langRef[baseLang(run.language)]?.value ?? null;
+                  let delta: JSX.Element | null = null;
+                  if (rv != null && e != null) {
+                    const d = (e <= 1 ? e * 100 : e) - (rv <= 1 ? rv * 100 : rv);
+                    const better = d < 0;
+                    delta = (
+                      <span className={better ? "vb-delta good" : "vb-delta bad"}>
+                        {better ? "▼" : "▲"}
+                        {Math.abs(Math.round(d * 10) / 10)}
+                      </span>
+                    );
+                  }
+                  refCell = (
+                    <td className="num">
+                      <span className="vb-muted">{rv == null ? "—" : fmtPct(rv)}</span> {delta}
+                    </td>
                   );
                 }
-                refCell = (
-                  <td className="num">
-                    <span className="vb-muted">{rv == null ? "—" : fmtPct(rv)}</span> {delta}
-                  </td>
-                );
               } else {
                 const a = score(run);
                 const cls = classAcc(a);
@@ -300,7 +316,7 @@ function DatasetSection({
                   </td>
                   <td>{barCell}</td>
                   <td className="num">{detailCell}</td>
-                  {refCell}
+                  {showReference && refCell}
                   <td>
                     <span className={`vb-pill ${relCls === "good" ? "ok" : relCls}`}>
                       {run.errors ? `${run.errors}/${run.samples} err` : `${run.samples ?? "—"} ok`}
@@ -507,7 +523,7 @@ function buildHighlights(
   // 2. FLEURS: how often we match/beat Whisper large-v3.
   const fleurs = runs.filter((r) => r.dataset === "fleurs");
   const fleursRef = langByDs["fleurs"] || {};
-  if (fleurs.length) {
+  if (SHOW_CROSS_SYSTEM_COMPARISONS && fleurs.length) {
     let compared = 0;
     let beatenOrMatched = 0;
     fleurs.forEach((r) => {
@@ -560,7 +576,7 @@ function buildHighlights(
     out.push({
       icon: "⚡",
       title: `Voice engine speaks in ${fmtMs(medEngine)}`,
-      body: "Median time for the text-to-speech engine to emit its first audio — steady across every language and benchmark.",
+      body: "Mean of per-language median times for the text-to-speech engine to emit its first audio on this warm sequential run.",
     });
   }
 
@@ -570,7 +586,7 @@ function buildHighlights(
     out.push({
       icon: "🗣️",
       title: `First reply audio in ${fmtMs(medTtft)}`,
-      body: "Median time-to-first-token (TTFT): the client-side latency until the first audio chunk arrives on a FLEURS TTS round-trip — engine speed plus network and any endpoint queue.",
+      body: "Mean of per-language median client latencies until the first audio chunk arrives — engine speed plus network and endpoint queue.",
     });
   }
 
@@ -624,6 +640,17 @@ export function VoiceBenchmarksPage() {
     () => buildHighlights(runs, langByDs, (data?.languages || []).length),
     [runs, langByDs, data],
   );
+  const scoringVersions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          runs
+            .map((run) => (run.scores || {}).scoring_version)
+            .filter((version): version is string => typeof version === "string"),
+        ),
+      ),
+    [runs],
+  );
 
   const generatedAt = (data?.generated_at || "").replace("T", " ").replace(/\.\d+.*/, "").replace(/Z?$/, " UTC");
 
@@ -648,12 +675,11 @@ export function VoiceBenchmarksPage() {
       <div className="vb-scroll">
         {/* Intro / what am I looking at */}
         <section className="vb-hero">
-          <h1>How well does the voice API hear, think, and speak?</h1>
+          <h1>How does the deployed voice stack behave across languages?</h1>
           <p>
-            These are <b>real, measured results</b> from the Genie realtime voice API across the supported languages:
-            speech transcription accuracy (<b>FLEURS</b>), plus a full latency breakdown — <b>voice engine</b>,
-            speech-to-text, and time-to-first-audio. Published model rows are references from papers or leaderboards, not
-            re-measured competitor runs.
+            Measured results from the Genie realtime voice API on <b>FLEURS</b>: corpus-level transcription error and
+            deployed-path latency. The run supplies the correct language, disables endpointing, and evaluates a warm
+            replica sequentially, so it describes that fixed configuration — not a production load test.
           </p>
           {data?.available && (
             <div className="vb-run-meta">
@@ -667,6 +693,11 @@ export function VoiceBenchmarksPage() {
               <span>
                 <b>{(data.languages || []).length}</b> languages
               </span>
+              {scoringVersions.length > 0 && (
+                <span>
+                  scoring <b>{scoringVersions.join(", ")}</b>
+                </span>
+              )}
               {data.all_metrics_ready === false && (
                 <span className="vb-prelim" title="A newer run is still in flight or missing metrics; showing the last fully-complete run per language.">
                   preliminary — awaiting a full run
@@ -684,10 +715,10 @@ export function VoiceBenchmarksPage() {
 
         {!loading && data?.available && (
           <>
-            {/* Where Genie shines */}
+            {/* Run summary */}
             {highlights.length > 0 && (
               <section className="vb-block">
-                <h2 className="vb-block-title">Where Genie Voice shines</h2>
+                <h2 className="vb-block-title">Run summary</h2>
                 <div className="vb-highlights">
                   {highlights.map((h, i) => (
                     <div className="vb-highlight" key={i}>
@@ -707,8 +738,9 @@ export function VoiceBenchmarksPage() {
                 <div className="vb-legend-item">
                   <div className="vb-legend-k">Transcription error (WER / CER)</div>
                   <div className="vb-legend-v">
-                    Share of words (or characters for Chinese/Japanese/Thai, marked <code>*</code>) the agent got wrong
-                    when writing down speech. <b>Lower is better ↓.</b>
+                    Corpus edit distance divided by total reference words, or characters for Chinese/Japanese/Thai.
+                    Unicode combining marks are preserved. WER languages appear before CER languages; the two families
+                    are <b>not averaged into one multilingual rank</b>. Lower is better ↓.
                   </div>
                 </div>
                 <div className="vb-legend-item">
@@ -752,7 +784,9 @@ export function VoiceBenchmarksPage() {
               </div>
             </section>
 
-            <ModelComparisonSection runs={runs} refs={aggByDs["fleurs"] || []} measured={vendorStt} />
+            {SHOW_CROSS_SYSTEM_COMPARISONS && (
+              <ModelComparisonSection runs={runs} refs={aggByDs["fleurs"] || []} measured={vendorStt} />
+            )}
 
             {/* Per-dataset per-language detail */}
             <section className="vb-block">
@@ -762,17 +796,17 @@ export function VoiceBenchmarksPage() {
                   key={d}
                   dataset={d}
                   runs={byDataset[d]}
-                  langRef={langByDs[d] || {}}
-                  aggRefs={aggByDs[d] || []}
-                  measured={d === "fleurs" ? vendorStt : []}
+                  langRef={SHOW_CROSS_SYSTEM_COMPARISONS ? langByDs[d] || {} : {}}
+                  aggRefs={SHOW_CROSS_SYSTEM_COMPARISONS ? aggByDs[d] || [] : []}
+                  measured={SHOW_CROSS_SYSTEM_COMPARISONS && d === "fleurs" ? vendorStt : []}
                 />
               ))}
             </section>
 
             <footer className="vb-footnote">
-              FLEURS is a public multilingual speech-transcription benchmark. Published model references may use
-              different language subsets and decoding settings, so treat cross-system gaps as directional. Genie and
-              vendor rows are measured by jobs that write to Delta.
+              FLEURS is public read speech, not spontaneous conversation, code-switching, noise, or 8 kHz telephony.
+              This run uses a deterministic first-100 convenience sample per language; clips are not sentence-matched
+              across languages. Confidence intervals and macro utterance error remain available in the stored score JSON.
             </footer>
           </>
         )}

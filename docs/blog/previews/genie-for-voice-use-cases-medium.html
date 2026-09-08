@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Why Is It Hard to Build Voice Models for Asian Languages?</title>
+  <meta name="description" content="What changed when we moved from per-language speech recognition experiments to a self-hosted multilingual voice stack—and what current measurements still tell us about Thai, Indonesian, and Chinese." />
+  <meta property="og:title" content="Why Is It Hard to Build Voice Models for Asian Languages?" />
+  <meta property="og:description" content="What changed when we moved from per-language speech recognition experiments to a self-hosted multilingual voice stack—and what current measurements still tell us about Thai, Indonesian, and Chinese." />
+  <meta property="og:type" content="article" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Why Is It Hard to Build Voice Models for Asian Languages?" />
+  <meta name="twitter:description" content="What changed when we moved from per-language speech recognition experiments to a self-hosted multilingual voice stack—and what current measurements still tell us about Thai, Indonesian, and Chinese." />
+  <meta property="og:image" content="../assets/genie-for-voice-use-cases/header-thumbnail.png" />
+  <meta name="twitter:image" content="../assets/genie-for-voice-use-cases/header-thumbnail.png" />
+  <style>
+    :root {
+      color-scheme: light;
+      --text: #17202a;
+      --muted: #5f6b7a;
+      --border: #d9dee7;
+      --code-bg: #f6f8fa;
+      --accent: #1f6feb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f8fafc;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.68;
+    }
+    .preview-shell {
+      max-width: 760px;
+      margin: 40px auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 48px;
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+    }
+    .preview-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 32px;
+      color: var(--muted);
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 18px;
+    }
+    article { font-size: 20px; }
+    h1 {
+      font-size: 44px;
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+      margin: 0 0 20px;
+    }
+    h2 {
+      font-size: 30px;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      margin: 48px 0 16px;
+    }
+    h3 { font-size: 22px; line-height: 1.3; margin: 34px 0 12px; }
+    p { margin: 0 0 20px; }
+    ul, ol { padding-left: 1.4em; margin: 0 0 24px; }
+    li { margin: 8px 0; }
+    blockquote {
+      margin: 28px 0;
+      border-left: 4px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    pre {
+      overflow: auto;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+      background: var(--code-bg);
+      border-radius: 5px;
+      padding: 0.15em 0.35em;
+    }
+    pre code { background: transparent; padding: 0; }
+    .mermaid {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      margin: 28px 0;
+      text-align: center;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 0.92em; }
+    th, td { border: 1px solid var(--border); padding: 10px; text-align: left; }
+    img { max-width: 100%; border-radius: 12px; }
+    .preview-hero {
+      width: 100%;
+      aspect-ratio: 1200 / 630;
+      object-fit: cover;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      margin: 0 0 32px;
+      display: block;
+    }
+    .publish-panel {
+      background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin: 0 0 32px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .publish-panel h2 { font-size: 22px; margin: 0 0 10px; letter-spacing: -0.01em; }
+    .publish-panel p { margin: 0 0 12px; color: var(--muted); }
+    .publish-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+    .publish-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer;
+    }
+    .publish-actions button:hover { border-color: var(--accent); color: var(--accent); }
+    .publish-actions .publish-copy {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .publish-actions .publish-copy:hover {
+      filter: brightness(1.05);
+      color: #fff;
+    }
+    .publish-actions .publish-copy-secondary {
+      background: #fff;
+      color: var(--accent);
+    }
+    .publish-actions .publish-direct {
+      background: #fff;
+      color: var(--text);
+    }
+    .publish-advanced {
+      width: 100%;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .publish-advanced summary {
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .publish-import-url {
+      width: 100%;
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .publish-actions .publish-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #f8fafc;
+      color: var(--text);
+      padding: 9px 10px;
+      text-align: center;
+      font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-decoration: none;
+    }
+    .copy-status { min-height: 18px; color: var(--accent); font-size: 13px; margin-top: 8px; }
+    .publish-note { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    @media (max-width: 820px) {
+      .preview-shell { margin: 0; border-radius: 0; padding: 28px; }
+      h1 { font-size: 34px; }
+      h2 { font-size: 25px; }
+    }
+    </style>
+</head>
+<body>
+  <main class="preview-shell">
+    <div class="preview-meta">
+      <span>Preview mode: <strong>medium</strong></span>
+      <span>docs/blog/genie-for-voice-use-cases.md</span>
+    </div>
+    <section class="publish-panel" aria-label="Publish controls">
+      <h2>Publish</h2>
+      <p>Use <strong>Open publish view</strong> for the most reliable Medium workflow: Select all → Copy → Open Medium → Paste. Or click <strong>Copy and open Medium</strong> after starting with <code>--serve --open</code>. For images in Medium, regenerate with <code>--public-base-url</code> or upload diagrams manually after paste.</p>
+      <div class="publish-actions">
+        <button type="button" class="publish-copy" data-publish-url="https://medium.com/new-story">Copy and open Medium</button>
+<button type="button" class="publish-select">Select article (Cmd+C)</button>
+<button type="button" class="publish-copy publish-copy-secondary" data-publish-url="https://www.linkedin.com/article/new/">Copy and open LinkedIn</button>
+<a class="publish-link" href="genie-for-voice-use-cases-medium-publish-view.html" target="_blank" rel="noopener">Open publish view</a>
+
+<details class="publish-advanced">
+<summary>Direct API publish (legacy Medium token only)</summary>
+<div class="publish-actions">
+<button type="button" class="publish-direct" data-publish-status="draft">Publish draft via API</button>
+<button type="button" class="publish-direct publish-direct-secondary" data-publish-status="public">Publish publicly via API</button>
+</div>
+<p>Medium stopped issuing new integration tokens in 2023. Skip this unless you already have one.</p>
+</details>
+      </div>
+      <div class="copy-status" id="copy-status"></div>
+    </section>
+    <img class="preview-hero" src="../assets/genie-for-voice-use-cases/header-thumbnail.png" alt="Why Is It Hard to Build Voice Models for Asian Languages?" />
+    <article id="blog-preview">
+<h1>Why Is It Hard to Build Voice Models for Asian Languages?</h1>
+<h2>The use case</h2>
+<p>We started with live agent assist for billing contact centers on Databricks. The first version listened to a customer call, transcribed each utterance, and surfaced account context and recommended actions to a human agent.</p>
+<p>The system has since become a multilingual voice agent. A caller can speak naturally, hear a response in the same language, ask questions over governed data through Databricks Genie, and interrupt or continue the conversation without switching interfaces. That changed the model problem. Speech recognition still has to preserve names, amounts, and identifiers, but synthesis must now pronounce them intelligibly and maintain one stable voice across languages.</p>
+<p>The current voice path uses <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B</a> for recognition and <a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> for synthesis. Both are open-source multilingual checkpoints that we package, register, and serve on Databricks GPU Model Serving. Their official language sets overlap on 24 languages, including English, Thai, Indonesian, Chinese, Hindi, Japanese, Korean, and several European languages.</p>
+<h2>A call that exposes the problem</h2>
+<p>Consider the same Thai billing call that motivated the first version. The customer asks about a $50 late fee on invoice <code>INV-90022</code>, then asks how their balance compares with prior months.</p>
+<p>Qwen3-ASR must recognize Thai speech while retaining an English-style invoice identifier and a USD amount. The reasoning layer must retrieve the correct account data. VoxCPM2 must then speak the answer in Thai without changing the number, mangling the identifier, or sounding like a different person on the next turn.</p>
+<p>This is more demanding than accurate transcription in isolation. A voice model can perform well on clean read speech and still fail when speech contains code-switching, uncommon names, long numbers, background noise, or telephone-band audio. A synthesizer can sound natural in a demo sentence and still pronounce a business-critical identifier ambiguously.</p>
+<h2>What we found</h2>
+<p>Moving from smaller per-language experiments to Qwen3-ASR-1.7B and VoxCPM2 improved the architecture substantially: one recognition endpoint, one synthesis endpoint, automatic language detection, a consistent cloned voice, and streamed audio output.</p>
+<p>It did not make language-specific evaluation optional. In our current FLEURS run, English reached 83% word accuracy, Thai 74% character accuracy, Indonesian 72% word accuracy, and Chinese 67% character accuracy. The spread across all 24 supported languages was wider, from the low 80s to approximately 30%.</p>
+<p>Those measurements answer a narrow question: how well does the deployed API transcribe clean, human read speech? They do not prove billing-entity accuracy, telephone robustness, or production readiness. The main lesson from the earlier work still holds, but the evidence is now cleaner: multilingual coverage is a starting point, not an acceptance criterion.</p>
+<h2>Terms used in this post</h2>
+<p><strong>Automatic speech recognition (ASR)</strong> converts spoken audio into text. Qwen3-ASR-1.7B is the recognition model in the current realtime path.</p>
+<p><strong>Text-to-speech (TTS)</strong> converts a text response into audio. VoxCPM2 is the synthesis model and can clone a speaker from a short reference recording.</p>
+<p><strong>Word error rate (WER)</strong> measures substitutions, deletions, and insertions relative to a human reference transcript. Lower is better.</p>
+<p><strong>Character error rate (CER)</strong> applies the same idea at character level. We use it for Chinese, Japanese, and Thai because whitespace is not a reliable word boundary for these scripts.</p>
+<p><strong>Time to first audio (TTFA)</strong> measures how long the caller waits before the first synthesized audio reaches playback. It is more relevant to conversation than the time required to render an entire sentence.</p>
+<p><strong>Realtime in this system</strong> means responsive turn-taking and streamed audio output. Recognition currently runs once an utterance is complete; it is not yet incremental word-by-word ASR.</p>
+<h2>The naive approach: deploy one multilingual model</h2>
+<p>The attractive design is simple: choose one multilingual checkpoint, expose one endpoint, and treat every supported language identically. Qwen3-ASR-1.7B officially recognizes 30 languages, while VoxCPM2 synthesizes 30. Their intersection lets one voice stack cover 24 languages without maintaining a model per locale.</p>
+<p>That consolidation is valuable. The API no longer needs to route Thai to one model family, Indonesian to another, and Chinese to a third. Qwen3-ASR can detect the spoken language, and the same language tag carries through reasoning and synthesis.</p>
+<p>But one endpoint does not imply uniform quality. In the current FLEURS run, Japanese and English were near 83% accuracy while Vietnamese and Filipino were substantially lower. Thai, Indonesian, and Chinese also differed from one another even though they passed through the same checkpoint and serving path.</p>
+<p>The practical design is therefore one multilingual default with measured exceptions—not an assumption that every language listed on a model card is equally ready.</p>
+<h2>What the application requires beyond transcription</h2>
+<p>The original system judged recognition mainly by whether downstream billing logic could trust the transcript. The voice agent adds a second half to that contract:</p>
+<ul>
+<li>Preserve invoice IDs, account names, dates, and amounts during recognition.</li>
+<li>Keep the caller’s language consistent across recognition, reasoning, and synthesis.</li>
+<li>Pronounce numbers and mixed-language identifiers clearly enough for the caller to verify them.</li>
+<li>Maintain one recognizable voice across pages, turns, and languages.</li>
+<li>Begin speaking quickly enough that the interaction does not feel stalled.</li>
+<li>Reject noise and avoid ending a turn during a natural pause.</li>
+</ul>
+<p>The current implementation addresses several of these directly. VoxCPM2 uses pinned, loudness-normalized reference clips for stable male and female voices. A per-replica voice cache avoids repeatedly uploading the reference audio. Synthesis streams approximately 80 ms audio chunks, and both GPU endpoints remain warm rather than scaling to zero.</p>
+<p>These are model-serving choices, but they affect the model experience: the same checkpoint can feel inconsistent, slow, or unreliable if its reference conditioning and warmup path are not controlled.</p>
+<h2>How we measure operational fitness</h2>
+<p>No single metric represents a voice conversation. The current benchmark separates model responsibilities:</p>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Measure</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">What it tells us</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">What it does not prove</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">WER / CER</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Recognition accuracy on human speech</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Billing-entity safety or telephone robustness</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Empty/error rate</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Whether inference reliably returns a usable transcript</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Semantic correctness</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">STT latency</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Time for the completed utterance to be transcribed</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">End-of-turn delay</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">TTS time to first audio</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">How quickly synthesized speech begins</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Naturalness or speaker similarity</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">TTS generation time / realtime factor</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Whether audio is generated faster than playback</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Pronunciation quality</td></tr></tbody></table>
+<p>The deployed benchmark drives the actual WebSocket API rather than invoking a checkpoint in a notebook. That includes request serialization, endpoint queueing, model inference, and streamed output—the path a real caller experiences.</p>
+<p>For the current VoxCPM2 deployment, we also swept four, six, eight, and ten diffusion steps. Four steps degraded Thai round-trip intelligibility. Six preserved the tested English, Thai, Indonesian, and Chinese text while using the lowest safe setting, so six is the deployed default. The classifier-free guidance value remains 2.0 because lower values produced unstable audio in our tests.</p>
+<h2>How we prepared evaluation data</h2>
+<p>The current public benchmark uses <a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a>, a multilingual corpus of human read speech. We selected the same source and evaluation method across 24 languages, then sent each clip through the deployed speech-to-text WebSocket.</p>
+<p>FLEURS is intentionally an acoustic benchmark. It tells us whether Qwen3-ASR hears each language under clean conditions. It does not contain realistic contact-center conversations, mixed-language invoice IDs, or 8 kHz telephone codecs, so we no longer describe a keyword-filtered FLEURS subset as proof of business readiness.</p>
+<p>Older experiments used a separate synthetic billing holdout to test invoice IDs, amounts, and confirmations. Those results helped reveal the gap between WER and workflow safety, but they used earlier models—including Qwen3-ASR-0.6B—and are not presented as measurements of the current 1.7B stack.</p>
+<h2>Two evaluation paths</h2>
+<p>We now keep the two questions separate.</p>
+<p><strong>Recognition quality.</strong> Native FLEURS audio is sent through the STT-only capability. The full clip is finalized explicitly, preventing automatic endpointing from cutting long benchmark utterances at natural pauses. WER or CER is then computed against the human transcript.</p>
+<p><strong>Synthesis responsiveness.</strong> The reference text is sent through the TTS-only capability. The benchmark records VoxCPM2’s time to first audio independently from ASR accuracy. We do not call the round-trip transcript a TTS quality score because any error could come from either model.</p>
+<p>This separation avoids an earlier measurement trap: combining ASR, reasoning, and TTS into one score makes it difficult to identify which model caused a failure.</p>
+<h2>Step 1 — Build the benchmark corpus</h2>
+<p>For each supported language, the job loads native FLEURS audio and its human reference transcript. The current published visualization uses 20 samples per language across 24 languages.</p>
+<p>The same staged audio can be replayed through an external recognizer for a like-for-like comparison. Published Whisper and SeamlessM4T numbers are shown separately as references because their language subsets and normalization rules may differ from ours.</p>
+<h2>Step 2 — Protect the measurement</h2>
+<p>Benchmark sessions disable automatic endpointing and send an explicit end-of-audio event. This matters because natural pauses in longer clips previously caused the server to finalize only the first fragment, inflating WER and CER for reasons unrelated to Qwen3-ASR.</p>
+<p>Runs record sample counts, inference errors, latency distributions, and the model route used. Results are persisted in Delta tables, and the UI selects the newest complete run per language rather than mixing partial runs.</p>
+<h2>Steps 3–5 — Package, serve, and score</h2>
+<p>Qwen3-ASR-1.7B and VoxCPM2 are wrapped as MLflow <code>ResponsesAgent</code> models. Audio travels through the Responses API’s custom input and output fields, which gives each model a stable serving contract.</p>
+<p>Both checkpoints are registered in Unity Catalog and deployed on <code>GPU_MEDIUM</code> endpoints with scale-to-zero disabled. Qwen3-ASR runs in bfloat16 and allows up to 1,024 generated tokens per approximately 30-second audio chunk; that ceiling avoids truncating dense or long transcripts. VoxCPM2 warms both ordinary and voice-cloned generation shapes before the endpoint reports ready, avoiding a large first-request compilation penalty.</p>
+<p>The benchmark then calls the same <code>/speech-to-text</code> and <code>/text-to-speech</code> capabilities used by the application. Scores and latency distributions are written to Delta and rendered by the benchmark page.</p>
+<figure class="blog-diagram"><img src="../assets/genie-for-voice-use-cases/diagram-01.svg.png" alt="Diagram 1" class="blog-diagram" data-diagram="true" /></figure>
+<h2>Benchmark results: one stack, different outcomes</h2>
+<p>The latest checked-in visualization was measured through the deployed API on July 26, 2026, using 20 FLEURS samples per language. Accuracy below is <code>1 − WER</code> for spaced languages and <code>1 − CER</code> for Chinese, Japanese, and Thai.</p>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Language</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Current model</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Metric</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Measured accuracy</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">English</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Word accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">83%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Thai</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Character accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">74%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Indonesian</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Word accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">72%</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Chinese</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Character accuracy</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">67%</td></tr></tbody></table>
+<p><img src="../assets/powering-genie-with-open-source-voice-models/stt-benchmark.svg" alt="Speech recognition accuracy across 24 languages, measured through the deployed realtime API on FLEURS." /></p>
+<p>These values are a baseline, not a production claim. Twenty read-speech clips per language are sufficient to expose large differences and regression-test the serving path, but not to certify a contact-center model.</p>
+<h3>Thai (<code>th-TH</code>)</h3>
+<p>Thai reached 74% character accuracy. This is materially more useful than the empty-transcript behavior seen in some earlier model experiments, but it leaves substantial room for improvement. Thai also exposed the TTS quality boundary: reducing VoxCPM2 from six diffusion steps to four lowered round-trip similarity to 0.76, while six restored 1.0 on the tested sentence.</p>
+<h3>Indonesian (<code>id-ID</code>)</h3>
+<p>Indonesian reached 72% word accuracy with the shared 1.7B checkpoint. The result shows why the move away from the earlier 0.6B experiment mattered, but it still measures read speech rather than spontaneous customer calls. Domain vocabulary and mixed English identifiers remain untested by this FLEURS slice.</p>
+<h3>Chinese (<code>zh-CN</code>)</h3>
+<p>Chinese reached 67% character accuracy, the lowest of the three Asian demo languages. Chinese therefore remains a priority for model adaptation and broader evaluation. The repository retains SenseVoice-Small and Paraformer-8k as evaluation candidates, but the live realtime path uses Qwen3-ASR-1.7B.</p>
+<h2>Why Asian languages present distinct engineering challenges</h2>
+<h3>1. Training data rarely matches production conditions</h3>
+<p>FLEURS gives us human speech and broad language coverage, but it is clean, read speech. A live contact center introduces spontaneous phrasing, regional accents, background noise, echo, clipped microphones, and interruptions.</p>
+<p>Telephone audio adds a larger shift. Public switched telephone network audio is commonly 8 kHz and codec-compressed; the current Qwen3-ASR path is designed around 16 kHz browser audio. Resampling to 16 kHz does not restore frequencies removed by the channel or undo codec distortion.</p>
+<p>The next meaningful benchmark therefore needs real or carefully governed conversational audio, plus a distinct telephony tier. Improving a FLEURS number alone will not solve that mismatch.</p>
+<h3>2. Multilingual checkpoints are not uniform across the region</h3>
+<p>Qwen3-ASR-1.7B removes much of the operational burden of per-locale routing. It also gives every language the same packaging, GPU, and API path, which makes comparisons fairer.</p>
+<p>The measured spread remains large. Thai, Indonesian, and Chinese differ by seven percentage points in the same deployment, and the full 24-language run spans more than 50 points. A single checkpoint is now a sensible default, but the data still supports language-specific adaptation or fallback routes where acceptance criteria are missed.</p>
+<p>VoxCPM2 creates a similar constraint on the output side. The usable product language set is the intersection of ASR and TTS coverage, and a reference voice that sounds natural in English must still be auditioned in Thai, Indonesian, and Chinese.</p>
+<h3>3. Word accuracy and business safety measure different properties</h3>
+<p>WER and CER measure textual distance, not whether the transcript preserved the one token that controls a business action. A sentence can be mostly correct while changing <code>INV-90022</code>, omitting “not,” or confusing fifty with fifteen.</p>
+<p>The current FLEURS run should therefore be read as an acoustic baseline. Before the model can support a billing decision, it still needs a separate held-out corpus with labeled identifiers, amounts, dates, confirmations, and refusals. Those entities—not aggregate WER—must determine deployment readiness.</p>
+<p>The same principle applies to synthesis. A natural-sounding sentence can still be operationally wrong if the customer cannot distinguish the spoken account number.</p>
+<h3>4. Business records remain canonical even when the conversation is localized</h3>
+<p>The interface can speak Thai while the underlying records retain English identifiers, USD amounts, product names, and catalog names. Qwen3-ASR must handle that code-switching without translating or normalizing away the canonical value.</p>
+<p>VoxCPM2 faces the inverse task: render canonical text naturally inside a localized response. A text-normalization layer may need to expand symbols and numbers differently by language while preserving the value shown on screen.</p>
+<p>This mixed-language boundary is poorly represented by general read-speech corpora. It needs its own dataset and pronunciation review.</p>
+<h2>What we can do better</h2>
+<p>The current stack is a stronger foundation than the earlier collection of locale-specific experiments. Improvement work can now focus on the model behaviors that measurements expose rather than on maintaining a different integration for every language.</p>
+<h2>Models evaluated</h2>
+<p>The live realtime path uses two stock multilingual checkpoints:</p>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Role</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Model</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Current deployment choice</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Recognition</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">bfloat16 on GPU; automatic or forced language; utterance-level inference</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Synthesis</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">VoxCPM2</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Streaming generation; six diffusion steps; guidance 2.0; pinned reference voices</td></tr></tbody></table>
+<p>Deepgram Nova-3 remains an evaluation-only ASR comparison. The older English Whisper LoRA, Thai Pathumma Whisper, Indonesian/Chinese Qwen3-ASR-0.6B, SenseVoice, and Paraformer routes remain in the separate ASR evaluation configuration; they are not the models used by the live multilingual realtime API.</p>
+<h2>Next model improvements to evaluate</h2>
+<p>The next experiments should improve the current models before adding more routing complexity:</p>
+<table style="border-collapse:collapse;width:100%;margin:16px 0;border:1px solid #d0d7de;"><thead><tr><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Model</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Experiment</th><th style="border:1px solid #d0d7de;padding:8px;vertical-align:top;background:#f6f8fa;font-weight:600;">Acceptance evidence</th></tr></thead><tbody><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Inject domain context or hotwords for product names and identifiers</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Entity recall improves without increasing substitutions</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Supervised fine-tuning on multilingual business and noisy speech</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Held-out WER/CER and entity accuracy both improve</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Qwen3-ASR-1.7B</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Codec and 8 kHz augmentation</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Telephony holdout improves without regressing browser audio</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">VoxCPM2</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Speaker adaptation using multilingual recordings</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Stable speaker similarity and pronunciation across languages</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">VoxCPM2</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Locale-aware normalization for numbers, dates, and IDs</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Human and ASR-assisted pronunciation checks improve</td></tr><tr><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">VoxCPM2</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Few-step distillation or optimized runtime</td><td style="border:1px solid #d0d7de;padding:8px;vertical-align:top;">Lower TTFA without falling below the six-step quality baseline</td></tr></tbody></table>
+<h3>1. Richer business audio, especially for Thai and Chinese</h3>
+<p>Thai and Chinese should receive the first domain-data investment because they combine lower current accuracy with scripts and pronunciation patterns that generic English-heavy business corpora represent poorly.</p>
+<p>The training set should include spontaneous dialogue, local number expressions, code-switched names, canonical identifiers, and realistic microphone conditions. A held-out set must remain untouched by fine-tuning.</p>
+<h3>2. Adapt the multilingual default before adding fallback models</h3>
+<p>Qwen3-ASR supports contextual prompts for domain vocabulary, and its maintainers provide a supervised fine-tuning path. Context biasing is the lowest-cost first experiment; targeted fine-tuning follows if it does not recover identifiers and product terms reliably.</p>
+<p>Per-language fallback models remain useful evidence, particularly SenseVoice and Paraformer for Chinese. They should be promoted only when the same deployed-API benchmark shows a clear advantage over the shared 1.7B path.</p>
+<h3>3. Telephony-conditioned evaluation and training</h3>
+<p>The current model consumes wideband browser audio. A telephone deployment needs 8 kHz and codec-aware evaluation before launch, followed by channel augmentation or a dedicated adaptation if quality drops.</p>
+<p>Recognition is only half the issue. VoxCPM2 emits 48 kHz audio; a telephone path must downsample and encode it, then confirm that numbers and consonants remain intelligible after the round trip.</p>
+<h3>4. End-to-end scoring through the voice agent</h3>
+<p>The deployed benchmark correctly isolates STT and TTS for diagnosis. A second acceptance suite should then run representative conversations through recognition, reasoning, tools, and synthesis.</p>
+<p>That suite should record whether the transcript preserved required entities, whether the correct tool action occurred, whether the spoken response matched the committed result, and how long the caller waited for first audio.</p>
+<h3>5. Text normalization and contextual recognition</h3>
+<p>Qwen3-ASR is currently called with audio and a language, without domain context. Supplying a bounded list of relevant catalog names, product terms, and identifier formats could improve uncommon-token recognition without retraining.</p>
+<p>Before VoxCPM2, locale-specific normalization should convert amounts, dates, symbols, abbreviations, and IDs into an unambiguous spoken form. The visible answer can remain canonical while the TTS input is optimized for pronunciation.</p>
+<h3>6. Stable voices across every language</h3>
+<p>VoxCPM2 has no deterministic speaker seed, so an unconditioned first turn can produce an arbitrary voice. The application avoids that by pinning two auditioned reference clips and reusing their hashed voice IDs.</p>
+<p>The next model-level improvement is speaker adaptation on multilingual recordings from the selected voices. That should reduce accent and timbre drift while preserving the identity callers already recognize.</p>
+<h3>7. Acceptance criteria must cover both quality and latency</h3>
+<p>A model should not advance because it improves WER while becoming too slow for conversation. Qwen3-ASR changes must pass per-language WER/CER, entity recall, empty-output rate, and p95 latency gates.</p>
+<p>VoxCPM2 changes must pass time-to-first-audio, realtime factor, intelligibility, speaker similarity, and language-specific pronunciation review. The current six-step configuration is the baseline to beat, not merely a knob to lower.</p>
+<h2>Closing thought</h2>
+<p>The move to Qwen3-ASR-1.7B and VoxCPM2 changed what is practical. We can now run one self-hosted voice stack across 24 languages, preserve one voice through a conversation, and measure the deployed system rather than a collection of notebook experiments.</p>
+<p>It did not remove the hard part. English, Thai, Indonesian, and Chinese still produce different outcomes through the same checkpoint, and clean read speech still leaves the most consequential production questions unanswered. The next gains will come from language-specific evidence—domain audio, mixed-language identifiers, telephony conditions, and pronunciation tests—applied to a shared multilingual foundation.</p>
+<h2>Appendix: evaluation protocol</h2>
+<p>The current FLEURS benchmark sends native human audio through the deployed STT-only WebSocket with server endpointing disabled. Each full clip is finalized explicitly, scored with WER or CER, and written to Delta with latency and reliability metadata. TTS timing is measured separately through the text-to-speech capability.</p>
+<p>The checked-in 24-language visualization uses 20 clips per language from a run dated July 26, 2026. It is a regression and comparative baseline, not a statistical certification of production readiness. A future business acceptance suite must use held-out conversational recordings with labeled domain entities; a telephony suite must separately cover 8 kHz codec audio.</p>
+<h2>Sources and Further Reading</h2>
+<ul>
+<li><a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR-1.7B</a> — current multilingual recognition checkpoint</li>
+<li><a href="https://github.com/QwenLM/Qwen3-ASR">Qwen3-ASR repository</a> — inference, context prompting, streaming, and fine-tuning</li>
+<li><a href="https://huggingface.co/openbmb/VoxCPM2">VoxCPM2</a> — current multilingual streaming synthesis checkpoint</li>
+<li><a href="https://huggingface.co/datasets/google/fleurs">FLEURS</a> — multilingual human read-speech benchmark</li>
+<li><a href="https://doi.org/10.18653/v1/2023.acl-long.98">Why Aren’t We NER Yet? (ACL 2023)</a> — ASR errors and downstream entity extraction</li>
+<li><a href="https://arxiv.org/abs/2512.16401">Navigating the Reality Gap: ASR for Clinical Telephony</a> — clean versus telephony domain shift</li>
+<li><a href="https://mlflow.org/docs/latest/genai/serving/responses-agent/">MLflow ResponsesAgent</a> — model serving contract used for both speech endpoints</li>
+<li><a href="https://docs.databricks.com/en/machine-learning/model-serving/index.html">Databricks Model Serving</a> — GPU endpoint deployment</li>
+<li><a href="https://docs.databricks.com/en/data-governance/unity-catalog/index.html">Databricks Unity Catalog</a> — model registration and governance</li>
+</ul>
+    </article>
+  </main>
+
+  <template id="markdown-source"># Why Is It Hard to Build Voice Models for Asian Languages?
+
+## The use case
+
+We started with live agent assist for billing contact centers on Databricks. The first version listened to a customer call, transcribed each utterance, and surfaced account context and recommended actions to a human agent.
+
+The system has since become a multilingual voice agent. A caller can speak naturally, hear a response in the same language, ask questions over governed data through Databricks Genie, and interrupt or continue the conversation without switching interfaces. That changed the model problem. Speech recognition still has to preserve names, amounts, and identifiers, but synthesis must now pronounce them intelligibly and maintain one stable voice across languages.
+
+The current voice path uses [Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) for recognition and [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) for synthesis. Both are open-source multilingual checkpoints that we package, register, and serve on Databricks GPU Model Serving. Their official language sets overlap on 24 languages, including English, Thai, Indonesian, Chinese, Hindi, Japanese, Korean, and several European languages.
+
+## A call that exposes the problem
+
+Consider the same Thai billing call that motivated the first version. The customer asks about a $50 late fee on invoice `INV-90022`, then asks how their balance compares with prior months.
+
+Qwen3-ASR must recognize Thai speech while retaining an English-style invoice identifier and a USD amount. The reasoning layer must retrieve the correct account data. VoxCPM2 must then speak the answer in Thai without changing the number, mangling the identifier, or sounding like a different person on the next turn.
+
+This is more demanding than accurate transcription in isolation. A voice model can perform well on clean read speech and still fail when speech contains code-switching, uncommon names, long numbers, background noise, or telephone-band audio. A synthesizer can sound natural in a demo sentence and still pronounce a business-critical identifier ambiguously.
+
+## What we found
+
+Moving from smaller per-language experiments to Qwen3-ASR-1.7B and VoxCPM2 improved the architecture substantially: one recognition endpoint, one synthesis endpoint, automatic language detection, a consistent cloned voice, and streamed audio output.
+
+It did not make language-specific evaluation optional. In our current FLEURS run, English reached 83% word accuracy, Thai 74% character accuracy, Indonesian 72% word accuracy, and Chinese 67% character accuracy. The spread across all 24 supported languages was wider, from the low 80s to approximately 30%.
+
+Those measurements answer a narrow question: how well does the deployed API transcribe clean, human read speech? They do not prove billing-entity accuracy, telephone robustness, or production readiness. The main lesson from the earlier work still holds, but the evidence is now cleaner: multilingual coverage is a starting point, not an acceptance criterion.
+
+## Terms used in this post
+
+**Automatic speech recognition (ASR)** converts spoken audio into text. Qwen3-ASR-1.7B is the recognition model in the current realtime path.
+
+**Text-to-speech (TTS)** converts a text response into audio. VoxCPM2 is the synthesis model and can clone a speaker from a short reference recording.
+
+**Word error rate (WER)** measures substitutions, deletions, and insertions relative to a human reference transcript. Lower is better.
+
+**Character error rate (CER)** applies the same idea at character level. We use it for Chinese, Japanese, and Thai because whitespace is not a reliable word boundary for these scripts.
+
+**Time to first audio (TTFA)** measures how long the caller waits before the first synthesized audio reaches playback. It is more relevant to conversation than the time required to render an entire sentence.
+
+**Realtime in this system** means responsive turn-taking and streamed audio output. Recognition currently runs once an utterance is complete; it is not yet incremental word-by-word ASR.
+
+## The naive approach: deploy one multilingual model
+
+The attractive design is simple: choose one multilingual checkpoint, expose one endpoint, and treat every supported language identically. Qwen3-ASR-1.7B officially recognizes 30 languages, while VoxCPM2 synthesizes 30. Their intersection lets one voice stack cover 24 languages without maintaining a model per locale.
+
+That consolidation is valuable. The API no longer needs to route Thai to one model family, Indonesian to another, and Chinese to a third. Qwen3-ASR can detect the spoken language, and the same language tag carries through reasoning and synthesis.
+
+But one endpoint does not imply uniform quality. In the current FLEURS run, Japanese and English were near 83% accuracy while Vietnamese and Filipino were substantially lower. Thai, Indonesian, and Chinese also differed from one another even though they passed through the same checkpoint and serving path.
+
+The practical design is therefore one multilingual default with measured exceptions—not an assumption that every language listed on a model card is equally ready.
+
+## What the application requires beyond transcription
+
+The original system judged recognition mainly by whether downstream billing logic could trust the transcript. The voice agent adds a second half to that contract:
+
+- Preserve invoice IDs, account names, dates, and amounts during recognition.
+- Keep the caller’s language consistent across recognition, reasoning, and synthesis.
+- Pronounce numbers and mixed-language identifiers clearly enough for the caller to verify them.
+- Maintain one recognizable voice across pages, turns, and languages.
+- Begin speaking quickly enough that the interaction does not feel stalled.
+- Reject noise and avoid ending a turn during a natural pause.
+
+The current implementation addresses several of these directly. VoxCPM2 uses pinned, loudness-normalized reference clips for stable male and female voices. A per-replica voice cache avoids repeatedly uploading the reference audio. Synthesis streams approximately 80 ms audio chunks, and both GPU endpoints remain warm rather than scaling to zero.
+
+These are model-serving choices, but they affect the model experience: the same checkpoint can feel inconsistent, slow, or unreliable if its reference conditioning and warmup path are not controlled.
+
+## How we measure operational fitness
+
+No single metric represents a voice conversation. The current benchmark separates model responsibilities:
+
+| Measure | What it tells us | What it does not prove |
+|---|---|---|
+| WER / CER | Recognition accuracy on human speech | Billing-entity safety or telephone robustness |
+| Empty/error rate | Whether inference reliably returns a usable transcript | Semantic correctness |
+| STT latency | Time for the completed utterance to be transcribed | End-of-turn delay |
+| TTS time to first audio | How quickly synthesized speech begins | Naturalness or speaker similarity |
+| TTS generation time / realtime factor | Whether audio is generated faster than playback | Pronunciation quality |
+
+The deployed benchmark drives the actual WebSocket API rather than invoking a checkpoint in a notebook. That includes request serialization, endpoint queueing, model inference, and streamed output—the path a real caller experiences.
+
+For the current VoxCPM2 deployment, we also swept four, six, eight, and ten diffusion steps. Four steps degraded Thai round-trip intelligibility. Six preserved the tested English, Thai, Indonesian, and Chinese text while using the lowest safe setting, so six is the deployed default. The classifier-free guidance value remains 2.0 because lower values produced unstable audio in our tests.
+
+## How we prepared evaluation data
+
+The current public benchmark uses [FLEURS](https://huggingface.co/datasets/google/fleurs), a multilingual corpus of human read speech. We selected the same source and evaluation method across 24 languages, then sent each clip through the deployed speech-to-text WebSocket.
+
+FLEURS is intentionally an acoustic benchmark. It tells us whether Qwen3-ASR hears each language under clean conditions. It does not contain realistic contact-center conversations, mixed-language invoice IDs, or 8 kHz telephone codecs, so we no longer describe a keyword-filtered FLEURS subset as proof of business readiness.
+
+Older experiments used a separate synthetic billing holdout to test invoice IDs, amounts, and confirmations. Those results helped reveal the gap between WER and workflow safety, but they used earlier models—including Qwen3-ASR-0.6B—and are not presented as measurements of the current 1.7B stack.
+
+## Two evaluation paths
+
+We now keep the two questions separate.
+
+**Recognition quality.** Native FLEURS audio is sent through the STT-only capability. The full clip is finalized explicitly, preventing automatic endpointing from cutting long benchmark utterances at natural pauses. WER or CER is then computed against the human transcript.
+
+**Synthesis responsiveness.** The reference text is sent through the TTS-only capability. The benchmark records VoxCPM2’s time to first audio independently from ASR accuracy. We do not call the round-trip transcript a TTS quality score because any error could come from either model.
+
+This separation avoids an earlier measurement trap: combining ASR, reasoning, and TTS into one score makes it difficult to identify which model caused a failure.
+
+## Step 1 — Build the benchmark corpus
+
+For each supported language, the job loads native FLEURS audio and its human reference transcript. The current published visualization uses 20 samples per language across 24 languages.
+
+The same staged audio can be replayed through an external recognizer for a like-for-like comparison. Published Whisper and SeamlessM4T numbers are shown separately as references because their language subsets and normalization rules may differ from ours.
+
+## Step 2 — Protect the measurement
+
+Benchmark sessions disable automatic endpointing and send an explicit end-of-audio event. This matters because natural pauses in longer clips previously caused the server to finalize only the first fragment, inflating WER and CER for reasons unrelated to Qwen3-ASR.
+
+Runs record sample counts, inference errors, latency distributions, and the model route used. Results are persisted in Delta tables, and the UI selects the newest complete run per language rather than mixing partial runs.
+
+## Steps 3–5 — Package, serve, and score
+
+Qwen3-ASR-1.7B and VoxCPM2 are wrapped as MLflow `ResponsesAgent` models. Audio travels through the Responses API’s custom input and output fields, which gives each model a stable serving contract.
+
+Both checkpoints are registered in Unity Catalog and deployed on `GPU_MEDIUM` endpoints with scale-to-zero disabled. Qwen3-ASR runs in bfloat16 and allows up to 1,024 generated tokens per approximately 30-second audio chunk; that ceiling avoids truncating dense or long transcripts. VoxCPM2 warms both ordinary and voice-cloned generation shapes before the endpoint reports ready, avoiding a large first-request compilation penalty.
+
+The benchmark then calls the same `/speech-to-text` and `/text-to-speech` capabilities used by the application. Scores and latency distributions are written to Delta and rendered by the benchmark page.
+
+```mermaid
+flowchart TB
+    subgraph inputs [Benchmark inputs]
+        A[FLEURS human speech]
+        E[Reference text]
+    end
+    B[Realtime WebSocket API]
+    subgraph models [Deployed speech models]
+        C[Qwen3-ASR-1.7B]
+        F[VoxCPM2]
+    end
+    subgraph measures [Independent measurements]
+        D[WER or CER]
+        G[Time to first audio]
+    end
+    H[Delta benchmark tables]
+    A --&gt; B
+    E --&gt; B
+    B --&gt; C --&gt; D --&gt; H
+    B --&gt; F --&gt; G --&gt; H
+```
+
+## Benchmark results: one stack, different outcomes
+
+The latest checked-in visualization was measured through the deployed API on July 26, 2026, using 20 FLEURS samples per language. Accuracy below is `1 − WER` for spaced languages and `1 − CER` for Chinese, Japanese, and Thai.
+
+| Language | Current model | Metric | Measured accuracy |
+|---|---|---|---:|
+| English | Qwen3-ASR-1.7B | Word accuracy | 83% |
+| Thai | Qwen3-ASR-1.7B | Character accuracy | 74% |
+| Indonesian | Qwen3-ASR-1.7B | Word accuracy | 72% |
+| Chinese | Qwen3-ASR-1.7B | Character accuracy | 67% |
+
+![Speech recognition accuracy across 24 languages, measured through the deployed realtime API on FLEURS.](assets/powering-genie-with-open-source-voice-models/stt-benchmark.svg)
+
+These values are a baseline, not a production claim. Twenty read-speech clips per language are sufficient to expose large differences and regression-test the serving path, but not to certify a contact-center model.
+
+### Thai (`th-TH`)
+
+Thai reached 74% character accuracy. This is materially more useful than the empty-transcript behavior seen in some earlier model experiments, but it leaves substantial room for improvement. Thai also exposed the TTS quality boundary: reducing VoxCPM2 from six diffusion steps to four lowered round-trip similarity to 0.76, while six restored 1.0 on the tested sentence.
+
+### Indonesian (`id-ID`)
+
+Indonesian reached 72% word accuracy with the shared 1.7B checkpoint. The result shows why the move away from the earlier 0.6B experiment mattered, but it still measures read speech rather than spontaneous customer calls. Domain vocabulary and mixed English identifiers remain untested by this FLEURS slice.
+
+### Chinese (`zh-CN`)
+
+Chinese reached 67% character accuracy, the lowest of the three Asian demo languages. Chinese therefore remains a priority for model adaptation and broader evaluation. The repository retains SenseVoice-Small and Paraformer-8k as evaluation candidates, but the live realtime path uses Qwen3-ASR-1.7B.
+
+## Why Asian languages present distinct engineering challenges
+
+### 1. Training data rarely matches production conditions
+
+FLEURS gives us human speech and broad language coverage, but it is clean, read speech. A live contact center introduces spontaneous phrasing, regional accents, background noise, echo, clipped microphones, and interruptions.
+
+Telephone audio adds a larger shift. Public switched telephone network audio is commonly 8 kHz and codec-compressed; the current Qwen3-ASR path is designed around 16 kHz browser audio. Resampling to 16 kHz does not restore frequencies removed by the channel or undo codec distortion.
+
+The next meaningful benchmark therefore needs real or carefully governed conversational audio, plus a distinct telephony tier. Improving a FLEURS number alone will not solve that mismatch.
+
+### 2. Multilingual checkpoints are not uniform across the region
+
+Qwen3-ASR-1.7B removes much of the operational burden of per-locale routing. It also gives every language the same packaging, GPU, and API path, which makes comparisons fairer.
+
+The measured spread remains large. Thai, Indonesian, and Chinese differ by seven percentage points in the same deployment, and the full 24-language run spans more than 50 points. A single checkpoint is now a sensible default, but the data still supports language-specific adaptation or fallback routes where acceptance criteria are missed.
+
+VoxCPM2 creates a similar constraint on the output side. The usable product language set is the intersection of ASR and TTS coverage, and a reference voice that sounds natural in English must still be auditioned in Thai, Indonesian, and Chinese.
+
+### 3. Word accuracy and business safety measure different properties
+
+WER and CER measure textual distance, not whether the transcript preserved the one token that controls a business action. A sentence can be mostly correct while changing `INV-90022`, omitting “not,” or confusing fifty with fifteen.
+
+The current FLEURS run should therefore be read as an acoustic baseline. Before the model can support a billing decision, it still needs a separate held-out corpus with labeled identifiers, amounts, dates, confirmations, and refusals. Those entities—not aggregate WER—must determine deployment readiness.
+
+The same principle applies to synthesis. A natural-sounding sentence can still be operationally wrong if the customer cannot distinguish the spoken account number.
+
+### 4. Business records remain canonical even when the conversation is localized
+
+The interface can speak Thai while the underlying records retain English identifiers, USD amounts, product names, and catalog names. Qwen3-ASR must handle that code-switching without translating or normalizing away the canonical value.
+
+VoxCPM2 faces the inverse task: render canonical text naturally inside a localized response. A text-normalization layer may need to expand symbols and numbers differently by language while preserving the value shown on screen.
+
+This mixed-language boundary is poorly represented by general read-speech corpora. It needs its own dataset and pronunciation review.
+
+## What we can do better
+
+The current stack is a stronger foundation than the earlier collection of locale-specific experiments. Improvement work can now focus on the model behaviors that measurements expose rather than on maintaining a different integration for every language.
+
+## Models evaluated
+
+The live realtime path uses two stock multilingual checkpoints:
+
+| Role | Model | Current deployment choice |
+|---|---|---|
+| Recognition | Qwen3-ASR-1.7B | bfloat16 on GPU; automatic or forced language; utterance-level inference |
+| Synthesis | VoxCPM2 | Streaming generation; six diffusion steps; guidance 2.0; pinned reference voices |
+
+Deepgram Nova-3 remains an evaluation-only ASR comparison. The older English Whisper LoRA, Thai Pathumma Whisper, Indonesian/Chinese Qwen3-ASR-0.6B, SenseVoice, and Paraformer routes remain in the separate ASR evaluation configuration; they are not the models used by the live multilingual realtime API.
+
+## Next model improvements to evaluate
+
+The next experiments should improve the current models before adding more routing complexity:
+
+| Model | Experiment | Acceptance evidence |
+|---|---|---|
+| Qwen3-ASR-1.7B | Inject domain context or hotwords for product names and identifiers | Entity recall improves without increasing substitutions |
+| Qwen3-ASR-1.7B | Supervised fine-tuning on multilingual business and noisy speech | Held-out WER/CER and entity accuracy both improve |
+| Qwen3-ASR-1.7B | Codec and 8 kHz augmentation | Telephony holdout improves without regressing browser audio |
+| VoxCPM2 | Speaker adaptation using multilingual recordings | Stable speaker similarity and pronunciation across languages |
+| VoxCPM2 | Locale-aware normalization for numbers, dates, and IDs | Human and ASR-assisted pronunciation checks improve |
+| VoxCPM2 | Few-step distillation or optimized runtime | Lower TTFA without falling below the six-step quality baseline |
+
+### 1. Richer business audio, especially for Thai and Chinese
+
+Thai and Chinese should receive the first domain-data investment because they combine lower current accuracy with scripts and pronunciation patterns that generic English-heavy business corpora represent poorly.
+
+The training set should include spontaneous dialogue, local number expressions, code-switched names, canonical identifiers, and realistic microphone conditions. A held-out set must remain untouched by fine-tuning.
+
+### 2. Adapt the multilingual default before adding fallback models
+
+Qwen3-ASR supports contextual prompts for domain vocabulary, and its maintainers provide a supervised fine-tuning path. Context biasing is the lowest-cost first experiment; targeted fine-tuning follows if it does not recover identifiers and product terms reliably.
+
+Per-language fallback models remain useful evidence, particularly SenseVoice and Paraformer for Chinese. They should be promoted only when the same deployed-API benchmark shows a clear advantage over the shared 1.7B path.
+
+### 3. Telephony-conditioned evaluation and training
+
+The current model consumes wideband browser audio. A telephone deployment needs 8 kHz and codec-aware evaluation before launch, followed by channel augmentation or a dedicated adaptation if quality drops.
+
+Recognition is only half the issue. VoxCPM2 emits 48 kHz audio; a telephone path must downsample and encode it, then confirm that numbers and consonants remain intelligible after the round trip.
+
+### 4. End-to-end scoring through the voice agent
+
+The deployed benchmark correctly isolates STT and TTS for diagnosis. A second acceptance suite should then run representative conversations through recognition, reasoning, tools, and synthesis.
+
+That suite should record whether the transcript preserved required entities, whether the correct tool action occurred, whether the spoken response matched the committed result, and how long the caller waited for first audio.
+
+### 5. Text normalization and contextual recognition
+
+Qwen3-ASR is currently called with audio and a language, without domain context. Supplying a bounded list of relevant catalog names, product terms, and identifier formats could improve uncommon-token recognition without retraining.
+
+Before VoxCPM2, locale-specific normalization should convert amounts, dates, symbols, abbreviations, and IDs into an unambiguous spoken form. The visible answer can remain canonical while the TTS input is optimized for pronunciation.
+
+### 6. Stable voices across every language
+
+VoxCPM2 has no deterministic speaker seed, so an unconditioned first turn can produce an arbitrary voice. The application avoids that by pinning two auditioned reference clips and reusing their hashed voice IDs.
+
+The next model-level improvement is speaker adaptation on multilingual recordings from the selected voices. That should reduce accent and timbre drift while preserving the identity callers already recognize.
+
+### 7. Acceptance criteria must cover both quality and latency
+
+A model should not advance because it improves WER while becoming too slow for conversation. Qwen3-ASR changes must pass per-language WER/CER, entity recall, empty-output rate, and p95 latency gates.
+
+VoxCPM2 changes must pass time-to-first-audio, realtime factor, intelligibility, speaker similarity, and language-specific pronunciation review. The current six-step configuration is the baseline to beat, not merely a knob to lower.
+
+## Closing thought
+
+The move to Qwen3-ASR-1.7B and VoxCPM2 changed what is practical. We can now run one self-hosted voice stack across 24 languages, preserve one voice through a conversation, and measure the deployed system rather than a collection of notebook experiments.
+
+It did not remove the hard part. English, Thai, Indonesian, and Chinese still produce different outcomes through the same checkpoint, and clean read speech still leaves the most consequential production questions unanswered. The next gains will come from language-specific evidence—domain audio, mixed-language identifiers, telephony conditions, and pronunciation tests—applied to a shared multilingual foundation.
+
+## Appendix: evaluation protocol
+
+The current FLEURS benchmark sends native human audio through the deployed STT-only WebSocket with server endpointing disabled. Each full clip is finalized explicitly, scored with WER or CER, and written to Delta with latency and reliability metadata. TTS timing is measured separately through the text-to-speech capability.
+
+The checked-in 24-language visualization uses 20 clips per language from a run dated July 26, 2026. It is a regression and comparative baseline, not a statistical certification of production readiness. A future business acceptance suite must use held-out conversational recordings with labeled domain entities; a telephony suite must separately cover 8 kHz codec audio.
+
+## Sources and Further Reading
+
+- [Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) — current multilingual recognition checkpoint
+- [Qwen3-ASR repository](https://github.com/QwenLM/Qwen3-ASR) — inference, context prompting, streaming, and fine-tuning
+- [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) — current multilingual streaming synthesis checkpoint
+- [FLEURS](https://huggingface.co/datasets/google/fleurs) — multilingual human read-speech benchmark
+- [Why Aren’t We NER Yet? (ACL 2023)](https://doi.org/10.18653/v1/2023.acl-long.98) — ASR errors and downstream entity extraction
+- [Navigating the Reality Gap: ASR for Clinical Telephony](https://arxiv.org/abs/2512.16401) — clean versus telephony domain shift
+- [MLflow ResponsesAgent](https://mlflow.org/docs/latest/genai/serving/responses-agent/) — model serving contract used for both speech endpoints
+- [Databricks Model Serving](https://docs.databricks.com/en/machine-learning/model-serving/index.html) — GPU endpoint deployment
+- [Databricks Unity Catalog](https://docs.databricks.com/en/data-governance/unity-catalog/index.html) — model registration and governance
+</template>
+  <script>
+    const article = document.getElementById("blog-preview");
+    const status = document.getElementById("copy-status");
+    const PUBLISH_API = "http://127.0.0.1:8765/api/publish/medium";
+    const ARTICLE_TITLE = "Why Is It Hard to Build Voice Models for Asian Languages?";
+
+    function preparePublishImages(root) {
+      root.querySelectorAll("img").forEach((image) => {
+        if (image.dataset.publicSrc) {
+          image.setAttribute("src", image.dataset.publicSrc);
+          image.removeAttribute("data-public-src");
+        } else if (image.dataset.copySrc) {
+          image.setAttribute("src", image.dataset.copySrc);
+        }
+      });
+    }
+
+    function flattenTablesForPublish(root) {
+      root.querySelectorAll("table").forEach((table) => {
+        const rows = [];
+        table.querySelectorAll("thead tr").forEach((row) => rows.push(row.cloneNode(true)));
+        table.querySelectorAll("tbody tr").forEach((row) => rows.push(row.cloneNode(true)));
+        if (!rows.length) {
+          table.querySelectorAll("tr").forEach((row) => rows.push(row.cloneNode(true)));
+        }
+        const body = document.createElement("tbody");
+        rows.forEach((row) => body.appendChild(row));
+        table.innerHTML = "";
+        table.appendChild(body);
+      });
+    }
+
+    function cloneNodeWithCopySrc(node) {
+      const clone = node.cloneNode(true);
+      if (node.dataset && node.dataset.copySrc) {
+        clone.setAttribute("src", node.dataset.copySrc);
+      }
+      return clone;
+    }
+
+    function buildPublishContentSync() {
+      const root = document.createElement("div");
+      const hero = document.querySelector(".preview-hero");
+      if (hero) {
+        root.appendChild(cloneNodeWithCopySrc(hero));
+      }
+      const articleClone = article.cloneNode(true);
+      articleClone.querySelectorAll("img").forEach((cloneImg, index) => {
+        const liveImg = article.querySelectorAll("img")[index];
+        if (liveImg && liveImg.dataset.copySrc) {
+          cloneImg.setAttribute("src", liveImg.dataset.copySrc);
+        }
+      });
+      root.appendChild(articleClone);
+      preparePublishImages(root);
+      flattenTablesForPublish(root);
+      root.querySelectorAll(".mermaid, [data-mermaid-source]").forEach((node) => {
+        node.remove();
+      });
+      return { html: root.innerHTML, text: root.innerText };
+    }
+
+    function cacheCopyImageSource(img) {
+      if (img.dataset.copySrc || !img.complete || !img.naturalWidth) {
+        return;
+      }
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          img.dataset.copySrc = img.currentSrc || img.src;
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        img.dataset.copySrc = canvas.toDataURL("image/png");
+      } catch (err) {
+        img.dataset.copySrc = img.currentSrc || img.src;
+      }
+    }
+
+    function cacheAllCopyImageSources() {
+      const hero = document.querySelector(".preview-hero");
+      if (hero) {
+        cacheCopyImageSource(hero);
+      }
+      article.querySelectorAll("img").forEach((img) => {
+        if (!img.complete) {
+          img.addEventListener("load", () => cacheCopyImageSource(img), { once: true });
+          return;
+        }
+        cacheCopyImageSource(img);
+      });
+    }
+
+    function wrapClipboardHtml(html) {
+      return `<!DOCTYPE html><html><body><!--StartFragment-->${html}<!--EndFragment--></body></html>`;
+    }
+
+    function copyRichHtmlSync(html, plain) {
+      const wrapped = wrapClipboardHtml(html);
+
+      function onCopy(event) {
+        event.clipboardData.setData("text/html", wrapped);
+        event.clipboardData.setData("text/plain", plain);
+        event.preventDefault();
+      }
+
+      document.addEventListener("copy", onCopy, { once: true });
+      const container = document.createElement("div");
+      container.contentEditable = "true";
+      container.innerHTML = html;
+      container.style.position = "fixed";
+      container.style.left = "0";
+      container.style.top = "0";
+      container.style.width = "1px";
+      container.style.height = "1px";
+      container.style.opacity = "0.01";
+      document.body.appendChild(container);
+      container.focus();
+      const range = document.createRange();
+      range.selectNodeContents(container);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const copied = document.execCommand("copy");
+      selection.removeAllRanges();
+      container.remove();
+      return copied;
+    }
+
+    function selectArticleForManualCopy() {
+      const hero = document.querySelector(".preview-hero");
+      const range = document.createRange();
+      if (hero) {
+        range.setStartBefore(hero);
+      } else {
+        range.setStartBefore(article);
+      }
+      range.setEndAfter(article);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      status.textContent = "Article selected. Press Cmd+C, open Medium, then Cmd+V.";
+    }
+
+    function copyAndOpen(url) {
+      if (location.protocol === "file:") {
+        status.textContent = "Open with --serve --open, not file://.";
+        return;
+      }
+
+      const publishContent = buildPublishContentSync();
+      status.textContent = "Copying...";
+
+      const finish = (copied) => {
+        if (!copied) {
+          selectArticleForManualCopy();
+          status.textContent = "Auto-copy failed. Article selected — press Cmd+C, then paste in Medium.";
+        } else {
+          status.textContent = "Copied. Paste in Medium with Cmd+V or Ctrl+V.";
+        }
+        setTimeout(() => window.open(url, "_blank", "noopener"), 120);
+      };
+
+      if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
+        const wrapped = wrapClipboardHtml(publishContent.html);
+        navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([wrapped], { type: "text/html" }),
+            "text/plain": new Blob([publishContent.text], { type: "text/plain" }),
+          }),
+        ]).then(() => finish(true)).catch(() => finish(copyRichHtmlSync(publishContent.html, publishContent.text)));
+        return;
+      }
+
+      finish(copyRichHtmlSync(publishContent.html, publishContent.text));
+    }
+
+    window.addEventListener("load", () => {
+      cacheAllCopyImageSources();
+      setTimeout(cacheAllCopyImageSources, 300);
+      setTimeout(cacheAllCopyImageSources, 1200);
+    });
+
+    document.querySelectorAll(".publish-copy").forEach((button) => {
+      button.addEventListener("click", () => {
+        copyAndOpen(button.dataset.publishUrl);
+      });
+    });
+
+    document.querySelectorAll(".publish-select").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectArticleForManualCopy();
+      });
+    });
+
+    async function publishToMedium(publishStatus) {
+      if (location.protocol === "file:") {
+        status.textContent = "Start the preview server: python3 scripts/preview_blog.py <blog.md> --serve";
+        return;
+      }
+
+      let token = localStorage.getItem("medium_integration_token");
+      if (!token) {
+        token = window.prompt(
+          "Legacy Medium integration token (only if you already have one):"
+        );
+        if (!token) {
+          status.textContent = "API publish cancelled. Use Copy and open Medium instead.";
+          return;
+        }
+        localStorage.setItem("medium_integration_token", token.trim());
+      }
+
+      status.textContent = publishStatus === "public" ? "Publishing publicly..." : "Publishing draft...";
+      const publishContent = buildPublishContentSync();
+
+      try {
+        const response = await fetch(PUBLISH_API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: token.trim(),
+            title: ARTICLE_TITLE,
+            content: publishContent.html,
+            publishStatus: publishStatus,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || "Medium publish failed.");
+        }
+        status.textContent = publishStatus === "public"
+          ? "Published on Medium."
+          : "Draft published on Medium.";
+        if (payload.url) {
+          window.open(payload.url, "_blank", "noopener");
+        }
+      } catch (err) {
+        status.textContent = err.message || "Medium publish failed.";
+      }
+    }
+
+    document.querySelectorAll(".publish-direct").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await publishToMedium(button.dataset.publishStatus || "draft");
+      });
+    });
+  </script>
+  <script type="module">
+    try {
+      const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs");
+      mermaid.initialize({ startOnLoad: false, theme: "default" });
+      await mermaid.run({ nodes: article.querySelectorAll(".mermaid") });
+    } catch (err) {
+      console.warn("Mermaid rendering skipped.", err);
+    }
+  </script>
+</body>
+</html>

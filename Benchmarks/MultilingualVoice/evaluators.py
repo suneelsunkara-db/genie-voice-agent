@@ -9,16 +9,31 @@ Pure-Python (no jiwer/torch dependency) so it runs anywhere the API client runs.
 from __future__ import annotations
 
 import re
+import random
 import unicodedata
 from typing import Any, Iterable
 
-_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
 _SPACE_RE = re.compile(r"\s+", re.UNICODE)
+_SCORING_VERSION = "unicode-v2-corpus"
+_BOOTSTRAP_SAMPLES = 1_000
+
+
+def _replace_symbols_with_spaces(text: str) -> str:
+    """Keep Unicode letters, numbers, and marks; turn punctuation into spaces.
+
+    ``re``'s ``\\w`` excludes combining marks. Using it for punctuation removal
+    silently deleted Thai tone/vowel marks and made CER blind to distinctions
+    that are part of the orthography.
+    """
+    return "".join(
+        ch if ch.isspace() or unicodedata.category(ch)[0] in {"L", "M", "N"} else " "
+        for ch in text
+    )
 
 
 def normalize_text(text: str, *, keep_spaces: bool = True) -> str:
     text = unicodedata.normalize("NFKC", str(text or "")).lower().strip()
-    text = _PUNCT_RE.sub(" ", text)
+    text = _replace_symbols_with_spaces(text)
     text = _SPACE_RE.sub(" ", text).strip()
     if not keep_spaces:
         text = text.replace(" ", "")
@@ -56,30 +71,85 @@ def char_error_rate(reference: str, hypothesis: str) -> float:
     return _edit_distance(ref, hyp) / len(ref)
 
 
+def _error_counts(reference: str, hypothesis: str, *, characters: bool) -> tuple[int, int]:
+    if characters:
+        ref = list(normalize_text(reference, keep_spaces=False))
+        hyp = list(normalize_text(hypothesis, keep_spaces=False))
+    else:
+        ref = normalize_text(reference).split()
+        hyp = normalize_text(hypothesis).split()
+    return _edit_distance(ref, hyp), len(ref)
+
+
+def _corpus_error(counts: list[tuple[int, int]]) -> float | None:
+    reference_units = sum(units for _, units in counts)
+    if not reference_units:
+        return None
+    return sum(edits for edits, _ in counts) / reference_units
+
+
+def _bootstrap_corpus_ci(
+    counts: list[tuple[int, int]],
+    *,
+    samples: int = _BOOTSTRAP_SAMPLES,
+    seed: int = 0,
+) -> list[float] | None:
+    """Deterministic utterance-bootstrap 95% CI for a corpus error rate."""
+    if not counts or samples < 2:
+        return None
+    rng = random.Random(seed)
+    n = len(counts)
+    estimates = []
+    for _ in range(samples):
+        draw = [counts[rng.randrange(n)] for _ in range(n)]
+        estimate = _corpus_error(draw)
+        if estimate is not None:
+            estimates.append(estimate)
+    if not estimates:
+        return None
+    estimates.sort()
+    low = estimates[int(0.025 * (len(estimates) - 1))]
+    high = estimates[int(0.975 * (len(estimates) - 1))]
+    return [low, high]
+
+
 def _mean(values: Iterable[float]) -> float | None:
     vals = [v for v in values if isinstance(v, (int, float))]
     return sum(vals) / len(vals) if vals else None
 
 
 def evaluate_asr(rows: list[dict[str, Any]], *, reference_key: str = "reference", hyp_key: str = "transcript") -> dict[str, Any]:
-    """WER/CER of the API's STT transcript vs the dataset reference."""
-    scored = []
+    """Corpus WER/CER plus secondary macro utterance error rates."""
+    word_counts = []
+    char_counts = []
+    macro = []
     for row in rows:
         ref = row.get(reference_key)
-        hyp = row.get(hyp_key)
         if not ref:
             continue
-        scored.append((word_error_rate(ref, hyp or ""), char_error_rate(ref, hyp or "")))
+        hyp = row.get(hyp_key) or ""
+        word_counts.append(_error_counts(ref, hyp, characters=False))
+        char_counts.append(_error_counts(ref, hyp, characters=True))
+        macro.append((word_error_rate(ref, hyp), char_error_rate(ref, hyp)))
     return {
-        "wer": _mean(w for w, _ in scored),
-        "cer": _mean(c for _, c in scored),
-        "scored": len(scored),
+        "wer": _corpus_error(word_counts),
+        "cer": _corpus_error(char_counts),
+        "wer_macro": _mean(w for w, _ in macro),
+        "cer_macro": _mean(c for _, c in macro),
+        "wer_ci95": _bootstrap_corpus_ci(word_counts, seed=11),
+        "cer_ci95": _bootstrap_corpus_ci(char_counts, seed=17),
+        "scored": len(macro),
+        "aggregation": "corpus",
+        "scoring_version": _SCORING_VERSION,
+        "normalization": "NFKC lowercase; preserve Unicode letters, numbers, and marks; symbols to spaces",
     }
 
 
 def evaluate_tts_roundtrip(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """WER/CER of re-transcribed TTS audio vs the spoken text (intelligibility)."""
-    scored = []
+    """Confounded ASR round-trip proxy, reported with corpus aggregation."""
+    word_counts = []
+    char_counts = []
+    macro = []
     produced = 0
     for row in rows:
         rt = row.get("tts_roundtrip") or {}
@@ -89,12 +159,16 @@ def evaluate_tts_roundtrip(rows: list[dict[str, Any]]) -> dict[str, Any]:
             produced += 1
         if not spoken or heard is None:
             continue
-        scored.append((word_error_rate(spoken, heard), char_error_rate(spoken, heard)))
+        word_counts.append(_error_counts(spoken, heard, characters=False))
+        char_counts.append(_error_counts(spoken, heard, characters=True))
+        macro.append((word_error_rate(spoken, heard), char_error_rate(spoken, heard)))
     return {
-        "tts_roundtrip_wer": _mean(w for w, _ in scored),
-        "tts_roundtrip_cer": _mean(c for _, c in scored),
+        "tts_roundtrip_wer": _corpus_error(word_counts),
+        "tts_roundtrip_cer": _corpus_error(char_counts),
+        "tts_roundtrip_wer_macro": _mean(w for w, _ in macro),
+        "tts_roundtrip_cer_macro": _mean(c for _, c in macro),
         "tts_audio_rate": (produced / len(rows)) if rows else None,
-        "scored": len(scored),
+        "tts_roundtrip_scored": len(macro),
     }
 
 

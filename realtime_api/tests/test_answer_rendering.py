@@ -53,6 +53,40 @@ def test_full_translation_streams_in_order(monkeypatch):
     assert "Translate" in serving.calls[0]["system"]
 
 
+def test_agent_mode_question_is_canonicalized_to_english(monkeypatch):
+    serving = _Serving()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+
+    translated = answer_rendering.canonicalize_question_for_agent_mode(
+        "Warum sind meine Ausgaben gestiegen?",
+        "de-DE",
+    )
+
+    assert translated == "Informe traducido."
+    call = serving.calls[0]
+    assert "into English" in call["system"]
+    assert "Do not answer" in call["system"]
+    assert call["user"] == "Warum sind meine Ausgaben gestiegen?"
+
+
+def test_english_agent_mode_question_bypasses_translation(monkeypatch):
+    serving = _Serving()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+
+    question = "Why did my expenses increase?"
+    assert (
+        answer_rendering.canonicalize_question_for_agent_mode(question, "en-US")
+        == question
+    )
+    assert serving.calls == []
+
+
 def test_english_never_calls_the_translator(monkeypatch):
     """Knowledge (Genie One) and FSI deep-dive share this renderer.
 
