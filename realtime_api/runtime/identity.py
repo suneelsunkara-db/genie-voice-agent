@@ -118,7 +118,17 @@ def require_obo_token(
 
 
 def workspace_client_for_principal(principal: SessionPrincipal, settings: Any = None):
-    """Build a WorkspaceClient from the user token (never the app SP)."""
+    """Build a user-scoped WorkspaceClient isolated from the app SP.
+
+    Databricks Apps injects ``DATABRICKS_CLIENT_ID``/``CLIENT_SECRET`` for the
+    app service principal. Without an explicit auth strategy, Unified Auth mixes
+    those ambient OAuth credentials with the forwarded user bearer token and
+    rejects the client as having both ``oauth`` and ``pat`` configured.
+
+    ``pat`` is the SDK's static-bearer strategy; despite its historical name, it
+    simply sends the supplied token as ``Authorization: Bearer``. Selecting it
+    explicitly ensures this OBO client uses only the forwarded user token.
+    """
     if not principal.has_token:
         raise PermissionError("OBO token required for workspace client")
     from databricks.sdk import WorkspaceClient
@@ -132,7 +142,11 @@ def workspace_client_for_principal(principal: SessionPrincipal, settings: Any = 
         host = getattr(settings.databricks, "host", "") or ""
     if not host:
         raise RuntimeError("Databricks host is not configured for OBO client")
-    return WorkspaceClient(host=host, token=principal.access_token)
+    return WorkspaceClient(
+        host=host,
+        token=principal.access_token,
+        auth_type="pat",
+    )
 
 
 def refuse_text_for_obo(error: ErrorEvidence | None = None, *, language: str = "en") -> str:

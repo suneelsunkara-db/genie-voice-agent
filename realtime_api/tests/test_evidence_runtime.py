@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -28,7 +29,11 @@ from realtime_api.runtime.goal_frame import (
     classify_depth,
     enforce_effect,
 )
-from realtime_api.runtime.identity import SessionPrincipal, require_obo_token
+from realtime_api.runtime.identity import (
+    SessionPrincipal,
+    require_obo_token,
+    workspace_client_for_principal,
+)
 from realtime_api.runtime.pack_schema import evidence_from_tool_result
 from realtime_api.runtime.refuse import ErrorCode
 from realtime_api.tool_registry import ToolContext, genie_obo_or_refuse
@@ -430,6 +435,30 @@ def test_require_obo_token_denies_empty_principal():
     assert err is not None and err.code == ErrorCode.PERMISSION
     ok = require_obo_token(SessionPrincipal(access_token="tok"), session_id="s1")
     assert ok is None
+
+
+def test_obo_workspace_client_ignores_ambient_app_oauth(monkeypatch):
+    """The forwarded user token must not mix with the app SP credentials."""
+    captured: dict[str, Any] = {}
+
+    def _workspace_client(**kwargs):
+        captured.update(kwargs)
+        return "client"
+
+    monkeypatch.setattr("databricks.sdk.WorkspaceClient", _workspace_client)
+    settings = SimpleNamespace(databricks_host="https://workspace.example.com")
+
+    client = workspace_client_for_principal(
+        SessionPrincipal(access_token="forwarded-user-token"),
+        settings,
+    )
+
+    assert client == "client"
+    assert captured == {
+        "host": "https://workspace.example.com",
+        "token": "forwarded-user-token",
+        "auth_type": "pat",
+    }
 
 
 def test_denied_workspace_query_maps_to_permission_refusal():
