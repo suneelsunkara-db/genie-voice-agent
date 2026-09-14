@@ -79,6 +79,110 @@ def _run_lookup_account(arguments: dict[str, Any], ctx: ToolContext) -> str:
 register(_LOOKUP_ACCOUNT_SPEC, _run_lookup_account, profile=_PROFILE)
 
 
+# ---- prepare_billing_action ---------------------------------------------- #
+
+_PREPARE_BILLING_SPEC = {
+    "type": "function",
+    "x-effect_class": "read",
+    "function": {
+        "name": "prepare_billing_action",
+        "description": (
+            "Read the current customer's account and prepare one exact late-fee "
+            "waiver or payment-plan offer. This does not change account state."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["waive_late_fee", "payment_plan"],
+                    "description": "The billing resolution the caller requested.",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+
+def _run_prepare_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> str:
+    """Resolve a mutation request to an exact, read-only offer.
+
+    Confirmation is bound to the action, customer and invoice captured here.
+    The subsequent mutation tool re-reads and verifies this snapshot before
+    writing, so a generic "yes" cannot authorize a different or stale action.
+    """
+    action = str(arguments.get("action") or "")
+    if action not in {"waive_late_fee", "payment_plan"}:
+        return json.dumps({"error": "action must be 'waive_late_fee' or 'payment_plan'"})
+    customer_id = ctx.customer_id
+    if not customer_id:
+        return json.dumps({"error": "No customer is associated with this call."})
+
+    try:
+        from api.app.deps import serving
+        from genie_voice.assist.reply_plan import (
+            build_reply_action_plan,
+            render_deterministic_reply,
+        )
+
+        account = ctx.cached_account(customer_id)
+        if account is None:
+            account = serving().get_account_facts(customer_id)
+        if not account.get("found"):
+            return json.dumps({"error": f"No account found for {customer_id}"})
+        ctx.store_account(customer_id, account)
+
+        nudge = (
+            {"waiver_requested": True, "next_best_action": "offer_fee_waiver"}
+            if action == "waive_late_fee"
+            else {"payment_plan_requested": True, "next_best_action": "set_up_payment_plan"}
+        )
+        plan = build_reply_action_plan(nudge, account)
+        if not plan.invoice_id:
+            return json.dumps({"error": "No overdue invoice is eligible for this action."})
+        if action == "waive_late_fee" and not (plan.late_fee_usd and plan.late_fee_usd > 0):
+            return json.dumps({"error": "The overdue invoice has no late fee to waive."})
+
+        customer = dict(account.get("customer") or {})
+        proposal_text = render_deterministic_reply(
+            plan,
+            language=ctx._detected_language,
+            opener="",
+            customer_name=str(customer.get("full_name") or ""),
+        )
+        if not proposal_text:
+            return json.dumps({"error": "Could not render a billing offer for this language."})
+
+        pending = {
+            "action": action,
+            "customer_id": customer_id,
+            "invoice_id": plan.invoice_id,
+            "late_fee_usd": plan.late_fee_usd,
+            "overdue_amount_usd": plan.overdue_amount_usd,
+            "plan_balance_usd": plan.plan_balance_usd,
+        }
+        # This is only a candidate until the voice pipeline successfully emits
+        # the proposal audio. A tool result alone must not open confirmation.
+        ctx.profile_state["pending_billing_offer"] = pending
+        return json.dumps(
+            {
+                "proposal_text": proposal_text,
+                "proposal_id": (
+                    f"{ctx.call_id or 'call'}:{customer_id}:{plan.invoice_id}:{action}"
+                ),
+                **pending,
+                "confirmation_required": True,
+            },
+            default=str,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"Billing action preparation failed: {exc}"})
+
+
+register(_PREPARE_BILLING_SPEC, _run_prepare_billing_action, profile=_PROFILE)
+
+
 # ---- get_current_time ------------------------------------------------------ #
 
 _GET_CURRENT_TIME_SPEC = {
@@ -257,17 +361,32 @@ def _run_apply_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> st
     if not customer_id or not call_id:
         return json.dumps({"error": "No customer/call context. Cannot apply billing action."})
 
+    pending = ctx.profile_state.get("pending_confirm_mutate")
+    if not isinstance(pending, dict):
+        return json.dumps({"error": "No exact billing offer is awaiting confirmation."})
+    if pending.get("action") != action or pending.get("customer_id") != customer_id:
+        return json.dumps({"error": "The confirmed action does not match the open billing offer."})
+
     try:
         from api.app.deps import serving
+        from genie_voice.assist.billing import primary_overdue_invoice
+
         svc = serving()
 
-        # Reuse account facts cached by a prior lookup_account (this turn OR an
-        # earlier turn of the same call); only read Lakebase on a cache miss.
-        account = ctx.cached_account(customer_id)
-        if account is None:
-            account = svc.get_account_facts(customer_id)
+        # Mutations re-read current state. The preparation snapshot is suitable
+        # for conversation, but must never authorize a write after account state
+        # has changed.
+        account = svc.get_account_facts(customer_id)
         if not account.get("found"):
             return json.dumps({"error": f"No account found for {customer_id}"})
+        overdue = primary_overdue_invoice(account)
+        if not overdue or str(overdue.get("invoice_id") or "") != str(pending.get("invoice_id") or ""):
+            return json.dumps({"error": "The overdue invoice changed; review the account and confirm again."})
+        if action == "waive_late_fee":
+            current_fee = float(str(overdue.get("late_fee") or 0).replace(",", ""))
+            expected_fee = float(pending.get("late_fee_usd") or 0)
+            if current_fee != expected_fee:
+                return json.dumps({"error": "The late fee changed; review the account and confirm again."})
 
         resolution = {
             "actions": {
@@ -319,6 +438,8 @@ BILLING_PROFILE_PROMPT = (
     "- lookup_account: CALL THIS IMMEDIATELY when the caller mentions billing, payments, "
     "fees, invoices, or account issues. Do NOT respond without calling it first. Its result "
     "already contains balances, overdue invoices, late fees, and autopay status.\n"
+    "- prepare_billing_action: read the known customer's current account, bind a requested "
+    "waiver or payment plan to one exact invoice, and ask for confirmation without writing.\n"
     "- apply_billing_action: waive a late fee or set up a payment plan. Calling this "
     "tool is the ONLY thing that actually changes the account — saying the words does "
     "nothing. Call it the moment the customer agrees to an action you offered.\n"
@@ -383,10 +504,18 @@ def billing_greeting(language: str, first_name: str = "") -> str:
 
 
 def _seed_greeting_for(language: str) -> str:
-    """An in-language greeting to seed LLM history so it knows it already greeted."""
-    from .greetings import seed_greeting_for
+    """Identity-neutral fallback when no spoken opening was committed."""
+    from .greetings import generate_greeting
 
-    return seed_greeting_for(language, intent=_greeting_intent, cache=_GREETING_CACHE)
+    # Never borrow another customer's named greeting from the process-wide cache.
+    # Normal Telco sessions commit the exact spoken opening through the websocket;
+    # this nameless form is only the serving-failure/legacy-client fallback.
+    return generate_greeting(
+        language,
+        first_name="",
+        intent=_greeting_intent,
+        cache=_GREETING_CACHE,
+    )
 
 
 def _make_billing_context(session: Any, language: str) -> ToolContext:

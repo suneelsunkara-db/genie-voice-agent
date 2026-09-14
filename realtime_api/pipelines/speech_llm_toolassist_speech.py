@@ -158,6 +158,13 @@ _CLARIFY_PROMPT = (
     "choose one evidence source. Ask exactly one short clarifying question in "
     "{language}. Do not answer the original question and do not mention routing."
 )
+_CONFIRM_PROMPT = (
+    "You are a concise billing voice assistant. An exact billing offer is already "
+    "present in the conversation, but the caller has not explicitly confirmed it. "
+    "Restate that same action briefly and ask one yes-or-no confirmation question "
+    "in {language}. Never ask for an account number or invent a different action, "
+    "invoice, or amount."
+)
 _REFUSE_PROMPT = (
     "You are a concise voice assistant. The navigation policy determined that no "
     "authorized capability can answer this request reliably. Say so briefly in "
@@ -188,6 +195,8 @@ def _tools_and_prompt(
     """
     from ..runtime.genie_one import WORKSPACE_QUERY_SPEC
 
+    if route_adapter == "confirm":
+        return [], _CONFIRM_PROMPT
     if route_adapter == "clarify":
         return [], _CLARIFY_PROMPT
     if route_adapter == "refuse":
@@ -290,6 +299,22 @@ def _spoken_answer(
     if requires_tool:
         return refuse_speech(ErrorCode.NO_EVIDENCE, language=language)
     return response_text
+
+
+def _finalize_billing_offer(
+    session: VoiceSession,
+    *,
+    capability_id: Any,
+    tts_chunks: int,
+) -> None:
+    """Open confirmation only after the exact offer produced audible output."""
+    from ..runtime import CapabilityId
+
+    if capability_id != CapabilityId.BILLING_ACTION_PREPARE:
+        return
+    candidate = session.profile_state.pop("pending_billing_offer", None)
+    if tts_chunks > 0 and isinstance(candidate, dict):
+        session.profile_state["pending_confirm_mutate"] = candidate
 
 
 _FILLER_INTENT = (
@@ -663,6 +688,9 @@ async def process_turn(
             ),
             "",
         )
+        # A cancelled prior preparation may leave an uncommitted candidate, but
+        # it is never an open offer and must not cross into a new turn.
+        session.profile_state.pop("pending_billing_offer", None)
         offer_open = bool(session.profile_state.get("pending_confirm_mutate"))
         try:
             navigation_decision, route = await run_profile_navigation(
@@ -725,7 +753,9 @@ async def process_turn(
             )
         navigation_intents = _navigation_intents(navigation_decision)
         if navigation_decision.reason == NavigationReason.CONFIRMATION_REQUIRED:
-            session.profile_state["pending_confirm_mutate"] = True
+            # Keep the exact preparation snapshot. Replacing it with a boolean
+            # would sever confirmation from the action/customer/invoice it covers.
+            session.profile_state.setdefault("pending_confirm_mutate", True)
         elif navigation_decision.capability_id not in {
             CapabilityId.CLARIFY,
             CapabilityId.REFUSE,
@@ -1400,13 +1430,15 @@ async def process_turn(
         session.committed_claims = claims
 
         localization_queue: asyncio.Queue[str | None] | None = None
-        localization_pending = False
-        if rendered_summary:
-            from ..runtime.answer_rendering import is_english, localize_answer_stream
+        from ..runtime.answer_rendering import is_english, localize_answer_stream
 
+        # Full report rendering is independent of the optional spoken summary.
+        # Previously an empty summary suppressed answer.render.* entirely, leaving
+        # the UI's raw English action result visible on every non-English call.
+        localization_pending = bool(render_report) and not is_english(language)
+        if render_report or rendered_summary:
             # Nothing to translate when the answer was a table: the panel renders the
             # typed rows, whose headers and figures are not ours to rewrite.
-            localization_pending = bool(render_report) and not is_english(language)
             last_event_seq += 1
             session.event_seq_by_turn[turn_id] = last_event_seq
             yield {
@@ -1514,6 +1546,11 @@ async def process_turn(
                     tts_first_ms = event.get("tts_first_ms")
                     tts_span.set_attribute("tts_first_ms", tts_first_ms)
             yield event
+        _finalize_billing_offer(
+            session,
+            capability_id=navigation_decision.capability_id,
+            tts_chunks=tts_chunks,
+        )
         if localization_task is not None:
             await localization_task
         if localization_queue is not None:

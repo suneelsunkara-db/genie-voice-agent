@@ -17,23 +17,22 @@ from __future__ import annotations
 
 import argparse
 import base64
-import json
 import struct
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-import requests
-
 _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
+if str(_REPO / "backend") not in sys.path:
+    sys.path.insert(0, str(_REPO / "backend"))
 
 from _realtime_config import databricks, realtime_voice, find_candidate  # noqa: E402
 from realtime_api.app import create_app  # noqa: E402
 from realtime_api.config import RealtimeSettings  # noqa: E402
-from realtime_api.services import DatabricksServing  # noqa: E402
+from realtime_api.services import DatabricksServing, _SdkDeployClient  # noqa: E402
 from realtime_api.pipelines import ServingBundle  # noqa: E402
 
 _PROMPTS = {
@@ -42,38 +41,6 @@ _PROMPTS = {
     "id-ID": "Jam berapa sekarang di Bangkok?",
     "zh-CN": "现在曼谷几点了？",
 }
-
-
-class _SdkDeployClient:
-    """Databricks-SDK client exposing predict + predict_stream (SSE)."""
-
-    def __init__(self, workspace) -> None:
-        self._w = workspace
-        self._host = workspace.config.host.rstrip("/")
-
-    def _auth_headers(self) -> dict[str, str]:
-        """Fresh per request: OAuth tokens expire in 60 minutes, and a full
-        multilingual run outlives that."""
-        return {**dict(self._w.config.authenticate() or {}), "Content-Type": "application/json"}
-
-    def predict(self, *, endpoint: str, inputs: dict) -> dict:
-        return self._w.api_client.do("POST", f"/serving-endpoints/{endpoint}/invocations", body=inputs)
-
-    def predict_stream(self, *, endpoint: str, inputs: dict):
-        body = {**inputs, "stream": True}
-        url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
-        with requests.post(
-            url, headers=self._auth_headers(), json=body, stream=True, timeout=180
-        ) as resp:
-            resp.raise_for_status()
-            for line in resp.iter_lines(decode_unicode=True):
-                if line and line.startswith("data:"):
-                    payload = line[len("data:"):].strip()
-                    if payload and payload != "[DONE]":
-                        try:
-                            yield json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
 
 
 def _synthesize_16k_pcm(client: _SdkDeployClient, tts_endpoint: str, text: str, language: str) -> bytes:
@@ -140,14 +107,11 @@ def main() -> None:
     args = parser.parse_args()
     languages = [x.strip() for x in args.languages.split(",") if x.strip()]
 
-    from databricks.sdk import WorkspaceClient
-
     settings = RealtimeSettings.resolve()
     rv = realtime_voice()
     tts_endpoint = find_candidate(next(iter(rv.get("tts_candidates") or {})))["endpoint"]
 
-    w = WorkspaceClient(profile=databricks().get("profile") or None)
-    client = _SdkDeployClient(w)
+    client = _SdkDeployClient(databricks().get("profile") or None)
 
     serving = DatabricksServing(
         client=client,

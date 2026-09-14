@@ -35,12 +35,22 @@ class _FakeWorkspace:
 
 
 class _FakeResponse:
-    def __init__(self, *, payload: dict | None = None, lines: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        payload: dict | None = None,
+        lines: list[str] | None = None,
+        status_code: int = 200,
+        text: str = "",
+    ) -> None:
         self._payload = payload or {}
         self._lines = lines or []
+        self.status_code = status_code
+        self.text = text or json.dumps(self._payload)
 
     def raise_for_status(self) -> None:
-        return None
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code}", response=self)
 
     def json(self) -> dict:
         return self._payload
@@ -67,7 +77,7 @@ def sent(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     calls: list[dict] = []
 
     def fake_post(url, headers=None, json=None, timeout=None, stream=False):
-        calls.append({"url": url, "headers": dict(headers or {})})
+        calls.append({"url": url, "headers": dict(headers or {}), "json": json, "stream": stream})
         if stream:
             return _FakeResponse(lines=['data: {"ok": true}', "data: [DONE]"])
         return _FakeResponse(payload={"ok": True})
@@ -125,3 +135,32 @@ def test_stream_still_parses_sse_payloads(client: _SdkDeployClient, sent: list[d
     """Guards the refactor itself: fresh headers must not disturb SSE decoding."""
     assert list(client.predict_stream(endpoint="tts", inputs={})) == [{"ok": True}]
     assert json.loads('{"ok": true}') == {"ok": True}
+
+
+def test_serving_names_keep_invocations_url(client: _SdkDeployClient, sent: list[dict]) -> None:
+    client.predict(endpoint="stt", inputs={"a": 1})
+    assert sent[0]["url"].endswith("/serving-endpoints/stt/invocations")
+    assert sent[0]["json"] == {"a": 1}
+
+
+def test_unity_model_service_uses_gateway_chat(
+    client: _SdkDeployClient, sent: list[dict]
+) -> None:
+    model = "system.ai.qwen3-next-80b-a3b-instruct"
+    client.predict(endpoint=model, inputs={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 8})
+
+    assert sent[0]["url"].endswith("/ai-gateway/mlflow/v1/chat/completions")
+    assert sent[0]["json"]["model"] == model
+    assert sent[0]["json"]["messages"][0]["content"] == "hi"
+    assert sent[0]["headers"]["Databricks-Ai-Gateway-Request-Tags"] == '{"app":"genie-voice-agent"}'
+
+
+def test_unity_model_service_stream_uses_gateway(
+    client: _SdkDeployClient, sent: list[dict]
+) -> None:
+    model = "system.ai.gpt-5-5"
+    assert list(client.predict_stream(endpoint=model, inputs={"messages": []})) == [{"ok": True}]
+    assert sent[0]["url"].endswith("/ai-gateway/mlflow/v1/chat/completions")
+    assert sent[0]["json"]["model"] == model
+    assert sent[0]["json"]["stream"] is True
+    assert sent[0]["stream"] is True

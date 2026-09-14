@@ -2,8 +2,8 @@
 
 Produces the conversation-insight contract for both surfaces:
   - live agent-assist  -> `fm_enrich_utterance` (per utterance, low latency) via
-    the Databricks SDK `serving_endpoints.query` (recommended live path).
-  - call-level rollup   -> `fm_summarize_call` (per call) via the same endpoint.
+    Unity AI Gateway chat completions when `model_endpoint` is a UC model service.
+  - call-level rollup   -> `fm_summarize_call` (per call) via the same model.
 
 The gold refresh task runs set-based inference with the `ai_query` SQL
 function + structured outputs. This module is the request/response client used by
@@ -133,45 +133,61 @@ def call_json_schema() -> dict[str, Any]:
     }
 
 
+def _query_fm_chat(settings: Settings, messages: list[dict[str, str]]) -> str:
+    """One chat round-trip; Unity Gateway when the name is a model-service FQN."""
+    from genie_voice.databricks.ai_gateway import invoke
+    from genie_voice.databricks.client import get_workspace_client
+
+    client = get_workspace_client(settings)
+    inputs: dict[str, Any] = {
+        "messages": messages,
+        "max_tokens": settings.enrichment.max_tokens,
+    }
+    # Some reasoning models REJECT `temperature` with a BadRequest. Only send it
+    # when configured, and transparently retry without it if the model rejects it
+    # so the live FM path doesn't silently fall back on an unsupported parameter.
+    if settings.enrichment.temperature is not None:
+        inputs["temperature"] = settings.enrichment.temperature
+
+    def _call() -> dict[str, Any]:
+        return invoke(
+            host=client.config.host,
+            authenticate=client.config.authenticate,
+            endpoint=settings.enrichment.model_endpoint,
+            inputs=inputs,
+            timeout_s=45.0,
+        )
+
+    try:
+        resp = _call()
+    except Exception as exc:  # noqa: BLE001
+        if "temperature" in inputs and "temperature" in str(exc).lower():
+            inputs.pop("temperature")
+            resp = _call()
+        else:
+            raise
+    content = ((resp.get("choices") or [{}])[0].get("message") or {}).get("content")
+    return content if isinstance(content, str) else ""
+
+
 # --------------------------------------------------------------------------- #
 def _chat(settings: Settings, user: str, *, expect: str, language: str | None = None) -> dict[str, Any]:
-    """One chat round-trip to the serving endpoint; returns parsed JSON.
+    """One chat round-trip; returns parsed JSON.
 
     `expect` describes the fields to return, appended to the prompt so the model
     emits exactly the contract keys.
     """
-    from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
-
-    from genie_voice.databricks.client import get_workspace_client
-
-    client = get_workspace_client(settings)
     language_context = canonical_business_context_instruction(language)
-    kwargs: dict[str, Any] = {
-        "name": settings.enrichment.model_endpoint,
-        "messages": [
-            ChatMessage(role=ChatMessageRole.SYSTEM, content=_SYSTEM),
-            ChatMessage(
-                role=ChatMessageRole.USER,
-                content=f"{language_context}\n\n{expect}\n\nTRANSCRIPT:\n{user}",
-            ),
+    content = _query_fm_chat(
+        settings,
+        [
+            {"role": "system", "content": _SYSTEM},
+            {
+                "role": "user",
+                "content": f"{language_context}\n\n{expect}\n\nTRANSCRIPT:\n{user}",
+            },
         ],
-        "max_tokens": settings.enrichment.max_tokens,
-    }
-    # Some reasoning models (e.g. Claude Opus 4.x) REJECT `temperature` with a
-    # BadRequest. Only send it when configured, and transparently retry without
-    # it if the endpoint rejects it - so the live FM path doesn't silently fall
-    # back to the heuristic on an unsupported-parameter error.
-    if settings.enrichment.temperature is not None:
-        kwargs["temperature"] = settings.enrichment.temperature
-    try:
-        resp = client.serving_endpoints.query(**kwargs)
-    except Exception as exc:  # noqa: BLE001
-        if "temperature" in kwargs and "temperature" in str(exc).lower():
-            kwargs.pop("temperature")
-            resp = client.serving_endpoints.query(**kwargs)
-        else:
-            raise
-    content = resp.choices[0].message.content
+    )
     return _parse_json(content)
 
 
@@ -310,32 +326,15 @@ def fm_compose_agent_reply(
     *,
     language: str | None = None,
 ) -> str:
-    """Customer-facing agent prose via the FM serving endpoint (not Genie analytics)."""
+    """Customer-facing agent prose via the FM (not Genie analytics)."""
     settings = settings or get_settings()
-    from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
-
-    from genie_voice.databricks.client import get_workspace_client
-
-    client = get_workspace_client(settings)
-    kwargs: dict[str, Any] = {
-        "name": settings.enrichment.model_endpoint,
-        "messages": [
-            ChatMessage(role=ChatMessageRole.SYSTEM, content=agent_reply_system_prompt(language)),
-            ChatMessage(role=ChatMessageRole.USER, content=prompt),
+    content = _query_fm_chat(
+        settings,
+        [
+            {"role": "system", "content": agent_reply_system_prompt(language)},
+            {"role": "user", "content": prompt},
         ],
-        "max_tokens": settings.enrichment.max_tokens,
-    }
-    if settings.enrichment.temperature is not None:
-        kwargs["temperature"] = settings.enrichment.temperature
-    try:
-        resp = client.serving_endpoints.query(**kwargs)
-    except Exception as exc:  # noqa: BLE001
-        if "temperature" in kwargs and "temperature" in str(exc).lower():
-            kwargs.pop("temperature")
-            resp = client.serving_endpoints.query(**kwargs)
-        else:
-            raise
-    content = (resp.choices[0].message.content or "").strip()
+    ).strip()
     if not content:
         raise ValueError("empty agent reply from FM")
     return content
@@ -363,10 +362,6 @@ def fm_rewrite_in_language(
         target = language_spec(language_code).english_name
 
     settings = settings or get_settings()
-    from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
-
-    from genie_voice.databricks.client import get_workspace_client
-
     system = (
         "You rewrite contact-center application text for localization. "
         "Return only the rewritten text, no explanations. Preserve customer IDs, "
@@ -380,26 +375,13 @@ def fm_rewrite_in_language(
         "Rewrite this text in the target language while preserving canonical business values exactly:\n"
         f"{value}"
     )
-    client = get_workspace_client(settings)
-    kwargs: dict[str, Any] = {
-        "name": settings.enrichment.model_endpoint,
-        "messages": [
-            ChatMessage(role=ChatMessageRole.SYSTEM, content=system),
-            ChatMessage(role=ChatMessageRole.USER, content=user),
+    content = _query_fm_chat(
+        settings,
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
-        "max_tokens": settings.enrichment.max_tokens,
-    }
-    if settings.enrichment.temperature is not None:
-        kwargs["temperature"] = settings.enrichment.temperature
-    try:
-        resp = client.serving_endpoints.query(**kwargs)
-    except Exception as exc:  # noqa: BLE001
-        if "temperature" in kwargs and "temperature" in str(exc).lower():
-            kwargs.pop("temperature")
-            resp = client.serving_endpoints.query(**kwargs)
-        else:
-            raise
-    content = (resp.choices[0].message.content or "").strip()
+    ).strip()
     if not content:
         raise ValueError("empty localized rewrite from FM")
     return sanitize_generated_display_text(content)

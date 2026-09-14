@@ -70,6 +70,24 @@ ROUTES: tuple[RouteSpec, ...] = (
 )
 
 
+def _commit_synthesized_context(
+    session: VoiceSession,
+    *,
+    text: str,
+    purpose: str | None,
+    audio_chunks: int,
+) -> None:
+    """Commit only a successfully spoken opening to conversation history."""
+    if purpose != "opening_greeting" or audio_chunks <= 0:
+        return
+    if any(
+        message.get("role") == "assistant" and message.get("content")
+        for message in session.history
+    ):
+        return
+    session.history.append({"role": "assistant", "content": text})
+
+
 def capabilities_payload(settings: RealtimeSettings) -> dict:
     stt_langs = list(settings.stt_languages or settings.supported_languages)
     tts_langs = list(settings.tts_languages or settings.supported_languages)
@@ -336,9 +354,13 @@ async def handle_voice_ws(
                 if not text:
                     await _send_error(websocket, "invalid_event", "synthesize.text is required")
                     continue
+                purpose = payload.get("purpose")
+                if purpose not in (None, "opening_greeting"):
+                    await _send_error(websocket, "invalid_event", "Unsupported synthesize purpose.")
+                    continue
                 language = payload.get("language")
                 task = await _start_synthesize_turn(
-                    websocket, bundle, session, task, session_id, text, language
+                    websocket, bundle, session, task, session_id, text, language, purpose
                 )
             elif event_type == "barge_in":
                 if not spec.supports_barge_in:
@@ -529,6 +551,7 @@ async def _start_synthesize_turn(
     session_id: str,
     text: str,
     language: object,
+    purpose: object = None,
 ) -> asyncio.Task | None:
     """Speak ``text``.
 
@@ -583,7 +606,16 @@ async def _start_synthesize_turn(
     log_event("turn.started", session_id=session_id, turn_id=turn_id, capability=TEXT_TO_SPEECH)
     await websocket.send_json({"type": "turn.started", "turn_id": turn_id})
     return asyncio.create_task(
-        _emit_synthesize_turn(websocket, bundle, session, turn_id, text, lang, session_id)
+        _emit_synthesize_turn(
+            websocket,
+            bundle,
+            session,
+            turn_id,
+            text,
+            lang,
+            session_id,
+            str(purpose) if purpose else None,
+        )
     )
 
 
@@ -691,6 +723,7 @@ async def _emit_synthesize_turn(
     text: str,
     language: str | None,
     session_id: str,
+    purpose: str | None = None,
 ) -> None:
     audio_chunks = 0
     try:
@@ -705,6 +738,14 @@ async def _emit_synthesize_turn(
                         chunks=audio_chunks,
                     )
             await websocket.send_json(event)
+        # The next conversational turn sees the exact customer name and wording
+        # that was actually spoken, never an unrelated cached seed.
+        _commit_synthesized_context(
+            session,
+            text=text,
+            purpose=purpose,
+            audio_chunks=audio_chunks,
+        )
     except asyncio.CancelledError:
         log_event("turn.cancelled", session_id=session_id, turn_id=turn_id)
         raise
