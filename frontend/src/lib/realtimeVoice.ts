@@ -113,7 +113,11 @@ export interface RealtimeVoiceSession {
    * reference — used for the agent-initiated greeting and deep-dive summary so
    * the whole call keeps ONE consistent voice.
    */
-  synthesize: (text: string, language?: string) => void;
+  synthesize: (
+    text: string,
+    language?: string,
+    options?: { purpose?: "opening_greeting" }
+  ) => void;
   /**
    * Cancel the in-flight server turn and mark its turn_id stale so late events
    * are dropped. Always pair with local playback.flush().
@@ -423,9 +427,20 @@ export async function startRealtimeVoice(
         ws.send(JSON.stringify({ type: "audio.end" }));
       }
     },
-    synthesize: (text: string, language?: string) => {
+    synthesize: (
+      text: string,
+      language?: string,
+      options?: { purpose?: "opening_greeting" }
+    ) => {
       if (!closed && ws.readyState === WebSocket.OPEN && text.trim()) {
-        ws.send(JSON.stringify({ type: "synthesize", text, language: language || undefined }));
+        ws.send(
+          JSON.stringify({
+            type: "synthesize",
+            text,
+            language: language || undefined,
+            purpose: options?.purpose,
+          })
+        );
       }
     },
     bargeIn: () => {

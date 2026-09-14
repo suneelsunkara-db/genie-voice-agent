@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .evidence import Evidence, TableEvidence
+from .evidence import Evidence, ProseEvidence, TableEvidence
 from .refuse import ErrorCode, ErrorEvidence, no_evidence_refuse, permission_refuse
 
 _DISPLAY_ONLY_KEYS = {
@@ -94,6 +94,21 @@ def evidence_from_tool_result(
         from .genie_adapters import evidence_from_genie_one
 
         return evidence_from_genie_one(result)
+
+    if name == "prepare_billing_action":
+        proposal = str(result.get("proposal_text") or "").strip()
+        proposal_id = str(result.get("proposal_id") or "").strip()
+        if proposal and proposal_id:
+            return Evidence(
+                source=src,
+                prose=ProseEvidence(text=proposal, citations=[proposal_id]),
+                meta={
+                    "action": result.get("action"),
+                    "customer_id": result.get("customer_id"),
+                    "invoice_id": result.get("invoice_id"),
+                    "confirmation_required": True,
+                },
+            )
 
     tables = result.get("tables")
     if isinstance(tables, list) and tables:
