@@ -17,33 +17,20 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
+if str(_REPO / "backend") not in sys.path:
+    sys.path.insert(0, str(_REPO / "backend"))
 
 from _realtime_config import databricks, realtime_voice  # noqa: E402
-from realtime_api.services import DatabricksServing  # noqa: E402
-
-
-class _SdkClient:
-    """Adapts ``DatabricksServing``'s ``client.predict`` to the REST invocation."""
-
-    def __init__(self, workspace) -> None:
-        self._w = workspace
-
-    def predict(self, *, endpoint: str, inputs: dict) -> dict:
-        return self._w.api_client.do(
-            "POST", f"/serving-endpoints/{endpoint}/invocations", body=inputs
-        )
+from realtime_api.services import DatabricksServing, _SdkDeployClient  # noqa: E402
 
 
 def main() -> None:
-    from databricks.sdk import WorkspaceClient
-
     rv = realtime_voice()
     llm = str(rv.get("llm_endpoint") or "")
     defaults = rv.get("llm_defaults") or {}
-    w = WorkspaceClient(profile=databricks().get("profile") or None)
 
     serving = DatabricksServing(
-        client=_SdkClient(w),
+        client=_SdkDeployClient(databricks().get("profile") or None),
         stt_endpoint="",
         llm_endpoint=llm,
         tts_endpoint="",

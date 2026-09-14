@@ -12,13 +12,22 @@ from __future__ import annotations
 
 import argparse
 import statistics
+import sys
 import time
+from pathlib import Path
 from typing import Any
 
-from _realtime_config import databricks
+_REPO = Path(__file__).resolve().parents[2]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+if str(_REPO / "backend") not in sys.path:
+    sys.path.insert(0, str(_REPO / "backend"))
+
+from _realtime_config import databricks  # noqa: E402
+from realtime_api.services import _SdkDeployClient  # noqa: E402
 
 _CANDIDATES = [
-    "databricks-qwen3-next-80b-a3b-instruct",
+    "system.ai.qwen3-next-80b-a3b-instruct",
     "databricks-gemini-3-1-flash-lite",
     "databricks-gemini-3-5-flash",
     "databricks-claude-haiku-4-5",
@@ -52,7 +61,7 @@ def _call(client: Any, endpoint: str, language: str, *, temperature: bool) -> tu
     if temperature:
         body["temperature"] = 0.4
     start = time.perf_counter()
-    r = client.api_client.do("POST", f"/serving-endpoints/{endpoint}/invocations", body=body)
+    r = client.predict(endpoint=endpoint, inputs=body)
     elapsed = (time.perf_counter() - start) * 1000
     ch = (r.get("choices") or [{}])[0].get("message", {}).get("content")
     return elapsed, (ch if isinstance(ch, str) else "")
@@ -65,9 +74,7 @@ def main() -> None:
     args = parser.parse_args()
     languages = [x.strip() for x in args.languages.split(",") if x.strip()]
 
-    from databricks.sdk import WorkspaceClient
-
-    client = WorkspaceClient(profile=databricks().get("profile") or None)
+    client = _SdkDeployClient(profile=databricks().get("profile") or None)
 
     print(f"reps={args.reps} langs={languages}\n")
     header = f"{'endpoint':44} {'temp':6} {'median':>8} {'p95':>8} {'min':>7} {'max':>7}"
