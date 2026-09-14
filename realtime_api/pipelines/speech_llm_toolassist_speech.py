@@ -20,6 +20,35 @@ from ._shared import language_mismatch, resolve_language, stream_tts, transcribe
 logger = logging.getLogger("realtime_voice")
 
 
+def _public_agent_event(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Project an internal runtime event onto the browser-safe wire contract.
+
+    Agent Mode deliberately works in canonical English. Its raw report belongs to
+    the server-side rendering pipeline and must not reach the browser through the
+    generic action result before localization. The original event is retained by
+    ``_consume`` for evidence composition; only its public projection is redacted.
+    """
+    if envelope.get("kind") != "action.completed":
+        return envelope
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict) or payload.get("name") != "start_deep_dive":
+        return envelope
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return envelope
+
+    public_result = dict(result)
+    for internal_field in ("report", "canonical_question", "reasoning"):
+        public_result.pop(internal_field, None)
+    return {
+        **envelope,
+        "payload": {
+            **payload,
+            "result": public_result,
+        },
+    }
+
+
 @lru_cache(maxsize=1)
 def _llm_turn_timeout_s() -> float:
     """Config-sourced LLM per-turn budget (realtime_voice.timeouts.llm_turn_s).
@@ -1229,7 +1258,7 @@ async def process_turn(
                         await _consume(current)
                         # Ordered AgentRuntime events are now a real wire contract,
                         # not a test-only library.
-                        wire_event = current.envelope()
+                        wire_event = _public_agent_event(current.envelope())
                         wire_event["seq"] = (
                             seq_offset + int(current.seq) + engagement_seq_shift
                         )
