@@ -178,10 +178,10 @@ class EnrichmentConfig(BaseModel):
     # Unity Catalog model service FQN (system.ai.*) or a serving-endpoint name.
     # Stronger models improve accuracy; smaller/faster ones lower latency + cost
     # on the per-utterance live path.
-    model_endpoint: str = "system.ai.claude-opus-4-8"
+    model_endpoint: str = "system.ai.qwen3-next-80b-a3b-instruct"
     max_tokens: int = 512
-    # Optional: some reasoning models (Claude Opus 4.x) reject `temperature`. Set
-    # to null to omit it; the engine also retries without it if rejected.
+    # Optional. Some reasoning models reject `temperature`; set null to omit it.
+    # The engine also retries without it if the model rejects the parameter.
     temperature: float | None = None
 
 

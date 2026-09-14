@@ -290,7 +290,7 @@ APP_NAME=genie-voice-agent \
 DATABRICKS_PROFILE=<profile> \
 SECRET_SCOPE=genie-voice \
 SQL_WAREHOUSE_ID=<warehouse-id> \
-CLAUDE_ENDPOINT=system.ai.claude-opus-4-8 \
+ENRICHMENT_MODEL_SERVICE=system.ai.qwen3-next-80b-a3b-instruct \
 WHISPER_ENDPOINT=voice_asr_en_finetuned_whisper_lora \
 ./deploy_app.sh
 ```

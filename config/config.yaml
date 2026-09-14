@@ -192,10 +192,10 @@ pipeline:
 # ai_query with structured (json_schema) output. No heuristic fallback - if the FM
 # is unavailable the insight is reported as unavailable, not faked.
 enrichment:
-  model_endpoint: "system.ai.claude-opus-4-8"   # UC model service FQN (ai_query-compatible)
+  model_endpoint: "system.ai.qwen3-next-80b-a3b-instruct"  # same multilingual UC model as voice LLM
   max_tokens: 512
-  # null = omit temperature. Claude Opus 4.x (a reasoning model) rejects it; set a
-  # number (e.g. 0.0) only for endpoints that support it for deterministic output.
+  # null = omit temperature. Set a number (e.g. 0.0) only when the model supports
+  # it and you want deterministic JSON extraction.
   temperature: null
 
 # Enterprise dataset generation (quality + referential integrity for Genie).

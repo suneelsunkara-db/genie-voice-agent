@@ -40,7 +40,7 @@ SECRET_SCOPE="${SECRET_SCOPE:-genie-voice}"           # scope holding vendor key
 SQL_WAREHOUSE_ID="${SQL_WAREHOUSE_ID:-d0a0a25efd015c58}"  # serving warehouse
 # Empty = derive from config/config.yaml enrichment.model_endpoint (do not hardcode
 # a serving-endpoint default; FM chat is a Unity Catalog model service).
-CLAUDE_ENDPOINT="${CLAUDE_ENDPOINT:-}"
+ENRICHMENT_MODEL_SERVICE="${ENRICHMENT_MODEL_SERVICE:-}"
 WHISPER_ENDPOINT="${WHISPER_ENDPOINT:-voice_asr_en_finetuned_whisper_lora}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-}"                    # empty -> /Workspace/Users/<me>/<app>
 # Optional comma-separated override. By default this is derived from the
@@ -58,6 +58,11 @@ APP_EXTERNAL_SPS="${APP_EXTERNAL_SPS:-705947df-7bea-415f-af6a-4642a43ba1be}"
 log()  { printf "\033[36m[app-deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[33m[app-deploy]\033[0m %s\n" "$*"; }
 die()  { printf "\033[31m[app-deploy]\033[0m %s\n" "$*"; exit 1; }
+
+if [[ -n "${CLAUDE_ENDPOINT:-}" && -z "$ENRICHMENT_MODEL_SERVICE" ]]; then
+  warn "CLAUDE_ENDPOINT is renamed to ENRICHMENT_MODEL_SERVICE; using the old name as an alias."
+  ENRICHMENT_MODEL_SERVICE="$CLAUDE_ENDPOINT"
+fi
 
 dbx() { if [[ -n "$DATABRICKS_PROFILE" ]]; then databricks "$@" -p "$DATABRICKS_PROFILE"; else databricks "$@"; fi; }
 
@@ -200,7 +205,7 @@ log "ASR endpoints to attach: $ASR_ENDPOINTS"
 # AI Gateway; those are EXECUTE-granted in grant_app_sp.py, not attached as
 # serving_endpoint resources. Read from the DEPLOYED config (never config.local.yaml).
 _VOICE_JSON="$(
-  CONFIG_YAML="$ROOT/config/config.yaml" CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" \
+  CONFIG_YAML="$ROOT/config/config.yaml" ENRICHMENT_MODEL_SERVICE="$ENRICHMENT_MODEL_SERVICE" \
   PYTHONPATH="$ROOT/backend:$ROOT" "$PYBIN" - <<'PY'
 import json, os, yaml
 from genie_voice.databricks.ai_gateway import is_unity_model_service
@@ -209,7 +214,7 @@ with open(os.environ["CONFIG_YAML"]) as fh:
     cfg = yaml.safe_load(fh) or {}
 rv = cfg.get("realtime_voice") or {}
 enrichment = ((cfg.get("enrichment") or {}).get("model_endpoint") or "").strip()
-override = (os.environ.get("CLAUDE_ENDPOINT") or "").strip()
+override = (os.environ.get("ENRICHMENT_MODEL_SERVICE") or "").strip()
 if override:
     enrichment = override
 
@@ -238,19 +243,19 @@ print(json.dumps({
 }))
 PY
 )"
-CLAUDE_ENDPOINT="$(printf '%s' "$_VOICE_JSON" | "$PYBIN" -c 'import json,sys;print(json.load(sys.stdin).get("enrichment") or "")')"
+ENRICHMENT_MODEL_SERVICE="$(printf '%s' "$_VOICE_JSON" | "$PYBIN" -c 'import json,sys;print(json.load(sys.stdin).get("enrichment") or "")')"
 MODEL_SERVICES="$(printf '%s' "$_VOICE_JSON" | "$PYBIN" -c 'import json,sys;print(",".join(json.load(sys.stdin).get("model_services") or []))')"
 if [[ -z "${REALTIME_ENDPOINTS:-}" ]]; then
   REALTIME_ENDPOINTS="$(printf '%s' "$_VOICE_JSON" | "$PYBIN" -c 'import json,sys;print(",".join(json.load(sys.stdin).get("serving") or []))')"
 fi
 
-if [[ -n "$CLAUDE_ENDPOINT" ]]; then
-  if [[ "$CLAUDE_ENDPOINT" == *.*.* ]]; then
-    dbx api get "/api/2.1/unity-catalog/model-services/$CLAUDE_ENDPOINT" >/dev/null 2>&1 \
-      || die "Required enrichment model service '$CLAUDE_ENDPOINT' does not exist or is not accessible."
+if [[ -n "$ENRICHMENT_MODEL_SERVICE" ]]; then
+  if [[ "$ENRICHMENT_MODEL_SERVICE" == *.*.* ]]; then
+    dbx api get "/api/2.1/unity-catalog/model-services/$ENRICHMENT_MODEL_SERVICE" >/dev/null 2>&1 \
+      || die "Required enrichment model service '$ENRICHMENT_MODEL_SERVICE' does not exist or is not accessible."
   else
-    dbx serving-endpoints get "$CLAUDE_ENDPOINT" >/dev/null 2>&1 \
-      || die "Required enrichment endpoint '$CLAUDE_ENDPOINT' does not exist or is not accessible."
+    dbx serving-endpoints get "$ENRICHMENT_MODEL_SERVICE" >/dev/null 2>&1 \
+      || die "Required enrichment endpoint '$ENRICHMENT_MODEL_SERVICE' does not exist or is not accessible."
   fi
 fi
 
@@ -279,7 +284,7 @@ REALTIME_ENDPOINTS="$_RT_FILTERED"
 log "Realtime serving endpoints to attach: $REALTIME_ENDPOINTS"
 
 APP_NAME="$APP_NAME" SECRET_SCOPE="$SECRET_SCOPE" SQL_WAREHOUSE_ID="$SQL_WAREHOUSE_ID" \
-CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" \
+ENRICHMENT_MODEL_SERVICE="$ENRICHMENT_MODEL_SERVICE" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" \
 REALTIME_ENDPOINTS="$REALTIME_ENDPOINTS" INCLUDE_EL="$INCLUDE_EL" \
 PYTHONPATH="$ROOT/backend:$ROOT" "$PYBIN" - > "$APP_JSON" <<'PY'
 import json, os
@@ -287,9 +292,9 @@ from genie_voice.databricks.ai_gateway import is_unity_model_service
 res = [
     {"name": "sql-warehouse",    "sql_warehouse":    {"id": os.environ["SQL_WAREHOUSE_ID"], "permission": "CAN_USE"}},
 ]
-claude = (os.environ.get("CLAUDE_ENDPOINT") or "").strip()
-if claude and not is_unity_model_service(claude):
-    res.append({"name": "claude-endpoint", "serving_endpoint": {"name": claude, "permission": "CAN_QUERY"}})
+enrichment = (os.environ.get("ENRICHMENT_MODEL_SERVICE") or "").strip()
+if enrichment and not is_unity_model_service(enrichment):
+    res.append({"name": "enrichment-model", "serving_endpoint": {"name": enrichment, "permission": "CAN_QUERY"}})
 
 seen = set()
 for idx, endpoint in enumerate(os.environ["ASR_ENDPOINTS"].split(","), start=1):

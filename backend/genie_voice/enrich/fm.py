@@ -143,10 +143,9 @@ def _query_fm_chat(settings: Settings, messages: list[dict[str, str]]) -> str:
         "messages": messages,
         "max_tokens": settings.enrichment.max_tokens,
     }
-    # Some reasoning models (e.g. Claude Opus 4.x) REJECT `temperature` with a
-    # BadRequest. Only send it when configured, and transparently retry without
-    # it if the model rejects it - so the live FM path doesn't silently fall
-    # back to the heuristic on an unsupported-parameter error.
+    # Some reasoning models REJECT `temperature` with a BadRequest. Only send it
+    # when configured, and transparently retry without it if the model rejects it
+    # so the live FM path doesn't silently fall back on an unsupported parameter.
     if settings.enrichment.temperature is not None:
         inputs["temperature"] = settings.enrichment.temperature
 

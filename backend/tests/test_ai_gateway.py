@@ -16,11 +16,11 @@ def test_is_unity_model_service() -> None:
 
 def test_chat_body_sets_model_and_stream() -> None:
     body = ai_gateway.chat_body(
-        "system.ai.claude-opus-4-8",
+        "system.ai.qwen3-next-80b-a3b-instruct",
         {"messages": [], "max_tokens": 16},
         stream=True,
     )
-    assert body["model"] == "system.ai.claude-opus-4-8"
+    assert body["model"] == "system.ai.qwen3-next-80b-a3b-instruct"
     assert body["stream"] is True
     assert body["max_tokens"] == 16
 
