@@ -173,12 +173,29 @@ def summarize_for_voice(question: str, answer: str, language: str | None) -> str
         "sentences the agent should speak."
     )
     user = f"User asked: {question}\n\nGoverned answer:\n{text[:8000]}"
-    return shared_serving().summarize(
-        system=system,
-        user=user,
-        max_tokens=summary_tokens,
-        endpoint=endpoint,
-    ).strip()
+    serving = shared_serving()
+    # Reasoning-capable conversion endpoints can occasionally spend a small token
+    # ceiling internally and return an empty visible message. One bounded retry
+    # with the same prompt and a 512-token ceiling is enough room for reasoning
+    # while the prompt still constrains the visible answer to 2-3 sentences.
+    budgets = list(dict.fromkeys((summary_tokens, max(summary_tokens, 512))))
+    last_error: Exception | None = None
+    for budget in budgets:
+        try:
+            summary = serving.summarize(
+                system=system,
+                user=user,
+                max_tokens=budget,
+                endpoint=endpoint,
+            ).strip()
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            continue
+        if summary:
+            return summary
+    if last_error is not None:
+        raise RuntimeError("voice summary generation failed") from last_error
+    raise ValueError("voice summary generation returned no text")
 
 
 def _translation_system(language: str | None) -> str:

@@ -40,6 +40,36 @@ def test_summary_uses_call_language_and_is_voice_bounded(monkeypatch):
     assert call["max_tokens"] > 0
 
 
+def test_empty_reasoning_summary_retries_with_larger_budget(monkeypatch):
+    class _ReasoningServing(_Serving):
+        def summarize(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs["max_tokens"] < 512:
+                return ""
+            return "Die Ausgaben stiegen hauptsächlich wegen der Reise."
+
+    serving = _ReasoningServing()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+    monkeypatch.setattr(
+        answer_rendering,
+        "_render_knobs",
+        lambda: (220, 1800, "reasoning-model"),
+    )
+
+    summary = answer_rendering.summarize_for_voice(
+        "Warum sind meine Ausgaben gestiegen?",
+        "Travel increased expenses by $2,445.",
+        "de-DE",
+    )
+
+    assert summary.startswith("Die Ausgaben")
+    assert [call["max_tokens"] for call in serving.calls] == [220, 512]
+    assert all(call["endpoint"] == "reasoning-model" for call in serving.calls)
+
+
 def test_full_translation_streams_in_order(monkeypatch):
     serving = _Serving()
     monkeypatch.setattr(

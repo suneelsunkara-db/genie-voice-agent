@@ -7,6 +7,7 @@ import pytest
 
 from realtime_api.pipelines.speech_llm_toolassist_speech import (
     _navigation_intents,
+    _public_agent_event,
     _timeout_for_route,
     _tool_work_timeout_s,
     _tools_for_capability,
@@ -21,6 +22,30 @@ from realtime_api.runtime.navigation_graph import (
     NAVIGATION_GRAPH,
     run_profile_navigation,
 )
+
+
+def test_agent_mode_internal_english_report_is_not_sent_to_browser():
+    internal = {
+        "kind": "action.completed",
+        "payload": {
+            "name": "start_deep_dive",
+            "result": {
+                "status": "completed",
+                "report": "Internal English report",
+                "canonical_question": "Why did expenses increase?",
+                "reasoning": ["Writing final response"],
+                "tables": [{"columns": ["amount"], "rows": [[3400]]}],
+            },
+        },
+    }
+
+    public = _public_agent_event(internal)
+
+    assert public["payload"]["result"] == {
+        "status": "completed",
+        "tables": [{"columns": ["amount"], "rows": [[3400]]}],
+    }
+    assert internal["payload"]["result"]["report"] == "Internal English report"
 
 
 class ScriptedClassifier:
