@@ -1,9 +1,10 @@
-"""Stateless inference adapters for Databricks Model Serving.
+"""Stateless inference adapters for Databricks Model Serving and Unity AI Gateway.
 
-The STT/TTS/LLM endpoints are Databricks Agent Framework endpoints
-(``ResponsesAgent``, ``task = agent/v1/responses``). We therefore query them with
-the OpenAI Responses shape (``input`` + ``custom_inputs``) via the MLflow
-deployments client and read structured payloads back from ``custom_outputs``.
+STT/TTS stay on Agent Framework serving endpoints (``ResponsesAgent``,
+``task = agent/v1/responses``) queried with ``input`` + ``custom_inputs``.
+Foundation-model chat uses a Unity Catalog model service FQN and is routed to
+Unity AI Gateway chat completions. Dummy/local names without a catalog.schema
+leaf keep the serving invocations path.
 """
 from __future__ import annotations
 
@@ -92,51 +93,27 @@ class _SdkDeployClient:
         self._w = WorkspaceClient(profile=profile or None)
         self._host = self._w.config.host.rstrip("/")
 
-    def _auth_headers(self) -> dict[str, str]:
-        """Fresh auth headers for one request.
-
-        Must be re-read per call: the SP OAuth token the app runs on lives 60
-        minutes, and the SDK only refreshes it when asked. Caching this dict at
-        construction pins one token for the life of the process, so every
-        serving call starts returning 403 an hour after startup.
-        """
-        return {**dict(self._w.config.authenticate() or {}), "Content-Type": "application/json"}
-
     def predict(self, *, endpoint: str, inputs: dict) -> dict:
-        import requests as _requests
+        from genie_voice.databricks.ai_gateway import invoke
 
-        url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
-        resp = _requests.post(
-            url, headers=self._auth_headers(), json=inputs, timeout=self._predict_timeout_s
+        return invoke(
+            host=self._host,
+            authenticate=self._w.config.authenticate,
+            endpoint=endpoint,
+            inputs=inputs,
+            timeout_s=self._predict_timeout_s,
         )
-        resp.raise_for_status()
-        return resp.json()
 
     def predict_stream(self, *, endpoint: str, inputs: dict):
-        import requests
+        from genie_voice.databricks.ai_gateway import invoke_stream
 
-        body = {**inputs, "stream": True}
-        url = f"{self._host}/serving-endpoints/{endpoint}/invocations"
-        with requests.post(
-            url,
-            headers=self._auth_headers(),
-            json=body,
-            stream=True,
-            timeout=self._stream_timeout_s,
-        ) as resp:
-            resp.raise_for_status()
-            # requests defaults text/event-stream to ISO-8859-1, which mangles UTF-8
-            # (Hindi, em-dashes, …) into mojibake. The serving SSE body is UTF-8, so
-            # pin it before decoding or the streamed translation comes back garbled.
-            resp.encoding = "utf-8"
-            for line in resp.iter_lines(decode_unicode=True):
-                if line and line.startswith("data:"):
-                    payload = line[len("data:"):].strip()
-                    if payload and payload != "[DONE]":
-                        try:
-                            yield json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
+        yield from invoke_stream(
+            host=self._host,
+            authenticate=self._w.config.authenticate,
+            endpoint=endpoint,
+            inputs=inputs,
+            timeout_s=self._stream_timeout_s,
+        )
 
 
 @dataclass(frozen=True)

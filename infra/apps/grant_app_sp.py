@@ -15,6 +15,9 @@ It grants each independently (one failure doesn't block the rest):
   4. Card issuer (when enabled) - the same UC/Lakebase/Genie grants for the
      credit-card domain's OWN schema + volume + Genie space (both Genie lanes).
 
+  5. Unity Catalog model services (Option B FM chat) - USE CATALOG/SCHEMA on
+     ``system`` / ``system.ai`` plus EXECUTE on each configured model service.
+
 The connecting/granting identity is YOUR user (run_as from config.local.yaml),
 who must own the catalog/schema, the Lakebase instance, and the Genie space.
 """
@@ -181,20 +184,71 @@ def grant_card_issuer(settings, sp: str) -> None:
     _grant_genie_space(settings, sp, settings.card_issuer.genie_space_name)
 
 
+def grant_model_services(settings, sp: str, names: list[str]) -> None:
+    """Grant EXECUTE on Unity Catalog model services used for FM chat."""
+    from genie_voice.databricks.ai_gateway import is_unity_model_service, model_service_id
+    from genie_voice.databricks.warehouse_sql import execute_sql
+
+    fqns = [model_service_id(n) for n in names if is_unity_model_service(n)]
+    if not fqns:
+        _log("no Unity model services to grant; skipping.")
+        return
+
+    catalogs: set[str] = set()
+    schemas: set[tuple[str, str]] = set()
+    for fqn in fqns:
+        catalog, schema, _leaf = fqn.split(".", 2)
+        catalogs.add(catalog)
+        schemas.add((catalog, schema))
+
+    p = f"`{sp}`"
+    for catalog in sorted(catalogs):
+        stmt = f"GRANT USE CATALOG ON CATALOG `{catalog}` TO {p}"
+        try:
+            execute_sql(settings, stmt)
+            _log(f"UC model-service ok: {stmt}")
+        except Exception as exc:  # noqa: BLE001
+            _log(f"UC model-service WARN ({stmt}): {exc}")
+    for catalog, schema in sorted(schemas):
+        stmt = f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO {p}"
+        try:
+            execute_sql(settings, stmt)
+            _log(f"UC model-service ok: {stmt}")
+        except Exception as exc:  # noqa: BLE001
+            _log(f"UC model-service WARN ({stmt}): {exc}")
+
+    for fqn in fqns:
+        cat, schema, leaf = fqn.split(".", 2)
+        stmt = f"GRANT EXECUTE ON MODEL SERVICE `{cat}`.`{schema}`.`{leaf}` TO {p}"
+        try:
+            execute_sql(settings, stmt)
+            _log(f"UC model-service EXECUTE ok: {stmt}")
+        except Exception as exc:  # noqa: BLE001
+            _log(f"UC model-service WARN ({stmt}): {exc}")
+            _log(f"UC model-service GRANT failed for {fqn}; grant EXECUTE in the UI.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Grant the app service principal its runtime access.")
     ap.add_argument("--sp-client-id", required=True, help="App service principal application (client) id")
+    ap.add_argument(
+        "--model-services",
+        default="",
+        help="comma-separated Unity Catalog model service FQNs (FM chat)",
+    )
     args = ap.parse_args()
     sp = args.sp_client_id.strip()
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", sp):
         raise SystemExit(f"--sp-client-id does not look like a UUID: {sp!r}")
 
     settings = get_settings()
+    names = [n.strip() for n in (args.model_services or "").split(",") if n.strip()]
     _log(f"granting app service principal: {sp}")
     grant_unity_catalog(settings, sp)
     grant_lakebase(settings, sp)
     grant_genie(settings, sp)
     grant_card_issuer(settings, sp)
+    grant_model_services(settings, sp, names)
     _log("done")
 
 

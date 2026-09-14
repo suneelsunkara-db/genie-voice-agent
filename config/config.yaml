@@ -188,11 +188,11 @@ pipeline:
 
 # Conversation intelligence (intent/sentiment/next-best-action/summary).
 # The Databricks Foundation Model API is the SOLE engine: live agent-assist calls
-# the serving endpoint per utterance; batch gold uses ai_query with structured
-# (json_schema) output. No heuristic fallback - if the FM is unavailable the
-# insight is reported as unavailable, not faked.
+# the Unity Catalog model service per utterance (Unity AI Gateway); batch gold uses
+# ai_query with structured (json_schema) output. No heuristic fallback - if the FM
+# is unavailable the insight is reported as unavailable, not faked.
 enrichment:
-  model_endpoint: "databricks-claude-opus-4-8"   # any model serving endpoint
+  model_endpoint: "system.ai.claude-opus-4-8"   # UC model service FQN (ai_query-compatible)
   max_tokens: 512
   # null = omit temperature. Claude Opus 4.x (a reasoning model) rejects it; set a
   # number (e.g. 0.0) only for endpoints that support it for deterministic output.
@@ -228,11 +228,10 @@ card_issuer:
 # endpoints; audio rides the Responses custom_inputs/custom_outputs channel.
 # Catalog/schema/profile are inherited from the `databricks:` block above.
 realtime_voice:
-  # Middle stage of the voice loop: a Databricks foundation-model chat endpoint.
-  # Benchmarked across en/th/id/zh (6 reps): Qwen3-Next 80B A3B is the fastest
-  # option that also accepts `temperature` and `tools` -- ~1.17s median / 1.34s
-  # p95 vs ~2.63s / 3.58s for claude-sonnet-5 (which rejects `temperature`).
-  llm_endpoint: databricks-qwen3-next-80b-a3b-instruct
+  # Middle stage of the voice loop: Unity Catalog model service (Unity AI Gateway
+  # chat completions). Benchmarked across en/th/id/zh (6 reps): Qwen3-Next 80B
+  # A3B is the fastest option that also accepts `temperature` and `tools`.
+  llm_endpoint: system.ai.qwen3-next-80b-a3b-instruct
   # All language conversion — offline UI copy AND runtime deep-dive text — runs on
   # gpt-5-5 for terminology quality. gemma mistranslated one-word billing labels and
   # mistransliterated terms (Hindi "autopay" -> the non-word "autopet"); gpt-5-5 is
@@ -240,11 +239,11 @@ realtime_voice:
   #
   # Offline UI-copy translation only (scripts/i18n/translate_locales.py); never on a
   # call path.
-  i18n_endpoint: databricks-gpt-5-5
+  i18n_endpoint: system.ai.gpt-5-5
   # Runtime text-to-text language conversion on the deep-dive lane (spoken "why"
   # summary + on-screen report translation). Split from llm_endpoint: these are
   # tool-free text->text turns. Empty falls back to llm_endpoint.
-  conversion_endpoint: databricks-gpt-5-5
+  conversion_endpoint: system.ai.gpt-5-5
   # LLM sampling + tool-calling knobs for the middle stage.
   llm_defaults:
     temperature: 0.4

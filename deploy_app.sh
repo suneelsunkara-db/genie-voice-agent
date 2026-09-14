@@ -9,8 +9,9 @@
 # Steps:
 #   1. build the frontend for same-origin (VITE_API_BASE_URL="") -> api/app/static
 #   2. push vendor API keys into a Databricks secret scope
-#   3. attach app resources (warehouse + secrets + serving endpoints) so the app
-#      service principal is auto-granted access on deploy, then re-assert CAN_USE
+#   3. attach app resources (warehouse + secrets + STT/TTS serving endpoints) so
+#      the app service principal is auto-granted access on deploy; FM chat uses
+#      Unity Catalog model services (EXECUTE via grant_app_sp.py), then re-assert CAN_USE
 #      for external callers (see APP_EXTERNAL_* below) so cross-workspace access
 #      survives every redeploy
 #   4. sync source to a workspace folder (respects .gitignore) — this includes
@@ -37,7 +38,9 @@ APP_NAME="${APP_NAME:-genie-voice-agent}"
 DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-fe-vm-vdm-classic-rcn6ip}"  # ~/.databrickscfg profile
 SECRET_SCOPE="${SECRET_SCOPE:-genie-voice}"           # scope holding vendor keys
 SQL_WAREHOUSE_ID="${SQL_WAREHOUSE_ID:-d0a0a25efd015c58}"  # serving warehouse
-CLAUDE_ENDPOINT="${CLAUDE_ENDPOINT:-databricks-claude-opus-4-8}"
+# Empty = derive from config/config.yaml enrichment.model_endpoint (do not hardcode
+# a serving-endpoint default; FM chat is a Unity Catalog model service).
+CLAUDE_ENDPOINT="${CLAUDE_ENDPOINT:-}"
 WHISPER_ENDPOINT="${WHISPER_ENDPOINT:-voice_asr_en_finetuned_whisper_lora}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-}"                    # empty -> /Workspace/Users/<me>/<app>
 # Optional comma-separated override. By default this is derived from the
@@ -120,11 +123,9 @@ if oversized:
     raise SystemExit("source contains files over the Databricks Apps 10 MiB limit")
 PY
 
-log "verifying warehouse and required serving endpoints"
+log "verifying warehouse and required serving / model-service targets"
 dbx warehouses get "$SQL_WAREHOUSE_ID" >/dev/null 2>&1 \
   || die "SQL warehouse '$SQL_WAREHOUSE_ID' does not exist or is not accessible."
-dbx serving-endpoints get "$CLAUDE_ENDPOINT" >/dev/null 2>&1 \
-  || die "Required enrichment endpoint '$CLAUDE_ENDPOINT' does not exist or is not accessible."
 
 # ---- 2. vendor keys -> secret scope (evals/benchmarks; not injected into the app)
 DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.deepgram_api_key)' 2>/dev/null || true)}"
@@ -193,41 +194,75 @@ done
 ASR_ENDPOINTS="$_FILTERED"
 log "ASR endpoints to attach: $ASR_ENDPOINTS"
 
-# ---- 3a. realtime voice endpoints (STT/LLM/TTS) as app resources ------------
-# The Realtime Voice API is mounted at /realtime in the app; its Databricks
-# serving endpoints (from the realtime_voice: block in config/config.yaml) need
-# CAN_QUERY granted to the app service principal. Read from the DEPLOYED config
-# (never config.local.yaml, which is not synced). All configured endpoints are
-# required: a partial voice deployment is not a successful deployment.
-REALTIME_ENDPOINTS="${REALTIME_ENDPOINTS:-}"
-if [[ -z "$REALTIME_ENDPOINTS" ]]; then
-  REALTIME_ENDPOINTS="$(
-    CONFIG_YAML="$ROOT/config/config.yaml" "$PYBIN" - <<'PY' 2>/dev/null || true
-import os, yaml
+# ---- 3a. realtime voice endpoints (STT/TTS serving + FM model services) ------
+# STT/TTS stay on serving endpoints (CAN_QUERY app resources). Foundation-model
+# chat (llm / conversion / enrichment) uses Unity Catalog model services via Unity
+# AI Gateway; those are EXECUTE-granted in grant_app_sp.py, not attached as
+# serving_endpoint resources. Read from the DEPLOYED config (never config.local.yaml).
+_VOICE_JSON="$(
+  CONFIG_YAML="$ROOT/config/config.yaml" CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" \
+  PYTHONPATH="$ROOT/backend:$ROOT" "$PYBIN" - <<'PY'
+import json, os, yaml
+from genie_voice.databricks.ai_gateway import is_unity_model_service
+
 with open(os.environ["CONFIG_YAML"]) as fh:
     cfg = yaml.safe_load(fh) or {}
 rv = cfg.get("realtime_voice") or {}
-endpoints = []
-if rv.get("llm_endpoint"):
-    endpoints.append(rv["llm_endpoint"])
-# Runtime text->text conversion lane (Agent-Mode deep-dive spoken "why" summary +
-# on-screen report translation). A DISTINCT endpoint (e.g. gpt-5-5) the app SP must
-# be able to CAN_QUERY -- without this grant deep dives can neither localize the
-# report nor speak the summary (both silently fail on the deployed app).
-if rv.get("conversion_endpoint"):
-    endpoints.append(rv["conversion_endpoint"])
+enrichment = ((cfg.get("enrichment") or {}).get("model_endpoint") or "").strip()
+override = (os.environ.get("CLAUDE_ENDPOINT") or "").strip()
+if override:
+    enrichment = override
+
+serving, models = [], []
+for name in (rv.get("llm_endpoint"), rv.get("conversion_endpoint"), rv.get("i18n_endpoint"), enrichment):
+    if not name:
+        continue
+    (models if is_unity_model_service(name) else serving).append(name)
 for group in ("stt_candidates", "tts_candidates"):
     for cand in (rv.get(group) or {}).values():
         if isinstance(cand, dict) and cand.get("endpoint"):
-            endpoints.append(cand["endpoint"])
-seen = []
-for e in endpoints:
-    if e and e not in seen:
-        seen.append(e)
-print(",".join(seen))
+            serving.append(cand["endpoint"])
+
+def _dedupe(items):
+    seen, out = [], []
+    for item in items:
+        if item and item not in seen:
+            seen.append(item)
+            out.append(item)
+    return out
+
+print(json.dumps({
+    "enrichment": enrichment,
+    "serving": _dedupe(serving),
+    "model_services": _dedupe(models),
+}))
 PY
-  )"
+)"
+CLAUDE_ENDPOINT="$(printf '%s' "$_VOICE_JSON" | "$PYBIN" -c 'import json,sys;print(json.load(sys.stdin).get("enrichment") or "")')"
+MODEL_SERVICES="$(printf '%s' "$_VOICE_JSON" | "$PYBIN" -c 'import json,sys;print(",".join(json.load(sys.stdin).get("model_services") or []))')"
+if [[ -z "${REALTIME_ENDPOINTS:-}" ]]; then
+  REALTIME_ENDPOINTS="$(printf '%s' "$_VOICE_JSON" | "$PYBIN" -c 'import json,sys;print(",".join(json.load(sys.stdin).get("serving") or []))')"
 fi
+
+if [[ -n "$CLAUDE_ENDPOINT" ]]; then
+  if [[ "$CLAUDE_ENDPOINT" == *.*.* ]]; then
+    dbx api get "/api/2.1/unity-catalog/model-services/$CLAUDE_ENDPOINT" >/dev/null 2>&1 \
+      || die "Required enrichment model service '$CLAUDE_ENDPOINT' does not exist or is not accessible."
+  else
+    dbx serving-endpoints get "$CLAUDE_ENDPOINT" >/dev/null 2>&1 \
+      || die "Required enrichment endpoint '$CLAUDE_ENDPOINT' does not exist or is not accessible."
+  fi
+fi
+
+IFS=',' read -ra _MS <<< "$MODEL_SERVICES"
+for _ep in "${_MS[@]}"; do
+  _ep="$(printf '%s' "$_ep" | xargs)"
+  [[ -z "$_ep" ]] && continue
+  dbx api get "/api/2.1/unity-catalog/model-services/$_ep" >/dev/null 2>&1 \
+    || die "Required Unity model service '$_ep' does not exist or is not accessible."
+done
+[[ -n "$MODEL_SERVICES" ]] && log "Unity model services (Gateway): $MODEL_SERVICES"
+
 _RT_FILTERED=""
 IFS=',' read -ra _RT_EPS <<< "$REALTIME_ENDPOINTS"
 for _ep in "${_RT_EPS[@]}"; do
@@ -236,22 +271,26 @@ for _ep in "${_RT_EPS[@]}"; do
   if dbx serving-endpoints get "$_ep" >/dev/null 2>&1; then
     _RT_FILTERED="${_RT_FILTERED:+$_RT_FILTERED,}$_ep"
   else
-    die "Required realtime endpoint '$_ep' does not exist or is not accessible."
+    die "Required realtime serving endpoint '$_ep' does not exist or is not accessible."
   fi
 done
 REALTIME_ENDPOINTS="$_RT_FILTERED"
-[[ -n "$REALTIME_ENDPOINTS" ]] || die "No realtime voice endpoints resolved from config/config.yaml."
-log "Realtime endpoints to attach: $REALTIME_ENDPOINTS"
+[[ -n "$REALTIME_ENDPOINTS" ]] || die "No realtime STT/TTS serving endpoints resolved from config/config.yaml."
+log "Realtime serving endpoints to attach: $REALTIME_ENDPOINTS"
 
 APP_NAME="$APP_NAME" SECRET_SCOPE="$SECRET_SCOPE" SQL_WAREHOUSE_ID="$SQL_WAREHOUSE_ID" \
 CLAUDE_ENDPOINT="$CLAUDE_ENDPOINT" WHISPER_ENDPOINT="$WHISPER_ENDPOINT" ASR_ENDPOINTS="$ASR_ENDPOINTS" \
 REALTIME_ENDPOINTS="$REALTIME_ENDPOINTS" INCLUDE_EL="$INCLUDE_EL" \
-"$PYBIN" - > "$APP_JSON" <<'PY'
+PYTHONPATH="$ROOT/backend:$ROOT" "$PYBIN" - > "$APP_JSON" <<'PY'
 import json, os
+from genie_voice.databricks.ai_gateway import is_unity_model_service
 res = [
     {"name": "sql-warehouse",    "sql_warehouse":    {"id": os.environ["SQL_WAREHOUSE_ID"], "permission": "CAN_USE"}},
-    {"name": "claude-endpoint",  "serving_endpoint": {"name": os.environ["CLAUDE_ENDPOINT"], "permission": "CAN_QUERY"}},
 ]
+claude = (os.environ.get("CLAUDE_ENDPOINT") or "").strip()
+if claude and not is_unity_model_service(claude):
+    res.append({"name": "claude-endpoint", "serving_endpoint": {"name": claude, "permission": "CAN_QUERY"}})
+
 seen = set()
 for idx, endpoint in enumerate(os.environ["ASR_ENDPOINTS"].split(","), start=1):
     endpoint = endpoint.strip()
@@ -318,8 +357,9 @@ fi
 
 # Grant UC + Lakebase + Genie access AS YOU (catalog/instance/space owner).
 if [[ -n "$SP_CLIENT_ID" ]]; then
-  log "granting app service principal ($SP_CLIENT_ID): UC + Lakebase + Genie"
+  log "granting app service principal ($SP_CLIENT_ID): UC + Lakebase + Genie + model services"
   PYTHONPATH=backend "$PYBIN" infra/apps/grant_app_sp.py --sp-client-id "$SP_CLIENT_ID" \
+    --model-services "$MODEL_SERVICES" \
     || warn "some grants failed - review output above and re-run infra/apps/grant_app_sp.py"
 else
   warn "could not resolve app service principal id; after deploy run:"

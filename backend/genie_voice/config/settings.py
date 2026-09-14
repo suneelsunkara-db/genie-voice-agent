@@ -166,8 +166,8 @@ class EnrichmentConfig(BaseModel):
     """How conversation insights (intent/sentiment/NBA/summary) are produced.
 
     The Databricks Foundation Model API is the SOLE engine. Live (agent-assist)
-    enrichment calls the serving endpoint per utterance; batch gold uses the
-    `ai_query` SQL function with structured (json_schema) output - same contract.
+    enrichment calls the Unity Catalog model service per utterance; batch gold uses
+    the `ai_query` SQL function with structured (json_schema) output - same contract.
     There is no heuristic/rules fallback: when the FM is unavailable (offline or
     an endpoint outage) the insight is reported as unavailable, not faked.
     """
@@ -175,10 +175,10 @@ class EnrichmentConfig(BaseModel):
     # namespace; we use it deliberately, so opt out of the namespace guard.
     model_config = {"protected_namespaces": ()}
 
-    # A Databricks model serving endpoint (pay-per-token FM, provisioned-throughput,
-    # external, or custom). Stronger models improve accuracy; smaller/faster ones
-    # lower latency + cost on the per-utterance live path.
-    model_endpoint: str = "databricks-claude-opus-4-8"
+    # Unity Catalog model service FQN (system.ai.*) or a serving-endpoint name.
+    # Stronger models improve accuracy; smaller/faster ones lower latency + cost
+    # on the per-utterance live path.
+    model_endpoint: str = "system.ai.claude-opus-4-8"
     max_tokens: int = 512
     # Optional: some reasoning models (Claude Opus 4.x) reject `temperature`. Set
     # to null to omit it; the engine also retries without it if rejected.

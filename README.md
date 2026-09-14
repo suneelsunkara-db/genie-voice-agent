@@ -252,8 +252,9 @@ at runtime).
   `databricks auth login --profile <profile>`.
 - `npm` (builds the frontend) and the repo virtualenv at `.venv/` (the script
   uses `.venv/bin/python` so backend deps are available when reading config).
-- The `partner_demo_catalog`, Lakebase instance, SQL warehouse, and the Claude /
-  Whisper serving endpoints already exist and are owned by (or grantable by) you.
+- The `partner_demo_catalog`, Lakebase instance, SQL warehouse, Whisper/STT/TTS
+  serving endpoints, and Unity Catalog model services (`system.ai.*`) already
+  exist and are owned by (or grantable by) you.
 
 ### What `deploy_app.sh` does (idempotent)
 
@@ -262,8 +263,10 @@ at runtime).
 2. **Pushes optional vendor keys** from `config.local.yaml` into the `genie-voice` secret
    scope (`elevenlabs_api_key` only if set).
 3. **Creates/updates the app** with declared **resources** (SQL warehouse,
-   Claude + Whisper serving endpoints) so the app's service
-   principal is auto-granted access. ElevenLabs is included only when its key exists.
+   Whisper/STT/TTS serving endpoints) so the app's service
+   principal is auto-granted `CAN_QUERY`. Foundation-model chat is a Unity Catalog
+   model service (`EXECUTE` granted in `grant_app_sp.py`), not a serving resource.
+   ElevenLabs is included only when its key exists.
 4. **Grants the service principal** its runtime access:
    - `workspace-access` **entitlement** via SCIM (needed to mint Lakebase Postgres
      OAuth tokens at runtime).
@@ -287,7 +290,7 @@ APP_NAME=genie-voice-agent \
 DATABRICKS_PROFILE=<profile> \
 SECRET_SCOPE=genie-voice \
 SQL_WAREHOUSE_ID=<warehouse-id> \
-CLAUDE_ENDPOINT=databricks-claude-opus-4-8 \
+CLAUDE_ENDPOINT=system.ai.claude-opus-4-8 \
 WHISPER_ENDPOINT=voice_asr_en_finetuned_whisper_lora \
 ./deploy_app.sh
 ```
@@ -418,9 +421,10 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
    All of the above are behind Databricks Apps auth (SSO in a browser; a Bearer
    token from an identity with access to the app for programmatic callers).
 
-   `deploy_app.sh` attaches the realtime STT/LLM/TTS serving endpoints (from the
+   `deploy_app.sh` attaches the realtime STT/TTS serving endpoints (from the
    `realtime_voice:` config block) as app resources so the service principal gets
-   `CAN_QUERY`. Missing endpoints are skipped with a warning.
+   `CAN_QUERY`. Foundation-model chat uses Unity Catalog model services via Unity
+   AI Gateway (`EXECUTE`, not a serving-endpoint resource).
 
 How to grant access and call Genie Space, Agent Mode, and Genie One from another
 client is documented in [Share and consume the realtime API](#share-and-consume-the-realtime-api).
@@ -778,7 +782,8 @@ All knobs live in the `realtime_voice:` block of `config/config.yaml`
 | `warmup` | `true` | Prime the STT/LLM/TTS replicas at startup |
 | `stt_warmup_passes` | `3` | STT warm-up passes fired at startup |
 | `debug_audio` / `debug_audio_dir` | `false` / `/tmp/realtime_audio` | Save each finalized turn's PCM to WAV |
-| `stt_candidates` / `tts_candidates` / `llm_endpoint` | — | Serving endpoints |
+| `stt_candidates` / `tts_candidates` | — | Serving endpoints (ResponsesAgent) |
+| `llm_endpoint` / `conversion_endpoint` | — | Unity Catalog model services (`system.ai.*`) via Unity AI Gateway |
 
 Other VAD/LLM/TTS defaults (silence window, min speech, temperature, diffusion
 steps) are `RealtimeSettings` fields in `realtime_api/config.py`, populated from
@@ -786,10 +791,14 @@ the same `realtime_voice:` block.
 
 ## Realtime voice model serving (candidates)
 
-Every realtime candidate is packaged as an MLflow **`ResponsesAgent`** (Databricks
-Agent Framework, `task = agent/v1/responses`) and deployed as an agent Model Serving
-endpoint — the raw `dataframe_records` pyfunc path is intentionally **not** used.
+STT/TTS candidates are packaged as an MLflow **`ResponsesAgent`** (Databricks
+Agent Framework, `task = agent/v1/responses`) and deployed as agent Model Serving
+endpoints — the raw `dataframe_records` pyfunc path is intentionally **not** used.
 Audio travels through the Responses `custom_inputs`/`custom_outputs` channel.
+
+The voice-loop LLM and deep-dive conversion models are Unity Catalog **model
+services** (`system.ai.*`) queried through Unity AI Gateway chat completions, not
+those serving endpoints.
 
 Registration/deployment code (`scripts/ml_asr/`):
 
