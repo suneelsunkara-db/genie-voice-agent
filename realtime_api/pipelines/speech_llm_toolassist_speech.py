@@ -12,9 +12,14 @@ from genie_voice.databricks.ai_gateway import GatewayPolicyDenied
 
 from ..capabilities import SPEECH_LLM_TOOLASSIST_SPEECH
 from ..guardrails import report
-from ..guardrails.boundaries import admit_speech_output, admit_transcript
+from ..guardrails.boundaries import (
+    SensitiveInputDenied,
+    admit_speech_output,
+    admit_transcript,
+)
 from ..languages import base_code, english_name
 from ..profiles import get_profile
+from ..runtime.phrases import phrase as fixed_phrase
 from ..runtime.refuse import ErrorCode, refuse_speech
 from ..session import VoiceSession
 from ..tracing import TurnTrace, submit_trace
@@ -227,7 +232,7 @@ def _navigation_intents(decision: Any) -> list[Any]:
         ResolvedIntent(
             name=selection.tool_name,
             arguments=dict(selection.arguments),
-            confirm_intent=selection.confirm_intent,
+            confirm_phrase=selection.confirm_phrase,
         )
     ]
 
@@ -321,24 +326,7 @@ def _finalize_billing_offer(
         session.profile_state["pending_confirm_mutate"] = candidate
 
 
-_FILLER_INTENT = (
-    "Politely acknowledge that you are looking into the customer's request right "
-    "now, and ask them to hold on for just a moment."
-)
-_PROGRESS_INTENTS: dict[str, str] = {
-    "progress_1": (
-        "In one short natural sentence, tell the caller you are still reviewing the "
-        "relevant business information and will share the answer when it is ready."
-    ),
-    "progress_2": (
-        "In one short natural sentence, tell the caller the analysis is taking a "
-        "little longer and that you are continuing to work on their answer."
-    ),
-    "progress_3": (
-        "In one short natural sentence, reassure the caller that the analysis is "
-        "still active and you will speak as soon as the answer is ready."
-    ),
-}
+_PROGRESS_KEYS = ("progress_1", "progress_2", "progress_3")
 
 # Narration of a REAL upstream step ("running the query", "resolving the model
 # name") beats a generic hold phrase, so when Genie reports what it is doing we say
@@ -348,15 +336,13 @@ _STEP_CACHE: dict[tuple[str, str], str] = {}
 _MAX_STEP_CACHE = 256
 # A hold phrase that takes longer than this to generate is not worth making the
 # answer it describes wait for it.
-_STEP_PHRASE_TIMEOUT_S = 3.0
-_STEP_INTENT = (
-    "You are telling a caller who is waiting what you are doing right now. In one "
-    'short natural sentence, say you are currently doing this: "{step}". Describe '
-    "the activity in plain business language only. Do not mention SQL, tables, "
-    "schemas, query results, internal reasoning, or platform implementation details. "
-    "Do not state, guess, or "
-    "invent any result, number, or finding."
-)
+_STEP_PHRASE_BY_LABEL = {
+    "Understanding your question": "progress.understanding",
+    "Finding the right data": "progress.finding_data",
+    "Running the analysis": "progress.running_analysis",
+    "Checking the results": "progress.checking_results",
+    "Preparing your answer": "progress.preparing_answer",
+}
 
 
 async def _step_phrase(bundle: ServingBundle, language: str, label: str) -> str:
@@ -365,37 +351,17 @@ async def _step_phrase(bundle: ServingBundle, language: str, label: str) -> str:
     cached = _STEP_CACHE.get((base, label))
     if cached is not None:
         return cached
-    try:
-        text = (
-            await asyncio.wait_for(
-                asyncio.to_thread(
-                    bundle.llm.phrase,
-                    _STEP_INTENT.format(step=label),
-                    language=language,
-                ),
-                timeout=_STEP_PHRASE_TIMEOUT_S,
-            )
-        ).strip()
-    except Exception:  # noqa: BLE001
-        # Narrating the wait must never delay the answer it is narrating.
-        logger.warning("step narration failed for %s", language, exc_info=True)
+    phrase_key = _STEP_PHRASE_BY_LABEL.get(label)
+    if phrase_key is None:
         return ""
+    text = fixed_phrase(phrase_key, language=language)
     if text and len(_STEP_CACHE) < _MAX_STEP_CACHE:
         _STEP_CACHE[(base, label)] = text
     return text
 
 
-def _switch_intent(detected: str) -> str:
-    name = english_name(detected)
-    return (
-        f"You noticed the caller is speaking {name}, but the app is currently set "
-        f"to a different language. In one short sentence, tell them you heard {name} "
-        f"and ask them to switch the app's language to {name} so you can continue."
-    )
-
-
 async def warm_filler(bundle: ServingBundle, language: str) -> None:
-    """Public entrypoint to pre-generate the in-language filler (see _warm_filler).
+    """Public entrypoint to pre-load the in-language filler (see _warm_filler).
 
     Called at session start so the acknowledgment is cached and ready before the
     first (often cold, tool-heavy) turn finishes — otherwise turn 1 races LLM
@@ -405,68 +371,39 @@ async def warm_filler(bundle: ServingBundle, language: str) -> None:
 
 
 async def _warm_filler(bundle: ServingBundle, language: str) -> None:
-    """Generate + cache bounded in-language engagement phrases."""
+    """Load and cache bounded in-language engagement phrases."""
     # No concrete language yet ("auto") → nothing to warm; the per-turn warm fires
     # once STT resolves the actual language. Guarding here keeps a stray "auto"
     # from caching an English clip under a bogus key.
     if not language or language == "auto":
         return
     base = base_code(language)
-    progress_ready = all((base, key) in _PROGRESS_CACHE for key in _PROGRESS_INTENTS)
+    progress_ready = all((base, key) in _PROGRESS_CACHE for key in _PROGRESS_KEYS)
     if (base in _FILLER_CACHE and progress_ready) or base in _FILLER_WARMING:
         return
     _FILLER_WARMING.add(base)
-    try:
-        # ACK first: it has the earliest deadline. Later progress phrases may warm
-        # concurrently without delaying it.
-        if base not in _FILLER_CACHE:
-            text = (
-                await asyncio.to_thread(
-                    bundle.llm.phrase, _FILLER_INTENT, language=language
-                )
-            ).strip()
-            if text:
-                _FILLER_CACHE[base] = text
-
-        async def _one(key: str, intent: str) -> tuple[str, str]:
-            text = (
-                await asyncio.to_thread(bundle.llm.phrase, intent, language=language)
-            ).strip()
-            return key, text
-
-        missing = [
-            (key, intent)
-            for key, intent in _PROGRESS_INTENTS.items()
-            if (base, key) not in _PROGRESS_CACHE
-        ]
-        for key, text in await asyncio.gather(
-            *(_one(key, intent) for key, intent in missing)
-        ):
-            if text:
-                _PROGRESS_CACHE[(base, key)] = text
-    except Exception:  # noqa: BLE001
-        logger.warning("filler generation failed for %s", language, exc_info=True)
-    finally:
-        _FILLER_WARMING.discard(base)
+    if base not in _FILLER_CACHE:
+        _FILLER_CACHE[base] = fixed_phrase("filler.ack", language=language)
+    for key in _PROGRESS_KEYS:
+        if (base, key) not in _PROGRESS_CACHE:
+            _PROGRESS_CACHE[(base, key)] = fixed_phrase(
+                f"filler.{key}", language=language
+            )
+    _FILLER_WARMING.discard(base)
 
 
-# Spoken confirmations for deterministically-resolved intents (e.g. the home
-# concierge's "taking you to <industry> now") are generated in the caller's
-# language and cached per (intent, base-language) — one model call per phrase.
+# Spoken confirmations for deterministically-resolved intents are reviewed copy,
+# loaded in the caller's language and cached per (phrase key, base-language).
 _CONFIRM_CACHE: dict[tuple[str, str], str] = {}
 
 
-async def _confirm_phrase(bundle: ServingBundle, intent: str, language: str) -> str:
+async def _confirm_phrase(bundle: ServingBundle, phrase_key: str, language: str) -> str:
     """Short spoken confirmation for a pre-routed intent, in the caller's language."""
-    key = (intent, base_code(language))
+    key = (phrase_key, base_code(language))
     cached = _CONFIRM_CACHE.get(key)
     if cached is not None:
         return cached
-    try:
-        text = (await asyncio.to_thread(bundle.llm.phrase, intent, language=language)).strip()
-    except Exception:  # noqa: BLE001
-        logger.warning("confirmation phrase generation failed for %s", language, exc_info=True)
-        text = ""
+    text = fixed_phrase(phrase_key, language=language)
     if text:
         _CONFIRM_CACHE[key] = text
     return text
@@ -478,7 +415,11 @@ async def _switch_prompt(bundle: ServingBundle, expected: str, detected: str) ->
     cached = _SWITCH_CACHE.get(key)
     if cached is not None:
         return cached
-    text = (await asyncio.to_thread(bundle.llm.phrase, _switch_intent(detected), language=expected)).strip()
+    text = fixed_phrase(
+        "language.switch",
+        language=expected,
+        detected_language=english_name(detected),
+    )
     if text:
         _SWITCH_CACHE[key] = text
     return text
@@ -597,6 +538,16 @@ async def process_turn(
                 logger.warning("switch-language phrase failed for turn %d", turn_id, exc_info=True)
                 prompt = ""
             if prompt:
+                report(
+                    trace.guards,
+                    "deterministic_speech",
+                    "passed",
+                    stage="product_copy",
+                    owner="application",
+                    phase="before_synthesis",
+                    resource="language.switch",
+                    reason="reviewed language-mismatch prompt",
+                )
                 try:
                     async for event in stream_tts(
                         bundle, session, turn_id, prompt, mismatch["expected"],
@@ -820,6 +771,7 @@ async def process_turn(
             with trace.span("intent.router", "GUARD", input={"transcript": transcript}) as span:
                 span.set_output({"intents": [r.name for r in resolved]})
             confirm_text = ""
+            confirm_phrase_key = ""
             executed_intent = False
             for r in resolved:
                 try:
@@ -839,13 +791,26 @@ async def process_turn(
                     "arguments": r.arguments,
                     "result": result_obj,
                 }
-                if r.confirm_intent and not confirm_text:
-                    confirm_text = await _confirm_phrase(bundle, r.confirm_intent, language)
+                if r.confirm_phrase and not confirm_text:
+                    confirm_phrase_key = r.confirm_phrase
+                    confirm_text = await _confirm_phrase(
+                        bundle, r.confirm_phrase, language
+                    )
             if executed_intent:
                 if turn_id != session.turn_id:
                     trace.status = "superseded"
                     return
                 if confirm_text:
+                    report(
+                        trace.guards,
+                        "deterministic_speech",
+                        "passed",
+                        stage="product_copy",
+                        owner="application",
+                        phase="before_synthesis",
+                        resource=confirm_phrase_key,
+                        reason="reviewed navigation confirmation",
+                    )
                     session.history.append({"role": "assistant", "content": confirm_text})
                     trace.output_text = confirm_text
                     yield {"type": "response.text", "turn_id": turn_id, "text": confirm_text}
@@ -1308,16 +1273,9 @@ async def process_turn(
                 "result": invocation.get("result"),
             }
 
-        yield {
-            "type": "response.text",
-            "turn_id": turn_id,
-            "text": response_text,
-            "llm_ms": llm_ms,
-        }
-
         # Compose the ONLY speakable factual text from structured Evidence. The
-        # model's final prose remains useful display text but is never promoted to
-        # factual TTS after a tool call.
+        # model's final prose remains internal and is never published or promoted
+        # to factual TTS after a tool call.
         claims: list[dict] = []
         refuse_text: str | None = None
         # A long written answer may need the same dual rendering as the FSI deep
@@ -1358,7 +1316,7 @@ async def process_turn(
                 # total spend sgd: 416659.61; ...". A table-only result therefore gets
                 # the same rendering a narrative one does.
                 answer_source, panel_report = governed_answer_render(ev)
-                if answer_source:
+                if answer_source and ev.has_attributed_prose:
                     render_answer = answer_source
                     render_report = panel_report
                     render_source = ev.source
@@ -1366,12 +1324,11 @@ async def process_turn(
                     if isinstance(args, dict) and args.get("question"):
                         render_question = str(args["question"])
             elif name == "start_deep_dive" and isinstance(raw, dict):
-                # Agent Mode's report is the exact long-answer source used by the
-                # established FSI renderer. Tables remain the factual speech gate;
-                # this report is rendered into its short voice explanation.
+                # Agent Mode's report is model-written display prose over its query
+                # tables. It may paint in the panel, but it is not attributed prose
+                # and therefore can never become speech. TTS uses cited table cells.
                 long_report = str(raw.get("report") or "").strip()
                 if long_report:
-                    render_answer = long_report
                     render_report = long_report
                     render_source = ev.source
                     args = invocation.get("arguments")
@@ -1401,6 +1358,7 @@ async def process_turn(
                     render_question,
                     render_answer,
                     language,
+                    trace=trace,
                 )
             except Exception:  # noqa: BLE001
                 logger.warning("long-answer summary failed for turn %d", turn_id, exc_info=True)
@@ -1415,6 +1373,24 @@ async def process_turn(
             refuse_text=refuse_text,
             language=language,
         )
+        if capability.requires_tool:
+            grounded = bool(tool_invocations) and bool(
+                claims or rendered_summary or refuse_text
+            )
+            report(
+                trace.guards,
+                "evidence_grounding",
+                "passed" if grounded else "fired",
+                stage="response_composition",
+                owner="application",
+                phase="before_browser_and_tts",
+                resource=capability.id.value,
+                reason=(
+                    "tool-backed evidence admitted"
+                    if grounded
+                    else "unsupported model prose replaced with a refusal"
+                ),
+            )
         if navigation_decision.capability_id == CapabilityId.BILLING_ACTION:
             session.profile_state.pop("pending_confirm_mutate", None)
 
@@ -1457,7 +1433,9 @@ async def process_turn(
 
                 def _localize() -> None:
                     try:
-                        for delta in localize_answer_stream(render_report, language):
+                        for delta in localize_answer_stream(
+                            render_report, language, trace=trace
+                        ):
                             loop.call_soon_threadsafe(localization_queue.put_nowait, delta)
                     finally:
                         loop.call_soon_threadsafe(localization_queue.put_nowait, None)
@@ -1473,10 +1451,16 @@ async def process_turn(
             ledger=trace.guards,
         )
         speech_text = speech_admission.text
+        yield {
+            "type": "response.text",
+            "turn_id": turn_id,
+            "text": speech_text,
+            "llm_ms": llm_ms,
+        }
 
         # The exact words TTS is about to speak. A client that renders `response.text`
-        # would show the model's display prose, which a tool turn never speaks — so
-        # publish the committed speech separately and let the UI show what is heard.
+        # now sees the same admitted text; publish the committed event as the typed
+        # evidence/citation contract used by richer clients.
         # Emitted before synthesis starts, so the text lands as the voice begins.
         last_event_seq += 1
         session.event_seq_by_turn[turn_id] = last_event_seq
@@ -1596,24 +1580,30 @@ async def process_turn(
     except asyncio.CancelledError:
         trace.status = "cancelled"
         raise
-    except GatewayPolicyDenied as exc:
+    except (GatewayPolicyDenied, SensitiveInputDenied) as exc:
         # Policy DENY is a governed turn outcome, not an infrastructure failure.
         # An input denial retracts the rejected user message from server history;
         # the browser receives the same disposition in a typed event.
-        if not any(
-            entry.guard_id == "gateway.service_policy"
-            for entry in trace.guards.entries
-        ):
+        guard_id = (
+            "gateway.service_policy"
+            if isinstance(exc, GatewayPolicyDenied)
+            else "sensitive_input_tiering"
+        )
+        if not any(entry.guard_id == guard_id for entry in trace.guards.entries):
             report(
                 trace.guards,
-                "gateway.service_policy",
+                guard_id,
                 "fired",
                 stage="input_transcript" if exc.is_input_denial else "routing",
-                owner="gateway",
+                owner=(
+                    "gateway"
+                    if isinstance(exc, GatewayPolicyDenied)
+                    else "application"
+                ),
                 phase=exc.phase or "on_call_or_result",
                 resource=exc.resource,
                 reason=(
-                    f"{exc.policy_name}: Gateway service policy denied "
+                    f"{exc.policy_name}: policy denied "
                     f"{exc.phase or 'request_or_response'}"
                 ),
             )
@@ -1632,7 +1622,11 @@ async def process_turn(
         trace.status = "blocked"
         trace.error = None
         language = trace.language or session.config.language or "en-US"
-        refusal = refuse_speech(ErrorCode.UNSUPPORTED, language=language)
+        refusal = (
+            fixed_phrase("sensitive.blocked", language=language)
+            if isinstance(exc, SensitiveInputDenied)
+            else refuse_speech(ErrorCode.UNSUPPORTED, language=language)
+        )
         trace.output_text = refusal
         seq = int(session.event_seq_by_turn.get(turn_id, 0)) + 1
         session.event_seq_by_turn[turn_id] = seq

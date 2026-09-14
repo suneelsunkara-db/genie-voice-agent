@@ -34,7 +34,7 @@ def router() -> ConciergeRouterConfig:
 CONCIERGE_AGENT_NAME = "Genie"
 CONCIERGE_BRAND = "Databricks Genie Assisted Voice"
 
-# Greeting cache keyed by (base-language, first-name); one model call per key.
+# Greeting cache keyed by (base-language, first-name).
 _GREETING_CACHE: dict[tuple[str, str], str] = {}
 
 
@@ -104,32 +104,15 @@ CONCIERGE_SYSTEM_PROMPT = (
 )
 
 
-def _greeting_intent(first_name: str) -> str:
-    user_fact = (
-        f"- The signed-in user's first name is {first_name}.\n"
-        if first_name
-        else ""
-    )
-    return (
-        "AUTHORITATIVE APPLICATION CONTEXT:\n"
-        "- The application is named Databricks Genie Assisted Voice.\n"
-        "- Its home screen has a language menu at the top.\n"
-        "- It offers Telco billing support, a Financial Services credit-card assistant, "
-        "and a Databricks Knowledge Agent.\n"
-        "- The application uses Genie ontology and deep reasoning.\n"
-        f"{user_fact}\n"
-        "TASK: Using only that context, warmly welcome the user, invite them to choose "
-        "a language, briefly name the three experiences, and ask which one they want. "
-        "Do not add claims beyond the context."
-    )
-
-
 def concierge_greeting(language: str, first_name: str = "") -> str:
-    """The concierge's opening welcome, generated in the caller's language (cached)."""
+    """The concierge's reviewed opening welcome in the caller's language."""
     from .greetings import generate_greeting
 
     return generate_greeting(
-        language, first_name=first_name, intent=_greeting_intent, cache=_GREETING_CACHE
+        language,
+        first_name=first_name,
+        phrase_key="greeting.concierge",
+        cache=_GREETING_CACHE,
     )
 
 
@@ -137,7 +120,9 @@ def _seed_greeting_for(language: str) -> str:
     """An in-language welcome to seed LLM history so it knows it already greeted."""
     from .greetings import seed_greeting_for
 
-    return seed_greeting_for(language, intent=_greeting_intent, cache=_GREETING_CACHE)
+    return seed_greeting_for(
+        language, phrase_key="greeting.concierge", cache=_GREETING_CACHE
+    )
 
 
 def _make_concierge_context(session: Any, language: str) -> ToolContext:

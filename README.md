@@ -24,6 +24,7 @@ that used to live in subfolders have been merged here (see the table of contents
 - [Running the app: two setups](#running-the-app-two-setups)
 - [Setup A — Local (dev)](#setup-a--local-dev)
 - [Setup B — Databricks App (hosted)](#setup-b--databricks-app-hosted)
+- [Guardrails](#guardrails)
 - [Agent-assist API endpoints](#agent-assist-api-endpoints)
 - [Swapping a provider](#swapping-a-provider-no-code-changes)
 - [Capture mode: local vs live](#capture-mode-local-vs-live-data-producer)
@@ -117,6 +118,7 @@ appears in core code.
 
 ```
 config/            config.yaml (non-secret) + config.local.yaml (gitignored, holds secrets)
+                   + guardrails.yaml (policy control plane: identity, bundles, Gateway contracts)
 backend/           genie_voice package (core library)
   genie_voice/
     config/          settings loader (all tunables)
@@ -138,12 +140,14 @@ api/               FastAPI service (health, agent-assist, accounts, genie, statu
   app/static/      built React SPA served by FastAPI (populated by deploy_app.sh)
 frontend/          Vite/React agent-assist cockpit
 realtime_api/      standalone Realtime Voice API (WebSocket STT→LLM→TTS) — see below
+  phrases/         committed localized product speech (`runtime.json`, 24 languages)
 realtime_test_ui/  standalone browser test client for the Realtime Voice API — see below
 scripts/ml_asr/    OSS model register/deploy + realtime-voice agent packaging
 scripts/asr/       legacy EN-centric training + registration jobs
+scripts/i18n/      offline translation of the runtime phrase catalog
 infra/lakebase/    Lakebase Autoscaling provisioning
 infra/jobs/        serverless orchestration job deploy
-infra/apps/        grant_app_sp.py — grants UC + Lakebase + Genie to the app service principal
+infra/apps/        grant_app_sp.py, provision_ai_gateway.py, probe_ai_gateway_policies.py
 local-deploy.sh    end-to-end local deploy (U2M, runs as your user)
 start_app.sh       one-command local start (API + UI)
 deploy_app.sh      one-command deploy to Databricks Apps
@@ -253,8 +257,11 @@ at runtime).
 - `npm` (builds the frontend) and the repo virtualenv at `.venv/` (the script
   uses `.venv/bin/python` so backend deps are available when reading config).
 - The `partner_demo_catalog`, Lakebase instance, SQL warehouse, Whisper/STT/TTS
-  serving endpoints, and Unity Catalog model services (`system.ai.*`) already
-  exist and are owned by (or grantable by) you.
+  serving endpoints, and Unity Catalog **destination** model services
+  (`system.ai.*`) already exist and are owned by (or grantable by) you. App-owned
+  Gateway services (`genie_voice_qwen_guarded`, `genie_voice_gpt55_guarded`) are
+  created by `infra/apps/provision_ai_gateway.py`. Service-policy **attachments**
+  remain UI-only during the Databricks Beta.
 
 ### What `deploy_app.sh` does (idempotent)
 
@@ -262,22 +269,29 @@ at runtime).
    `frontend/dist` → `api/app/static`.
 2. **Pushes optional vendor keys** from `config.local.yaml` into the `genie-voice` secret
    scope (`elevenlabs_api_key` only if set).
-3. **Creates/updates the app** with declared **resources** (SQL warehouse,
+3. **Reconciles app-owned Unity AI Gateway model services** (routing, rate limits,
+   inference tables) via `infra/apps/provision_ai_gateway.py`, then **fails closed**
+   if the attached service policies drift from `config/guardrails.yaml`. Attachment
+   writes are UI-only in the current Beta; the provisioner only reads public APIs.
+4. **Runs the Gateway conformance matrix** (`infra/apps/probe_ai_gateway_policies.py`):
+   allow, jailbreak/unsafe/credential deny, contact redaction, and hallucination
+   pass-through against the live Qwen and GPT-5.5 services.
+5. **Creates/updates the app** with declared **resources** (SQL warehouse,
    Whisper/STT/TTS serving endpoints) so the app's service
-   principal is auto-granted `CAN_QUERY`. Foundation-model chat is a Unity Catalog
-   model service (`EXECUTE` granted in `grant_app_sp.py`), not a serving resource.
+   principal is auto-granted `CAN_QUERY`. Foundation-model chat uses the app-owned
+   Gateway services (`EXECUTE` granted in `grant_app_sp.py`), not a serving resource.
    ElevenLabs is included only when its key exists.
-4. **Grants the service principal** its runtime access:
+6. **Grants the service principal** its runtime access:
    - `workspace-access` **entitlement** via SCIM (needed to mint Lakebase Postgres
      OAuth tokens at runtime).
    - **UC + Lakebase + Genie** grants via `infra/apps/grant_app_sp.py`
      (catalog/schema/volume `SELECT`/`MODIFY`/`READ VOLUME`, Lakebase role +
      table/sequence grants, Genie `CAN_RUN`).
-5. **Applies and verifies OBO scopes** `genie` + `sql`; deployment fails if User
+7. **Applies and verifies OBO scopes** `genie` + `sql`; deployment fails if User
    Authorization is disabled or the scopes are not effective.
-6. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
+8. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
    `.gitignore`) and **deploys** in `SNAPSHOT` mode, printing the app URL.
-7. **Smoke-tests** health, realtime, Knowledge, capabilities, and forwarded user
+9. **Smoke-tests** health, realtime, Knowledge, capabilities, and forwarded user
    identity through the authenticated Databricks Apps URL.
 
 ### Configuration
@@ -309,6 +323,73 @@ dev sets a real email in `config.local.yaml`).
   Large non-runtime assets are `.gitignore`d (e.g. `deck-framework/`, `.run/`) so
   `databricks sync` skips them.
 - **Logs:** Compute → Apps → `genie-voice-agent` → Logs.
+- **Gateway policies:** `./deploy_app.sh` will not proceed until the UI-attached
+  policies match `config/guardrails.yaml` (handler, phases, rank, mode, action,
+  categories). Databricks stores redaction as `action: transform`; the matcher
+  treats that as the documented `redact` contract.
+
+## Guardrails
+
+`config/guardrails.yaml` (version 2.0) is the policy control plane. The Guardrails
+UI (`#/guardrails`) and `GET /traces/guardrails` read that manifest plus live
+deployment state. They do not keep a second catalog. Architecture detail lives in
+[`docs/guardrails-architecture.md`](docs/guardrails-architecture.md).
+
+### Planes
+
+| Plane | Where it lives | What it owns |
+|---|---|---|
+| Control | `config/guardrails.yaml` | Policy identity, bundles, Gateway contracts, conformance probes |
+| Enforcement | Unity AI Gateway + application boundaries | Foundation-model text vs speech/tools |
+| Evidence | `GuardLedger` → `voice_traces.guard_roster`; out-of-turn `voice_guard_events` | Durable, redacted decisions merged in `/traces/guardrails` |
+
+### Purpose-specific Gateway bundles
+
+App-owned model services route to platform destinations and carry **purpose-specific**
+policy sets — not one catch-all attachment:
+
+| Config key | Service | Destination | Bundle |
+|---|---|---|---|
+| `qwen` | `…genie_voice_qwen_guarded` | `system.ai.qwen3-next-80b-a3b-instruct` | `interactive_model_safety` |
+| `gpt55` | `…genie_voice_gpt55_guarded` | `system.ai.databricks-gpt-5-5` | `transform_model_safety` |
+
+Required Gateway ranks on both services:
+
+1. **Unsafe content** — enforce, input+output.
+2. **Jailbreak** — enforce, input.
+3. **Contact data** — redact email + phone (`transform` in the Databricks UI).
+4. **Credentials / government IDs** — block (cards, SSN, IBAN, passports, …). Extra
+   block categories (IP, MAC, VIN) are allowed as a superset.
+5. **Hallucination** — **log** observer only. It is not the factuality gate.
+
+The post-STT application boundary applies the same PII split before browser,
+history, model, tool, or persistence admission: emails/phones are masked;
+Luhn cards / SSN / credentials are denied (`sensitive.blocked` speech).
+
+### Deterministic product speech and cite-or-silence
+
+Greetings, fillers, progress narration, language-switch prompts, and navigation
+confirmations come from `realtime_api/phrases/runtime.json` — committed localized
+copy, never a runtime FM call. Refresh translations with
+`scripts/i18n/translate_runtime_phrases.py` (placeholder-preserving, full
+language/key coverage).
+
+Factual spoken answers are **cite-or-silence**: only tool cells or an attributed
+governed answer may cross the pre-TTS boundary. Unsupported model prose becomes a
+localized refusal. Browser `response.text` is the admitted committed speech, not
+uncited model output. Agent Mode reports stay display-only.
+
+### Live policy test (2026-09-14)
+
+Manual attachments match `config/guardrails.yaml` on both services (including
+Qwen contact redaction at rank 3 and hallucination in log mode).
+`provision_ai_gateway.py` verifies the contract; the behavioral matrix passes:
+allow, jailbreak/unsafe/credential deny, contact redaction, and hallucination
+pass-through.
+
+Do not use private UI endpoints or browser automation to write policies. When
+Databricks publishes a policy-attachment API, wire it behind the existing
+reconciler without changing the manifest or UI contract.
 
 ## Agent-assist API endpoints
 
@@ -328,6 +409,9 @@ dev sets a real email in `config.local.yaml`).
 | POST | `/calls/{call_id}/reset-demo-session` | Revert billing, clear resolution/timeline/utterances for replay |
 | GET | `/accounts/{customer_id}` | Customer + invoices + recent payments |
 | POST | `/genie/ask` | Ask the Genie space a question (NL → SQL) |
+| GET | `/traces` | Recent realtime voice turn traces (Lakebase `voice_traces`) |
+| GET | `/traces/sessions` | Session rollups of those traces |
+| GET | `/traces/guardrails` | Policy catalog + live Gateway deployment + merged guard evidence |
 
 Account facts are served from governed UC reference tables merged with persisted
 `billing_adjustments` when Lakebase is enabled; offline mode uses the local
@@ -423,8 +507,8 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
 
    `deploy_app.sh` attaches the realtime STT/TTS serving endpoints (from the
    `realtime_voice:` config block) as app resources so the service principal gets
-   `CAN_QUERY`. Foundation-model chat uses Unity Catalog model services via Unity
-   AI Gateway (`EXECUTE`, not a serving-endpoint resource).
+   `CAN_QUERY`. Foundation-model chat uses the app-owned Gateway services via Unity
+   AI Gateway (`EXECUTE`, not a serving-endpoint resource). See [Guardrails](#guardrails).
 
 How to grant access and call Genie Space, Agent Mode, and Genie One from another
 client is documented in [Share and consume the realtime API](#share-and-consume-the-realtime-api).
@@ -783,7 +867,7 @@ All knobs live in the `realtime_voice:` block of `config/config.yaml`
 | `stt_warmup_passes` | `3` | STT warm-up passes fired at startup |
 | `debug_audio` / `debug_audio_dir` | `false` / `/tmp/realtime_audio` | Save each finalized turn's PCM to WAV |
 | `stt_candidates` / `tts_candidates` | — | Serving endpoints (ResponsesAgent) |
-| `llm_endpoint` / `conversion_endpoint` | — | Unity Catalog model services (`system.ai.*`) via Unity AI Gateway |
+| `llm_endpoint` / `conversion_endpoint` | — | App-owned Gateway services (`…genie_voice_qwen_guarded`, `…genie_voice_gpt55_guarded`) routing to `system.ai.*` |
 
 Other VAD/LLM/TTS defaults (silence window, min speech, temperature, diffusion
 steps) are `RealtimeSettings` fields in `realtime_api/config.py`, populated from
@@ -796,9 +880,11 @@ Agent Framework, `task = agent/v1/responses`) and deployed as agent Model Servin
 endpoints — the raw `dataframe_records` pyfunc path is intentionally **not** used.
 Audio travels through the Responses `custom_inputs`/`custom_outputs` channel.
 
-The voice-loop LLM and deep-dive conversion models are Unity Catalog **model
-services** (`system.ai.*`) queried through Unity AI Gateway chat completions, not
-those serving endpoints.
+The voice-loop LLM and deep-dive conversion models are **app-owned Unity Catalog
+model services** (`genie_voice_qwen_guarded`, `genie_voice_gpt55_guarded`) that
+route to platform destinations (`system.ai.*`) through Unity AI Gateway chat
+completions, not those serving endpoints. Guardrail policy attachments live on
+the app-owned services; see [Guardrails](#guardrails).
 
 Registration/deployment code (`scripts/ml_asr/`):
 

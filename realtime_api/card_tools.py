@@ -323,44 +323,19 @@ CARD_SYSTEM_PROMPT = (
     "- Always respond in the caller's language ({language})."
 )
 
-# Card-domain content (brand + assistant persona). NOT a per-language table: the
-# greeting phrase below is rendered into the CALLER'S language by the multilingual
-# model (same pattern as the filler / switch-language prompts), so there is no
-# hardcoded per-language greeting and no English fallback.
-CARD_BRAND = "EveryCard"
-CARD_AGENT_NAME = "Genie Agent"
-
-# Greeting cache keyed by (base-language, first-name); one model call per key.
+# Greeting cache keyed by (base-language, first-name).
 _GREETING_CACHE: dict[tuple[str, str], str] = {}
 
 
-def _greeting_intent(first_name: str) -> str:
-    customer_fact = (
-        f"- The customer's first name is {first_name}.\n" if first_name else ""
-    )
-    return (
-        "AUTHORITATIVE APPLICATION CONTEXT:\n"
-        f"- The assistant is named {CARD_AGENT_NAME} and is the {CARD_BRAND} assistant.\n"
-        "- It can help a customer understand their latest statement.\n"
-        "- It can check whether a customer is getting all their rewards.\n"
-        f"{customer_fact}\n"
-        "TASK: Warmly greet the customer by first name when provided and ask what "
-        "they would like help with today. Do not make identity, organization, account, "
-        "product, rewards, or capability claims in the greeting."
-    )
-
-
 def card_greeting(language: str, first_name: str = "") -> str:
-    """The agent's opening greeting, generated in the CALLER'S language (cached).
-
-    Thin wrapper over the shared ``greetings`` mechanism with the card intent +
-    cache; see ``realtime_api/greetings.py`` for the (profile-agnostic) rendering,
-    caching, and "" degrade behavior.
-    """
+    """The agent's reviewed opening greeting in the caller's language."""
     from .greetings import generate_greeting
 
     return generate_greeting(
-        language, first_name=first_name, intent=_greeting_intent, cache=_GREETING_CACHE
+        language,
+        first_name=first_name,
+        phrase_key="greeting.card",
+        cache=_GREETING_CACHE,
     )
 
 
@@ -368,7 +343,9 @@ def _seed_greeting_for(language: str) -> str:
     """An in-language greeting to seed LLM history so it knows it already greeted."""
     from .greetings import seed_greeting_for
 
-    return seed_greeting_for(language, intent=_greeting_intent, cache=_GREETING_CACHE)
+    return seed_greeting_for(
+        language, phrase_key="greeting.card", cache=_GREETING_CACHE
+    )
 
 
 def _make_card_context(session: Any, language: str) -> ToolContext:

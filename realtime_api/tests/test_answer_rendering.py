@@ -33,10 +33,11 @@ def test_summary_uses_call_language_and_is_voice_bounded(monkeypatch):
         "es-ES",
     )
 
-    assert summary == "Resumen breve para hablar."
+    assert summary == "Informe traducido."
     call = serving.calls[0]
     assert "es-ES" in call["system"]
     assert "no markdown" in call["system"].lower()
+    assert "do not summarize" in call["system"].lower()
     assert call["max_tokens"] > 0
 
 
@@ -61,7 +62,7 @@ def test_empty_reasoning_summary_retries_with_larger_budget(monkeypatch):
 
     summary = answer_rendering.summarize_for_voice(
         "Warum sind meine Ausgaben gestiegen?",
-        "Travel increased expenses by $2,445.",
+        "Travel increased expenses.",
         "de-DE",
     )
 
@@ -120,10 +121,8 @@ def test_english_agent_mode_question_bypasses_translation(monkeypatch):
 def test_english_never_calls_the_translator(monkeypatch):
     """Knowledge (Genie One) and FSI deep-dive share this renderer.
 
-    The on-screen report is already English. Hitting gpt-5-5 to "translate" it
-    only adds latency and risks rewriting facts. The spoken 2-3 sentence summary
-    is a different call (summarize_for_voice) and still runs for English so TTS
-    does not read the full report.
+    The on-screen report is already English. Hitting gpt-5-5 to rewrite it adds
+    latency and risks changing facts.
     """
     serving = _Serving()
     monkeypatch.setattr(
@@ -137,7 +136,7 @@ def test_english_never_calls_the_translator(monkeypatch):
         assert serving.calls == []
 
 
-def test_english_spoken_summary_is_not_a_translation(monkeypatch):
+def test_english_spoken_excerpt_is_extractive_and_model_free(monkeypatch):
     serving = _Serving()
     monkeypatch.setattr(
         "realtime_api.serving_factory.shared_serving",
@@ -146,15 +145,12 @@ def test_english_spoken_summary_is_not_a_translation(monkeypatch):
 
     summary = answer_rendering.summarize_for_voice(
         "What is the cost?",
-        "A long governed answer.",
+        "First governed fact. Second governed fact. Third governed fact. Fourth fact.",
         "en-US",
     )
 
-    assert summary == "Resumen breve para hablar."
-    assert len(serving.calls) == 1
-    system = serving.calls[0]["system"]
-    assert "Translate" not in system
-    assert "en-US" in system
+    assert summary == "First governed fact. Second governed fact. Third governed fact."
+    assert serving.calls == []
 
 
 def test_a_narrative_answer_is_both_the_spoken_source_and_the_panel_report():
@@ -221,33 +217,13 @@ def test_an_unusable_result_renders_nothing_and_leaves_the_cites_to_speak():
     assert answer_rendering.governed_answer_render(Evidence(source="genie_one")) == ("", "")
 
 
-def test_a_table_only_answer_is_summarized_like_prose(monkeypatch):
-    """Genie answers "top spending categories" with rows and no narrative.
-
-    Those rows are still the answer, so they get the same short spoken rendering a
-    narrative gets. Without this the voice reads the row cites out loud —
-    "category: Shopping; total spend sgd: 416659.61; ..." — which is a cite list,
-    not an answer.
-    """
-    serving = _Serving()
-    monkeypatch.setattr(
-        "realtime_api.serving_factory.shared_serving",
-        lambda: serving,
-    )
-
+def test_table_markdown_is_available_for_display_rendering():
     report = answer_rendering.table_as_markdown(
         ["category", "total_spend_sgd", "total_transactions"],
         [["Shopping", "416659.61", 1645], ["Other", "365561.20", 1421]],
     )
     assert report.splitlines()[0] == "| category | total_spend_sgd | total_transactions |"
     assert "| Shopping | 416659.61 | 1645 |" in report
-
-    summary = answer_rendering.summarize_for_voice("Top categories?", report, "en-US")
-
-    assert summary == "Resumen breve para hablar."
-    system = serving.calls[0]["system"]
-    assert "row by row" in system
-    assert report in serving.calls[0]["user"]
 
 
 def test_table_markdown_is_bounded_and_survives_awkward_cells():

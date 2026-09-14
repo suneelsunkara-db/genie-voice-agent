@@ -384,12 +384,8 @@ def test_card_query_exposes_only_the_space_tool():
     assert [item["function"]["name"] for item in selected] == ["ask_card_genie"]
 
 
-def test_long_governed_answer_is_spoken_as_its_summary_not_row_by_row():
-    """The FSI deep dive speaks the rendered summary, never the composed rows.
-
-    Reading the composed claims aloud turns an Agent Mode report into minutes of
-    "column: value" narration, which is what the summarizer exists to prevent.
-    """
+def test_attributed_governed_answer_can_use_its_grounded_render():
+    """A rendered answer is speakable only after its source passed attribution."""
     from realtime_api.pipelines.speech_llm_toolassist_speech import _spoken_answer
 
     spoken = _spoken_answer(

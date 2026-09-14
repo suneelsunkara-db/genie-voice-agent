@@ -614,6 +614,46 @@ class LakebaseServing:
         )
         self._traces_table_ready = True
 
+    def _ensure_guard_events_table(self, cur) -> None:
+        """Ensure the append-only sink for guard decisions outside voice turns."""
+        if getattr(self, "_guard_events_table_ready", False):
+            return
+        table = self._table("voice_guard_events")
+        cur.execute("SELECT to_regclass(%s)", (table,))
+        row = cur.fetchone()
+        if row and row[0] is not None:
+            self._guard_events_table_ready = True
+            return
+        self._ensure_serving_schema(cur)
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {table} (
+                event_id       TEXT PRIMARY KEY,
+                occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                context        TEXT NOT NULL,
+                session_id     TEXT,
+                call_id        TEXT,
+                trace_id       TEXT,
+                turn_id        INTEGER,
+                guard_id       TEXT NOT NULL,
+                outcome        TEXT NOT NULL,
+                owner          TEXT,
+                enforcer       TEXT,
+                phase          TEXT,
+                resource       TEXT,
+                policy_version TEXT,
+                reason         TEXT,
+                language       TEXT,
+                surface        TEXT NOT NULL DEFAULT 'guardrail'
+            )
+            """
+        )
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS voice_guard_events_created_idx "
+            f"ON {table} (occurred_at DESC)"
+        )
+        self._guard_events_table_ready = True
+
     def _trace_columns(self) -> set[str]:
         """Promoted columns present on ``voice_traces``, migrating them in if absent.
 
@@ -698,6 +738,9 @@ class LakebaseServing:
         os.makedirs(base, exist_ok=True)
         return os.path.join(base, "voice_traces.jsonl")
 
+    def _guard_event_file(self) -> str:
+        return os.path.join(os.path.dirname(self._trace_file()), "voice_guard_events.jsonl")
+
     def _read_trace_file(self) -> list[dict[str, Any]]:
         path = self._trace_file()
         if not os.path.exists(path):
@@ -724,6 +767,75 @@ class LakebaseServing:
             warehouse_sql.insert_voice_trace_uc(self.settings, trace)
         except Exception:  # noqa: BLE001 - Lakebase is the source of truth for the UI
             pass
+
+    def insert_guard_event(self, event: dict[str, Any]) -> None:
+        """Persist one redacted guard decision that has no enclosing turn trace."""
+        event_id = str(event.get("event_id") or uuid.uuid4().hex)
+        record = {**event, "event_id": event_id}
+        if not self.enabled:
+            try:
+                with open(self._guard_event_file(), "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
+            return
+        table = self._table("voice_guard_events")
+        columns = [
+            "event_id", "context", "session_id", "call_id", "trace_id", "turn_id",
+            "guard_id", "outcome", "owner", "enforcer", "phase", "resource",
+            "policy_version", "reason", "language", "surface",
+        ]
+        values = {
+            **record,
+            "context": record.get("context") or "unknown",
+            "surface": record.get("surface") or "guardrail",
+        }
+        with self._conn() as conn, conn.cursor() as cur:
+            self._ensure_guard_events_table(cur)
+            cur.execute(
+                f"""
+                INSERT INTO {table} ({", ".join(columns)}, occurred_at)
+                VALUES ({", ".join(["%s"] * len(columns))}, now())
+                ON CONFLICT (event_id) DO NOTHING
+                """,
+                tuple(values.get(column) for column in columns),
+            )
+        if warehouse_configured(self.settings):
+            try:
+                from genie_voice.databricks import warehouse_sql
+
+                warehouse_sql.insert_guard_event_uc(self.settings, record)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def list_guard_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return recent standalone guard decisions, newest first."""
+        if not self.enabled:
+            path = self._guard_event_file()
+            if not os.path.exists(path):
+                return []
+            rows: list[dict[str, Any]] = []
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+            return list(reversed(rows))[:limit]
+        table = self._table("voice_guard_events")
+        with self._conn() as conn, conn.cursor() as cur:
+            self._ensure_guard_events_table(cur)
+            cur.execute(
+                f"SELECT * FROM {table} ORDER BY occurred_at DESC LIMIT %s",
+                (limit,),
+            )
+            columns = [item[0] for item in cur.description]
+            rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        for row in rows:
+            occurred = row.get("occurred_at")
+            if hasattr(occurred, "isoformat"):
+                row["occurred_at"] = occurred.isoformat()
+        return rows
 
     def insert_voice_trace(self, trace: dict[str, Any]) -> None:
         """Persist one turn trace. Called from the background trace-writer thread."""

@@ -670,37 +670,24 @@ KNOWLEDGE_SYSTEM_PROMPT = (
 _GREETING_CACHE: dict[tuple[str, str], str] = {}
 
 
-def _greeting_intent(first_name: str) -> str:
-    user_fact = (
-        f"- The signed-in user's first name is {first_name}.\n"
-        if first_name
-        else ""
-    )
-    return (
-        "AUTHORITATIVE APPLICATION CONTEXT:\n"
-        f"- The assistant is the {KNOWLEDGE_BRAND}.\n"
-        "- It answers questions about the Databricks platform.\n"
-        "- Its answers use a governed knowledge base with citations.\n"
-        f"{user_fact}\n"
-        "TASK: Warmly greet the user by first name when provided and ask what they "
-        "would like to know. Do not make identity, product, platform, knowledge-base, "
-        "citation, or capability claims in the greeting."
-    )
-
-
 def knowledge_greeting(language: str, first_name: str = "") -> str:
-    """The agent's opening greeting, generated in the caller's language (cached)."""
+    """The agent's reviewed opening greeting in the caller's language."""
     from .greetings import generate_greeting
 
     return generate_greeting(
-        language, first_name=first_name, intent=_greeting_intent, cache=_GREETING_CACHE
+        language,
+        first_name=first_name,
+        phrase_key="greeting.knowledge",
+        cache=_GREETING_CACHE,
     )
 
 
 def _seed_greeting_for(language: str) -> str:
     from .greetings import seed_greeting_for
 
-    return seed_greeting_for(language, intent=_greeting_intent, cache=_GREETING_CACHE)
+    return seed_greeting_for(
+        language, phrase_key="greeting.knowledge", cache=_GREETING_CACHE
+    )
 
 
 def _make_knowledge_context(session: Any, language: str) -> ToolContext:

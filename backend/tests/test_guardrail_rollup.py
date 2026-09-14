@@ -61,6 +61,9 @@ def client(monkeypatch):
         def list_voice_traces(self, **kwargs):
             return _ROWS
 
+        def list_guard_events(self, **kwargs):
+            return []
+
     monkeypatch.setattr(traces_router, "serving", lambda: _FakeServing())
     app = FastAPI()
     app.include_router(traces_router.router)
@@ -107,6 +110,9 @@ def test_rollup_is_empty_not_broken_without_any_rosters(monkeypatch):
         def list_voice_traces(self, **kwargs):
             return [{"trace_id": "t0", "guard_roster": None}]
 
+        def list_guard_events(self, **kwargs):
+            return []
+
     monkeypatch.setattr(traces_router, "serving", lambda: _Empty())
     app = FastAPI()
     app.include_router(traces_router.router)
@@ -119,3 +125,34 @@ def test_guardrails_route_is_not_swallowed_by_the_trace_id_route(client):
     # /traces/{trace_id} is declared after it; a reorder would turn this rollup
     # into a 404 lookup for a trace literally named "guardrails".
     assert client.get("/traces/guardrails").status_code == 200
+
+
+def test_standalone_gateway_event_is_merged_without_fake_turn(monkeypatch):
+    class _Events:
+        def list_voice_traces(self, **kwargs):
+            return []
+
+        def list_guard_events(self, **kwargs):
+            return [
+                {
+                    "event_id": "g1",
+                    "context": "conversion",
+                    "guard_id": "gateway.service_policy",
+                    "outcome": "fired",
+                    "owner": "gateway",
+                    "surface": "guardrail",
+                    "reason": "block-jailbreak: Gateway service policy denied pre_call",
+                    "occurred_at": "2026-09-14T00:00:00Z",
+                }
+            ]
+
+    monkeypatch.setattr(traces_router, "serving", lambda: _Events())
+    app = FastAPI()
+    app.include_router(traces_router.router)
+    body = TestClient(app).get("/traces/guardrails").json()
+    assert body["turns"] == 0
+    assert body["turns_with_roster"] == 0
+    assert body["standalone_events"] == 1
+    assert body["checks"] == 1
+    assert body["recent_fired"][0]["context"] == "conversion"
+    assert body["recent_fired"][0]["trace_id"] is None

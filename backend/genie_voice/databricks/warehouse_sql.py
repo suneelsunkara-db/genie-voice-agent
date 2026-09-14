@@ -180,6 +180,57 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
     return {"ok": True, "trace_id": trace.get("trace_id")}
 
 
+def ensure_guard_events_table(settings: Settings | None = None) -> None:
+    """Idempotent retained Delta sink for standalone guardrail decisions."""
+    settings = settings or get_settings()
+    table = settings.fqtn("voice_guard_events")
+    execute_sql(
+        settings,
+        f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+          event_id STRING, occurred_at TIMESTAMP, context STRING,
+          session_id STRING, call_id STRING, trace_id STRING, turn_id INT,
+          guard_id STRING, outcome STRING, owner STRING, enforcer STRING,
+          phase STRING, resource STRING, policy_version STRING, reason STRING,
+          language STRING, surface STRING
+        ) USING DELTA
+        """,
+    )
+
+
+def insert_guard_event_uc(
+    settings: Settings, event: dict[str, Any]
+) -> dict[str, Any]:
+    """Append a redacted standalone guard decision to the retained Delta sink."""
+    ensure_guard_events_table(settings)
+    table = settings.fqtn("voice_guard_events")
+    statement = f"""
+        INSERT INTO {table} (
+          event_id, occurred_at, context, session_id, call_id, trace_id, turn_id,
+          guard_id, outcome, owner, enforcer, phase, resource, policy_version,
+          reason, language, surface
+        ) VALUES (
+          :event_id, current_timestamp(), :context, :session_id, :call_id, :trace_id,
+          CAST(:turn_id AS INT), :guard_id, :outcome, :owner, :enforcer, :phase,
+          :resource, :policy_version, :reason, :language, :surface
+        )
+    """
+    values = {
+        key: str(event.get(key) or "")
+        for key in (
+            "event_id", "context", "session_id", "call_id", "trace_id",
+            "guard_id", "outcome", "owner", "enforcer", "phase", "resource",
+            "policy_version", "reason", "language", "surface",
+        )
+    }
+    values["turn_id"] = (
+        str(int(event["turn_id"])) if event.get("turn_id") is not None else None
+    )
+    parameters = _params(values)
+    execute_sql(settings, statement, parameters=parameters)
+    return {"ok": True, "event_id": event.get("event_id")}
+
+
 def apply_billing_resolution_uc(
     settings: Settings,
     adjustment: dict[str, Any],

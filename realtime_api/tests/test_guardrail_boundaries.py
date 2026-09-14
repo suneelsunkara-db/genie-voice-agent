@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from realtime_api.guardrails.boundaries import (
+    SensitiveInputDenied,
     SpeechBoundaryViolation,
     admit_speech_output,
     admit_transcript,
@@ -40,6 +41,7 @@ def test_transcript_admission_records_model_owned_decisions() -> None:
     )
     assert admitted == "hello"
     assert [(entry.guard_id, entry.outcome) for entry in ledger.entries] == [
+        ("sensitive_input_tiering", "passed"),
         ("language_id", "delegated"),
         ("no_speech_suppression", "passed"),
     ]
@@ -52,3 +54,33 @@ def test_speech_admission_is_resource_bound_and_records_decision() -> None:
     assert admission.text == "hello"
     assert admission.resource == "voxcpm2"
     assert ledger.entries[0].guard_id == "speech_output_boundary"
+
+
+def test_contact_identifiers_are_masked_before_model_admission() -> None:
+    ledger = GuardLedger()
+    admitted = admit_transcript(
+        "Email me at person@example.com or call +1 (415) 555-2671",
+        detected_language="en-US",
+        pinned_language="en-US",
+        resource="qwen-asr",
+        ledger=ledger,
+    )
+    assert admitted == "Email me at [email address] or call [phone number]"
+    decision = next(
+        entry for entry in ledger.entries if entry.guard_id == "sensitive_input_tiering"
+    )
+    assert decision.outcome == "fired"
+    assert decision.reason == "masked contact categories=email,phone"
+
+
+def test_payment_card_is_blocked_before_model_admission() -> None:
+    ledger = GuardLedger()
+    with pytest.raises(SensitiveInputDenied):
+        admit_transcript(
+            "My card is 4111 1111 1111 1111",
+            detected_language="en-US",
+            pinned_language="en-US",
+            resource="qwen-asr",
+            ledger=ledger,
+        )
+    assert ledger.entries[0].reason == "blocked high-risk category=payment_card"

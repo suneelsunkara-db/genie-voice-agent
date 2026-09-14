@@ -467,45 +467,22 @@ BILLING_PROFILE_PROMPT = (
 
 
 # ---------------------------------------------------------------------------
-# Opening greeting (agent-initiated). Same mechanism as the card assistant: the
-# phrase is rendered into the CALLER'S language by the multilingual model (no
-# per-language table), cached, and seeded into history. Speaking a clean, curated
-# first line also LOCKS a clean voice reference for the whole call (the voice is
-# cloned from the first utterance), instead of freezing whatever the first live
-# answer happened to sound like.
+# Opening greeting (agent-initiated). Reviewed committed copy also gives voice
+# cloning a stable first utterance instead of whichever live answer arrives first.
 # ---------------------------------------------------------------------------
-BILLING_BRAND = "account support"
-BILLING_AGENT_NAME = "Genie Agent"
-
-# Greeting cache keyed by (base-language, first-name); one model call per key.
+# Greeting cache keyed by (base-language, first-name).
 _GREETING_CACHE: dict[tuple[str, str], str] = {}
 
 
-def _greeting_intent(first_name: str) -> str:
-    customer_fact = (
-        f"- The customer's first name is {first_name}.\n" if first_name else ""
-    )
-    return (
-        "AUTHORITATIVE APPLICATION CONTEXT:\n"
-        f"- The assistant is named {BILLING_AGENT_NAME} and represents {BILLING_BRAND}.\n"
-        "- It can help with account billing questions, charges, fees, and payments.\n"
-        f"{customer_fact}\n"
-        "TASK: Warmly greet the customer by first name when provided and ask how "
-        "you can help today. Do not make identity, organization, account, product, "
-        "or capability claims in the greeting."
-    )
-
-
 def billing_greeting(language: str, first_name: str = "") -> str:
-    """The agent's opening greeting, generated in the caller's language (cached).
-
-    Thin wrapper over the shared ``greetings`` mechanism (see greetings.py) with the
-    billing intent + cache. Returns "" when serving is unavailable.
-    """
+    """The agent's reviewed opening greeting in the caller's language."""
     from .greetings import generate_greeting
 
     return generate_greeting(
-        language, first_name=first_name, intent=_greeting_intent, cache=_GREETING_CACHE
+        language,
+        first_name=first_name,
+        phrase_key="greeting.billing",
+        cache=_GREETING_CACHE,
     )
 
 
@@ -519,7 +496,7 @@ def _seed_greeting_for(language: str) -> str:
     return generate_greeting(
         language,
         first_name="",
-        intent=_greeting_intent,
+        phrase_key="greeting.billing",
         cache=_GREETING_CACHE,
     )
 

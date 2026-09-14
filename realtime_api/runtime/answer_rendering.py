@@ -11,11 +11,13 @@ evidence. This module only renders text that already passed that boundary.
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import TYPE_CHECKING, Iterator
 
 if TYPE_CHECKING:
     from .evidence import Evidence
+    from ..tracing import TurnTrace
 
 
 @lru_cache(maxsize=1)
@@ -151,11 +153,34 @@ def governed_answer_render(evidence: "Evidence") -> tuple[str, str]:
     return "", ""
 
 
-def summarize_for_voice(question: str, answer: str, language: str | None) -> str:
+def _extractive_voice_excerpt(text: str, *, max_sentences: int = 3) -> str:
+    cleaned = re.sub(r"(?m)^\s{0,3}(?:#{1,6}\s*|[-*]\s+)", "", text).strip()
+    sentences = [
+        match.group(0).strip()
+        for match in re.finditer(r"[^.!?。！？\n]+(?:[.!?。！？]+|$)", cleaned)
+        if match.group(0).strip()
+    ]
+    return " ".join(sentences[:max_sentences]).strip()
+
+
+def _numeric_tokens(text: str) -> set[str]:
+    return set(re.findall(r"(?<!\w)[+-]?\d[\d,.:%/-]*(?!\w)", text))
+
+
+def summarize_for_voice(
+    question: str,
+    answer: str,
+    language: str | None,
+    *,
+    trace: "TurnTrace | None" = None,
+) -> str:
     """Return a short, translated summary suitable for both TTS and the panel."""
     text = (answer or "").strip()
     if not text:
         return ""
+    excerpt = _extractive_voice_excerpt(text)
+    if not excerpt or is_english(language):
+        return excerpt
 
     from ..serving_factory import shared_serving
 
@@ -163,16 +188,13 @@ def summarize_for_voice(question: str, answer: str, language: str | None) -> str
     summary_tokens, _, endpoint = _render_knobs()
     system = (
         "You render a governed analytical answer for a realtime voice assistant. "
-        "Write 2-3 concise, natural sentences in the language identified by BCP-47 "
-        f"code '{lang}'. Preserve the answer's important facts, limitations, permission "
-        "boundaries, and most useful next step. The governed answer may be a result "
-        "table; if so, state what it shows and the few figures that answer the "
-        "question, rounded for speech, and never read the table row by row. Use only "
-        "facts present in the governed answer: do not invent capabilities or numbers. "
+        "Translate the supplied extract into the language identified by BCP-47 "
+        f"code '{lang}'. Preserve every fact, limitation, name, date, identifier, "
+        "and number exactly. Do not summarize, round, omit, infer, or add anything. "
         "Use no markdown, headings, bullets, or citation markers. Output only the "
         "sentences the agent should speak."
     )
-    user = f"User asked: {question}\n\nGoverned answer:\n{text[:8000]}"
+    user = f"User asked: {question}\n\nGoverned answer extract:\n{excerpt}"
     serving = shared_serving()
     # Reasoning-capable conversion endpoints can occasionally spend a small token
     # ceiling internally and return an empty visible message. One bounded retry
@@ -187,11 +209,12 @@ def summarize_for_voice(question: str, answer: str, language: str | None) -> str
                 user=user,
                 max_tokens=budget,
                 endpoint=endpoint,
+                trace=trace,
             ).strip()
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             continue
-        if summary:
+        if summary and _numeric_tokens(summary) <= _numeric_tokens(excerpt):
             return summary
     if last_error is not None:
         raise RuntimeError("voice summary generation failed") from last_error
@@ -209,7 +232,12 @@ def _translation_system(language: str | None) -> str:
     )
 
 
-def localize_answer_stream(answer: str, language: str | None) -> Iterator[str]:
+def localize_answer_stream(
+    answer: str,
+    language: str | None,
+    *,
+    trace: "TurnTrace | None" = None,
+) -> Iterator[str]:
     """Yield translated full-answer deltas; empty for English or empty answers.
 
     English is the source language of Genie One and Agent Mode reports. Skipping
@@ -233,6 +261,7 @@ def localize_answer_stream(answer: str, language: str | None) -> Iterator[str]:
                 user=text[:8000],
                 max_tokens=localize_tokens,
                 endpoint=endpoint,
+                trace=trace,
             ):
                 if piece:
                     produced = True
@@ -249,6 +278,7 @@ def localize_answer_stream(answer: str, language: str | None) -> Iterator[str]:
             user=text[:8000],
             max_tokens=localize_tokens,
             endpoint=endpoint,
+            trace=trace,
         ).strip()
     except Exception:  # noqa: BLE001
         translated = ""

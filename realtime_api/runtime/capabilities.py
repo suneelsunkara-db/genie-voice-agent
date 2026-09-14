@@ -58,7 +58,7 @@ class CapabilitySelection:
 
     tool_name: str
     arguments: dict[str, Any]
-    confirm_intent: str
+    confirm_phrase: str
 
 
 @dataclass(frozen=True)
@@ -122,10 +122,7 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         selection=CapabilitySelection(
             tool_name="select_industry",
             arguments={"industry": "telco"},
-            confirm_intent=(
-                "Tell the caller in one short warm sentence that you are taking them "
-                "to Telco billing support now."
-            ),
+            confirm_phrase="confirm.navigate_telco",
         ),
         profiles=frozenset({"concierge"}),
     ),
@@ -142,10 +139,7 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         selection=CapabilitySelection(
             tool_name="select_industry",
             arguments={"industry": "fsi"},
-            confirm_intent=(
-                "Tell the caller in one short warm sentence that you are taking them "
-                "to Financial Services now."
-            ),
+            confirm_phrase="confirm.navigate_fsi",
         ),
         profiles=frozenset({"concierge"}),
     ),
@@ -162,10 +156,7 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         selection=CapabilitySelection(
             tool_name="select_industry",
             arguments={"industry": "knowledge"},
-            confirm_intent=(
-                "Tell the caller in one short warm sentence that you are taking them "
-                "to the Knowledge Agent now."
-            ),
+            confirm_phrase="confirm.navigate_knowledge",
         ),
         profiles=frozenset({"concierge"}),
     ),
@@ -271,10 +262,7 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         selection=CapabilitySelection(
             tool_name="select_use_case",
             arguments={"use_case": "statement_insights"},
-            confirm_intent=(
-                "Confirm in one short warm sentence that Statement Insights is selected "
-                "and invite the caller's question."
-            ),
+            confirm_phrase="confirm.card_statement",
         ),
         profiles=frozenset({"card"}),
     ),
@@ -291,10 +279,7 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         selection=CapabilitySelection(
             tool_name="select_use_case",
             arguments={"use_case": "rewards_optimizer"},
-            confirm_intent=(
-                "Confirm in one short warm sentence that Rewards Optimizer is selected "
-                "and invite the caller's question."
-            ),
+            confirm_phrase="confirm.card_rewards",
         ),
         profiles=frozenset({"card"}),
     ),

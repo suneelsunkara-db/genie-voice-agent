@@ -23,14 +23,12 @@ class ResolvedIntent:
     (navigation, selection) never depends solely on the conversational LLM
     choosing to emit the tool call. The engine runs ``name``/``arguments`` through
     the profile's ``tool_runner``, surfaces the usual ``tool.called`` event, and —
-    if ``confirm_intent`` is set — speaks a short in-language confirmation
-    (generated + cached) BEFORE the UI acts on the result. ``confirm_intent`` is a
-    natural-language instruction for the phrase model, not a literal line, so it
-    renders correctly in every supported language.
+    if ``confirm_phrase`` is set — speaks reviewed localized confirmation copy
+    BEFORE the UI acts on the result.
     """
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
-    confirm_intent: str | None = None
+    confirm_phrase: str | None = None
 
 
 class IntentResolver(Protocol):

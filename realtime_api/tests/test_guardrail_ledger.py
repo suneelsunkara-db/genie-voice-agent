@@ -7,8 +7,11 @@ everything was fine was indistinguishable from a turn where nothing was checked.
 """
 from __future__ import annotations
 
+from genie_voice.databricks.ai_gateway import GatewayPolicyDenied
+
 from realtime_api.guardrails import GuardLedger, report
 from realtime_api.pipelines import speech_llm_toolassist_speech as pipeline
+from realtime_api.services import _record_gateway_failure
 from realtime_api.tracing import TurnTrace
 
 from .test_app import _app, _drive_turn
@@ -22,6 +25,29 @@ def test_report_without_a_ledger_is_a_noop():
     # Guards also run on paths with no trace (warmup, tests); a check must not fail
     # just because nobody was listening.
     report(None, "selection_length", "passed")
+
+
+def test_out_of_turn_gateway_denial_is_sent_to_durable_event_sink(monkeypatch):
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        "realtime_api.tracing.submit_guard_event", captured.append
+    )
+    denial = GatewayPolicyDenied(
+        {
+            "policy_name": "block-jailbreak",
+            "phase": "pre_call",
+            "reason": "raw user content must not be retained",
+        }
+    )
+    _record_gateway_failure(
+        denial,
+        target_endpoint="catalog.schema.conversion",
+        trace=None,
+        context="conversion",
+    )
+    assert captured[0]["guard_id"] == "gateway.service_policy"
+    assert captured[0]["context"] == "conversion"
+    assert "raw user content" not in captured[0]["reason"]
 
 
 def test_summary_excludes_internal_mechanics():

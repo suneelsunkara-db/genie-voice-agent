@@ -1,54 +1,37 @@
-"""Shared, profile-agnostic opening-greeting synthesis for agent-initiated calls.
+"""Shared, profile-agnostic opening copy for agent-initiated calls.
 
 Both the card and billing assistants open the call by SPEAKING first. The opening
-line is generated in the caller's language by the multilingual model (one
-``phrase`` call, the same pattern as fillers / switch-language prompts), cached per
-(base-language, first-name), and seeded into the LLM history so the model knows it
-already greeted.
+line is loaded from reviewed committed translations, cached per
+(base-language, first-name), and seeded into history so the model knows it already
+greeted.
 
-Only the *intent* (brand + persona + what the agent offers) differs per profile;
-the mechanism below is identical, so it lives here once instead of being copied
-into every profile. A profile supplies an ``intent(first_name) -> str`` builder and
-its own cache dict.
+Only the phrase key differs per profile. The mechanism lives here once and reads
+the committed runtime phrase catalog.
 """
 from __future__ import annotations
 
-import logging
-from typing import Callable
+from .runtime.phrases import phrase
 
-# Keyed by (base-language, lowercased first-name); one model call per key.
+# Keyed by (base-language, lowercased first-name).
 GreetingCache = dict[tuple[str, str], str]
-logger = logging.getLogger("realtime_voice")
-
-IntentBuilder = Callable[[str], str]
 
 
 def generate_greeting(
     language: str,
     *,
     first_name: str,
-    intent: IntentBuilder,
+    phrase_key: str,
     cache: GreetingCache,
 ) -> str:
-    """Render the opening greeting in the caller's ``language`` (cached).
-
-    One multilingual ``phrase`` call renders ANY supported language, so there is no
-    hardcoded per-language table and no English fallback. Returns "" when serving
-    is unavailable, so callers degrade to just listening instead of speaking a fake
-    English line.
-    """
+    """Render reviewed opening copy in the caller's language."""
     from .languages import base_code
 
     key = (base_code(language) or "en", (first_name or "").strip().lower())
     if key in cache:
         return cache[key]
-    try:
-        from .serving_factory import shared_serving
-
-        text = shared_serving().phrase(intent(first_name), language=language).strip()
-    except Exception:  # noqa: BLE001 — no fake fallback; caller handles "".
-        logger.exception("guarded greeting generation failed for language=%s", language)
-        text = ""
+    name = (first_name or "").strip()
+    selected_key = f"{phrase_key}.named" if name else phrase_key
+    text = phrase(selected_key, language=language, name=name)
     if text:
         cache[key] = text
     return text
@@ -57,15 +40,14 @@ def generate_greeting(
 def seed_greeting_for(
     language: str,
     *,
-    intent: IntentBuilder,
+    phrase_key: str,
     cache: GreetingCache,
 ) -> str:
     """A cached in-language greeting to seed LLM history (so it knows it greeted).
 
     Any cached greeting for the same base language is fine as context (the exact
     name is irrelevant to the model), so this reuses whatever the greeting endpoint
-    already generated — no extra hot-path model call. Falls back to generating a
-    nameless variant; "" on failure.
+    already loaded. Falls back to the nameless committed variant.
     """
     from .languages import base_code
 
@@ -73,4 +55,6 @@ def seed_greeting_for(
     for (cached_base, _name), text in cache.items():
         if cached_base == base and text:
             return text
-    return generate_greeting(language, first_name="", intent=intent, cache=cache)
+    return generate_greeting(
+        language, first_name="", phrase_key=phrase_key, cache=cache
+    )

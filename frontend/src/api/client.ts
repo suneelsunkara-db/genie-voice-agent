@@ -452,7 +452,7 @@ export interface GuardRollupGuard {
 }
 
 export interface GuardFiredRow {
-  trace_id: string;
+  trace_id?: string | null;
   session_id?: string | null;
   turn_id?: number | null;
   language?: string | null;
@@ -462,10 +462,12 @@ export interface GuardFiredRow {
   phase?: string | null;
   resource?: string | null;
   reason?: string | null;
+  context?: string | null;
 }
 
 export interface GuardRollup {
   turns: number;
+  standalone_events?: number;
   turns_with_roster: number;
   checks: number;
   checks_per_turn: number;
@@ -487,7 +489,12 @@ export interface GatewayServiceInsight {
     function: string;
     phases: Array<"input" | "output">;
     rank: number;
-    deployment_state?: "configured" | "missing_or_drifted";
+    mode?: "enforce" | "log";
+    action?: "block" | "redact" | null;
+    categories?: string[];
+    evaluator?: string | null;
+    max_turns?: number | null;
+    deployment_state?: "configured" | "missing_or_drifted" | "unexpected";
     deployed_name?: string | null;
   }>;
   rate_limits: Array<{

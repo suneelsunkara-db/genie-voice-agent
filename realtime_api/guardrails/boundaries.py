@@ -10,6 +10,13 @@ from typing import Any
 from .ledger import GuardLedger, report
 
 _TOOL_CALL_TAG_RE = re.compile(r"</?\s*tool_call\s*>", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.IGNORECASE)
+_SSN_RE = re.compile(r"(?<!\d)\d{3}[- ]\d{2}[- ]\d{4}(?!\d)")
+_SECRET_RE = re.compile(
+    r"\b(?:password|passcode|pin|api[ _-]?key|secret)\s+(?:is|equals?)\s+\S+",
+    re.IGNORECASE,
+)
+_NUMBER_CANDIDATE_RE = re.compile(r"(?<!\d)(?:\+?\d[\d(). -]{5,}\d)(?!\d)")
 
 
 class SpeechBoundaryViolation(ValueError):
@@ -20,6 +27,19 @@ class TranscriptBoundaryViolation(ValueError):
     """An STT result was malformed at the transcript trust boundary."""
 
 
+class SensitiveInputDenied(TranscriptBoundaryViolation):
+    """High-risk credential material cannot enter conversation state."""
+
+    policy_name = "sensitive_input_tiering"
+    phase = "post_stt"
+    is_input_denial = True
+
+    def __init__(self, *, resource: str, reason: str) -> None:
+        self.resource = resource
+        self.reason = reason
+        super().__init__(reason)
+
+
 @dataclass(frozen=True)
 class SpeechAdmission:
     """Capability token proving text passed the shared pre-TTS boundary."""
@@ -27,6 +47,45 @@ class SpeechAdmission:
     text: str
     resource: str
     changed: bool
+
+
+def _digits(value: str) -> str:
+    return "".join(char for char in value if char.isdigit())
+
+
+def _passes_luhn(value: str) -> bool:
+    digits = _digits(value)
+    if not 13 <= len(digits) <= 19:
+        return False
+    total = 0
+    parity = len(digits) % 2
+    for index, char in enumerate(digits):
+        number = int(char)
+        if index % 2 == parity:
+            number *= 2
+            if number > 9:
+                number -= 9
+        total += number
+    return total % 10 == 0
+
+
+def _mask_contact_identifiers(text: str) -> tuple[str, set[str]]:
+    kinds: set[str] = set()
+    if "[email address]" in text:
+        kinds.add("email")
+    if "[phone number]" in text:
+        kinds.add("phone")
+    masked = _EMAIL_RE.sub(lambda _: kinds.add("email") or "[email address]", text)
+
+    def replace_number(match: re.Match[str]) -> str:
+        value = match.group(0)
+        count = len(_digits(value))
+        if 7 <= count <= 15:
+            kinds.add("phone")
+            return "[phone number]"
+        return value
+
+    return _NUMBER_CANDIDATE_RE.sub(replace_number, masked), kinds
 
 
 def admit_transcript(
@@ -42,6 +101,49 @@ def admit_transcript(
         raise TranscriptBoundaryViolation("STT transcript must be text")
     # NUL is never valid user speech and can corrupt downstream persistence.
     admitted = text.replace("\x00", "")
+    card_match = next(
+        (match.group(0) for match in _NUMBER_CANDIDATE_RE.finditer(admitted) if _passes_luhn(match.group(0))),
+        None,
+    )
+    high_risk = (
+        "payment_card"
+        if card_match
+        else "government_id"
+        if _SSN_RE.search(admitted)
+        else "credential"
+        if _SECRET_RE.search(admitted)
+        else None
+    )
+    if high_risk:
+        report(
+            ledger,
+            "sensitive_input_tiering",
+            "fired",
+            stage="input_transcript",
+            owner="application",
+            phase="post_stt",
+            resource=resource,
+            reason=f"blocked high-risk category={high_risk}",
+        )
+        raise SensitiveInputDenied(
+            resource=resource,
+            reason=f"high-risk {high_risk} blocked before model admission",
+        )
+    admitted, masked_kinds = _mask_contact_identifiers(admitted)
+    report(
+        ledger,
+        "sensitive_input_tiering",
+        "fired" if masked_kinds else "passed",
+        stage="input_transcript",
+        owner="application",
+        phase="post_stt",
+        resource=resource,
+        reason=(
+            "masked contact categories=" + ",".join(sorted(masked_kinds))
+            if masked_kinds
+            else None
+        ),
+    )
     pinned = bool(pinned_language) and pinned_language != "auto"
     report(
         ledger,

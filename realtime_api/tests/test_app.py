@@ -147,15 +147,14 @@ def test_speech_llm_toolassist_speech_processes_a_finalized_turn() -> None:
 
 
 def test_committed_speech_is_published_before_the_audio() -> None:
-    # A client that rendered `response.text` would show the model's display prose,
-    # which a tool turn never speaks. The committed speech is therefore published on
-    # its own event, before synthesis, so the page can show what is being heard.
+    # Legacy response.text and the typed committed event must carry the exact same
+    # admitted words; factual model prose cannot flash in older clients.
     with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
         ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
         assert ws.receive_json()["type"] == "session.ready"
         _drive_turn(ws)
         assert ws.receive_json()["type"] == "transcript.final"
-        _next(ws, "response.text")
+        response = _next(ws, "response.text")
 
         before_audio: list[dict] = []
         while True:
@@ -170,6 +169,7 @@ def test_committed_speech_is_published_before_the_audio() -> None:
         assert len(committed) == 1
         payload = committed[0]["payload"]
         assert payload["text"] == "you said hello world"
+        assert response["text"] == payload["text"]
         # No tool ran, so this is a conversational reply rather than composed evidence.
         assert payload["basis"] == "conversation"
         assert committed[0]["seq"] >= 1

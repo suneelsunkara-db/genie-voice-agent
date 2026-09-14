@@ -82,17 +82,35 @@ def guardrail_rollup(limit: int = 200) -> dict:
     """
     limit = max(1, min(int(limit), 500))
     rows = serving().list_voice_traces(limit=limit)
+    standalone = serving().list_guard_events(limit=limit)
+    evidence_rows = [
+        *rows,
+        *[
+            {
+                "trace_id": event.get("trace_id"),
+                "session_id": event.get("session_id"),
+                "turn_id": event.get("turn_id"),
+                "language": event.get("language"),
+                "created_at": event.get("occurred_at"),
+                "guard_roster": [event],
+                "standalone_context": event.get("context"),
+            }
+            for event in standalone
+        ],
+    ]
 
     totals: dict[str, int] = {}
     guards: dict[str, dict] = {}
     by_language: dict[str, dict[str, int]] = {}
     recent_fired: list[dict] = []
     turns_with_roster = 0
+    turn_checks = 0
 
-    for row in rows:
+    for row in evidence_rows:
         roster = [e for e in (row.get("guard_roster") or []) if e.get("surface", "guardrail") == "guardrail"]
-        if roster:
+        if roster and not row.get("standalone_context"):
             turns_with_roster += 1
+            turn_checks += len(roster)
         language = str(row.get("language") or "unknown")
         for entry in roster:
             outcome = str(entry.get("outcome") or "unknown")
@@ -133,15 +151,21 @@ def guardrail_rollup(limit: int = 200) -> dict:
                         "phase": entry.get("phase"),
                         "resource": entry.get("resource"),
                         "reason": entry.get("reason"),
+                        "context": row.get("standalone_context") or "turn",
                     }
                 )
 
     checks = sum(totals.values())
     return {
         "turns": len(rows),
+        "standalone_events": len(standalone),
         "turns_with_roster": turns_with_roster,
         "checks": checks,
-        "checks_per_turn": round(checks / turns_with_roster, 2) if turns_with_roster else 0.0,
+        "checks_per_turn": (
+            round(turn_checks / turns_with_roster, 2)
+            if turns_with_roster
+            else 0.0
+        ),
         "totals": totals,
         "guards": sorted(guards.values(), key=lambda g: (-g["runs"], g["guard_id"])),
         "by_language": by_language,

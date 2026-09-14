@@ -216,7 +216,9 @@ def main() -> None:
         )
         missing = [
             f"{item['policy_id']} ({item['function']}, "
-            f"{'+'.join(item['phases'])}, rank {item['rank']})"
+            f"{'+'.join(item['phases'])}, rank {item['rank']}, "
+            f"mode {item.get('mode', 'enforce')}, "
+            f"action {item.get('action') or 'decision'})"
             for item in policies
             if item["deployment_state"] != "configured"
         ]

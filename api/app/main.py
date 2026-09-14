@@ -118,6 +118,7 @@ def create_app() -> FastAPI:
             try:
                 from genie_voice.databricks.warehouse_sql import (
                     ensure_billing_adjustments_table,
+                    ensure_guard_events_table,
                     ensure_voice_traces_table,
                     warehouse_configured,
                 )
@@ -125,8 +126,9 @@ def create_app() -> FastAPI:
                 if warehouse_configured(settings):
                     ensure_billing_adjustments_table(settings)
                     ensure_voice_traces_table(settings)
+                    ensure_guard_events_table(settings)
             except Exception as exc:  # noqa: BLE001
-                print(f"[api-startup] UC billing_adjustments ensure skipped: {exc}")
+                print(f"[api-startup] UC audit-table ensure skipped: {exc}")
 
         threading.Thread(target=_work, daemon=True, name="api-schema-ensure").start()
 

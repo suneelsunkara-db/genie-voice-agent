@@ -141,6 +141,12 @@ DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
     --config config/config.yaml \
     --guardrails-config config/guardrails.yaml
 
+log "running AI Gateway policy conformance matrix"
+DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
+  "$PYBIN" infra/apps/probe_ai_gateway_policies.py \
+    --config config/config.yaml \
+    --guardrails-config config/guardrails.yaml
+
 # ---- 2. vendor keys -> secret scope (evals/benchmarks; not injected into the app)
 DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.deepgram_api_key)' 2>/dev/null || true)}"
 ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.elevenlabs_api_key)' 2>/dev/null || true)}"

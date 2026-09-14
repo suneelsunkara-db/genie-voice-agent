@@ -321,6 +321,15 @@ def _persist_default(trace: dict[str, Any]) -> None:
         _mirror_to_mlflow(trace)
 
 
+def _persist_guard_event(event: dict[str, Any]) -> None:
+    try:
+        from api.app.deps import serving
+
+        serving().insert_guard_event(event)
+    except Exception:  # noqa: BLE001
+        logger.warning("guard event persist failed", exc_info=True)
+
+
 def _mirror_to_mlflow(trace: dict[str, Any]) -> None:
     """Optional: emit the same span tree to MLflow Tracing (Agent Framework).
 
@@ -360,6 +369,8 @@ def _mirror_to_mlflow(trace: dict[str, Any]) -> None:
 
 _SINK: TraceSink | None = None
 _SINK_LOCK = threading.Lock()
+_GUARD_EVENT_SINK: TraceSink | None = None
+_GUARD_EVENT_SINK_LOCK = threading.Lock()
 
 
 def get_sink() -> TraceSink:
@@ -377,3 +388,34 @@ def submit_trace(trace: TurnTrace) -> None:
         get_sink().submit(trace.to_dict())
     except Exception:  # noqa: BLE001 - tracing must never break a turn
         logger.debug("submit_trace failed", exc_info=True)
+
+
+def submit_guard_event(event: dict[str, Any]) -> None:
+    """Persist a standalone redacted guard decision off the request path."""
+    global _GUARD_EVENT_SINK
+    try:
+        if _GUARD_EVENT_SINK is None:
+            with _GUARD_EVENT_SINK_LOCK:
+                if _GUARD_EVENT_SINK is None:
+                    _GUARD_EVENT_SINK = TraceSink(_persist_guard_event)
+        payload = {
+            "event_id": str(event.get("event_id") or uuid.uuid4().hex),
+            "context": str(event.get("context") or "unknown"),
+            "guard_id": str(event.get("guard_id") or "unknown"),
+            "outcome": str(event.get("outcome") or "error"),
+            "owner": str(event.get("owner") or "gateway"),
+            "enforcer": str(event.get("enforcer") or "unity_ai_gateway"),
+            "phase": event.get("phase"),
+            "resource": event.get("resource"),
+            "policy_version": str(event.get("policy_version") or "unknown"),
+            "reason": str(event.get("reason") or "")[:300],
+            "language": event.get("language"),
+            "surface": "guardrail",
+            "session_id": event.get("session_id"),
+            "call_id": event.get("call_id"),
+            "trace_id": event.get("trace_id"),
+            "turn_id": event.get("turn_id"),
+        }
+        _GUARD_EVENT_SINK.submit(payload)
+    except Exception:  # noqa: BLE001
+        logger.debug("submit_guard_event failed", exc_info=True)

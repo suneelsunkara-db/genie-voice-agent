@@ -31,6 +31,89 @@ if TYPE_CHECKING:
 logger = logging.getLogger("realtime_voice")
 
 
+def _record_gateway_failure(
+    exc: Exception,
+    *,
+    target_endpoint: str,
+    trace: "TurnTrace | None",
+    context: str = "model_call",
+) -> None:
+    from genie_voice.databricks.ai_gateway import (
+        GatewayPolicyDenied,
+        is_unity_model_service,
+    )
+
+    if isinstance(exc, GatewayPolicyDenied):
+        exc.resource = target_endpoint
+    if trace is None:
+        guard_id = (
+            "gateway.service_policy"
+            if isinstance(exc, GatewayPolicyDenied)
+            else "gateway.rate_limit"
+            if getattr(getattr(exc, "response", None), "status_code", None) == 429
+            else "gateway.request"
+        )
+        if is_unity_model_service(target_endpoint):
+            try:
+                from genie_voice.guardrails import get_policy_manifest
+
+                from .tracing import submit_guard_event
+
+                submit_guard_event(
+                    {
+                        "context": context,
+                        "guard_id": guard_id,
+                        "outcome": (
+                            "fired"
+                            if guard_id != "gateway.request"
+                            else "error"
+                        ),
+                        "phase": (
+                            exc.phase
+                            if isinstance(exc, GatewayPolicyDenied)
+                            else "model_request"
+                        ),
+                        "resource": target_endpoint,
+                        "policy_version": get_policy_manifest().version,
+                        "reason": (
+                            f"{exc.policy_name}: Gateway service policy denied "
+                            f"{exc.phase or 'request_or_response'}"
+                            if isinstance(exc, GatewayPolicyDenied)
+                            else type(exc).__name__
+                        ),
+                    }
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("standalone guard event submission failed", exc_info=True)
+        return
+    if isinstance(exc, GatewayPolicyDenied):
+        report(
+            trace.guards,
+            "gateway.service_policy",
+            "fired",
+            stage="input_transcript" if exc.is_input_denial else "routing",
+            owner="gateway",
+            phase=exc.phase or "on_call_or_result",
+            resource=target_endpoint,
+            reason=(
+                f"{exc.policy_name}: Gateway service policy denied "
+                f"{exc.phase or 'request_or_response'}"
+            ),
+        )
+    elif is_unity_model_service(target_endpoint):
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        report(
+            trace.guards,
+            "gateway.rate_limit" if status == 429 else "gateway.request",
+            "fired" if status == 429 else "error",
+            stage="routing",
+            owner="gateway",
+            phase="model_request",
+            resource=target_endpoint,
+            reason=f"HTTP {status}" if status else type(exc).__name__,
+        )
+
+
 class SpeechToText(Protocol):
     def transcribe(
         self, audio: bytes, *, language: str | None, sample_rate_hz: int
@@ -630,6 +713,7 @@ class DatabricksServing:
         temperature: float | None = None,
         max_tokens: int | None = None,
         endpoint: str | None = None,
+        trace: "TurnTrace | None" = None,
     ) -> str:
         """One-shot, tool-free system+user completion returning plain text.
 
@@ -654,7 +738,17 @@ class DatabricksServing:
         # their sampling via ``_chat`` (this method is off that hot path).
         if temperature is not None:
             inputs["temperature"] = temperature
-        response = self.client.predict(endpoint=endpoint or self.llm_endpoint, inputs=inputs)
+        target_endpoint = endpoint or self.llm_endpoint
+        try:
+            response = self.client.predict(endpoint=target_endpoint, inputs=inputs)
+        except Exception as exc:  # noqa: BLE001
+            _record_gateway_failure(
+                exc,
+                target_endpoint=target_endpoint,
+                trace=trace,
+                context="conversion",
+            )
+            raise
         payload = response if isinstance(response, dict) else dict(response)
         choices = payload.get("choices") or []
         message = choices[0].get("message") or {} if choices and isinstance(choices[0], dict) else {}
@@ -668,6 +762,7 @@ class DatabricksServing:
         temperature: float | None = None,
         max_tokens: int | None = None,
         endpoint: str | None = None,
+        trace: "TurnTrace | None" = None,
     ) -> Iterator[str]:
         """Streaming twin of :meth:`summarize`: yields assistant text as it is
         produced instead of one final blob.
@@ -691,18 +786,28 @@ class DatabricksServing:
         # peers 400 on any non-default temperature (streaming included).
         if temperature is not None:
             inputs["temperature"] = temperature
-        for chunk in self.client.predict_stream(
-            endpoint=endpoint or self.llm_endpoint, inputs=inputs
-        ):
-            if not isinstance(chunk, dict):
-                continue
-            choices = chunk.get("choices") or []
-            if not choices or not isinstance(choices[0], dict):
-                continue
-            delta = choices[0].get("delta")
-            piece = delta.get("content") if isinstance(delta, dict) else None
-            if piece:
-                yield str(piece)
+        target_endpoint = endpoint or self.llm_endpoint
+        try:
+            for chunk in self.client.predict_stream(
+                endpoint=target_endpoint, inputs=inputs
+            ):
+                if not isinstance(chunk, dict):
+                    continue
+                choices = chunk.get("choices") or []
+                if not choices or not isinstance(choices[0], dict):
+                    continue
+                delta = choices[0].get("delta")
+                piece = delta.get("content") if isinstance(delta, dict) else None
+                if piece:
+                    yield str(piece)
+        except Exception as exc:  # noqa: BLE001
+            _record_gateway_failure(
+                exc,
+                target_endpoint=target_endpoint,
+                trace=trace,
+                context="conversion",
+            )
+            raise
 
     def _chat(
         self,
@@ -727,39 +832,9 @@ class DatabricksServing:
         try:
             response = self.client.predict(endpoint=target_endpoint, inputs=inputs)
         except Exception as exc:  # noqa: BLE001
-            from genie_voice.databricks.ai_gateway import (
-                GatewayPolicyDenied,
-                is_unity_model_service,
+            _record_gateway_failure(
+                exc, target_endpoint=target_endpoint, trace=trace
             )
-
-            if isinstance(exc, GatewayPolicyDenied):
-                exc.resource = target_endpoint
-            if isinstance(exc, GatewayPolicyDenied) and trace is not None:
-                report(
-                    trace.guards,
-                    "gateway.service_policy",
-                    "fired",
-                    stage="input_transcript" if exc.is_input_denial else "routing",
-                    owner="gateway",
-                    phase=exc.phase or "on_call_or_result",
-                    resource=target_endpoint,
-                    reason=(
-                        f"{exc.policy_name}: Gateway service policy denied "
-                        f"{exc.phase or 'request_or_response'}"
-                    ),
-                )
-            elif is_unity_model_service(target_endpoint) and trace is not None:
-                status = getattr(getattr(exc, "response", None), "status_code", None)
-                report(
-                    trace.guards,
-                    "gateway.rate_limit" if status == 429 else "gateway.request",
-                    "fired" if status == 429 else "error",
-                    stage="routing",
-                    owner="gateway",
-                    phase="model_request",
-                    resource=target_endpoint,
-                    reason=f"HTTP {status}" if status else type(exc).__name__,
-                )
             raise
         payload = response if isinstance(response, dict) else dict(response)
         choices = payload.get("choices") or []

@@ -55,12 +55,12 @@ ai_gateway:
       service: partner_demo_catalog.genie_voice_contact_center.genie_voice_qwen_guarded
       destination: system.ai.qwen3-next-80b-a3b-instruct
       roles: [realtime_llm, enrichment]
-      policy_bundle: governed_foundation_model
+      policy_bundle: interactive_model_safety
     gpt55:
       service: partner_demo_catalog.genie_voice_contact_center.genie_voice_gpt55_guarded
       destination: system.ai.databricks-gpt-5-5
       roles: [i18n, conversion]
-      policy_bundle: governed_foundation_model
+      policy_bundle: transform_model_safety
 
 # Unity Catalog Volumes for raw landing.
 volume:
