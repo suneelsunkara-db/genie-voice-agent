@@ -11,6 +11,7 @@ from realtime_api.config import RealtimeSettings
 from realtime_api.contracts import AudioChunk, AudioResponse, SessionStart
 from realtime_api.pipelines import ServingBundle
 from realtime_api.session import VoiceSession
+from realtime_api.ws.handler import _commit_synthesized_context
 
 
 class FakeServices:
@@ -344,6 +345,27 @@ def test_text_to_speech_synthesize() -> None:
         audio = ws.receive_json()
         assert audio["type"] == "response.audio"
         assert audio["final"] is True
+
+
+def test_only_successfully_spoken_opening_is_committed_to_history() -> None:
+    session = VoiceSession(SessionStart(language="en-US", sample_rate_hz=16_000))
+
+    _commit_synthesized_context(
+        session,
+        text="Hi Omar, how can I help?",
+        purpose="opening_greeting",
+        audio_chunks=1,
+    )
+    _commit_synthesized_context(
+        session,
+        text="Unrelated later synthesis",
+        purpose=None,
+        audio_chunks=1,
+    )
+
+    assert session.history == [
+        {"role": "assistant", "content": "Hi Omar, how can I help?"}
+    ]
 
 
 class MultiSentenceServices(FakeServices):

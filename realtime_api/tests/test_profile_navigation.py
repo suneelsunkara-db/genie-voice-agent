@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from realtime_api.pipelines.speech_llm_toolassist_speech import (
+    _finalize_billing_offer,
     _navigation_intents,
     _timeout_for_route,
     _tool_work_timeout_s,
@@ -152,6 +154,7 @@ def test_card_topic_selection_is_not_misread_as_an_investigation():
     [
         (CapabilityId.PACK_FACTS, "lookup_account"),
         (CapabilityId.BILLING_ANALYSIS, "ask_genie"),
+        (CapabilityId.BILLING_ACTION_PREPARE, "prepare_billing_action"),
         (CapabilityId.BILLING_ACTION, "apply_billing_action"),
         (CapabilityId.CURRENT_TIME, "get_current_time"),
     ],
@@ -164,6 +167,7 @@ def test_billing_capability_exposes_only_its_owned_tool(
         for name in (
             "lookup_account",
             "ask_genie",
+            "prepare_billing_action",
             "apply_billing_action",
             "get_current_time",
         )
@@ -203,7 +207,7 @@ def test_confirmation_context_reaches_billing_classifier():
     assert classifier.calls[0]["context"].startswith("I can waive")
 
 
-def test_billing_change_without_open_offer_is_forced_to_clarify():
+def test_billing_change_without_open_offer_is_routed_to_read_only_preparation():
     classifier = ScriptedClassifier(CapabilityId.BILLING_ACTION, confirmed=True)
     decision = navigate_profile(
         "Yes, go ahead",
@@ -216,8 +220,11 @@ def test_billing_change_without_open_offer_is_forced_to_clarify():
         context="I can waive the late fee. Shall I go ahead?",
         offer_open=False,
     )
-    assert decision.capability_id == CapabilityId.CLARIFY
-    assert decision.reason.value == "confirmation_required"
+    assert decision.capability_id == CapabilityId.BILLING_ACTION_PREPARE
+    assert decision.reason.value == "action_preparation_required"
+    route = route_for_navigation(decision, utterance="Yes, go ahead", profile="billing")
+    assert route.frame is not None
+    assert route.frame.effect == "read"
 
 
 def test_billing_change_without_explicit_confirmation_is_forced_to_clarify():
@@ -235,6 +242,33 @@ def test_billing_change_without_explicit_confirmation_is_forced_to_clarify():
     )
     assert decision.capability_id == CapabilityId.CLARIFY
     assert decision.ambiguous is True
+    route = route_for_navigation(decision, utterance="Please waive my late fee", profile="billing")
+    assert route.adapter == "confirm"
+
+
+def test_billing_offer_opens_confirmation_only_after_audio():
+    candidate = {
+        "action": "waive_late_fee",
+        "customer_id": "CUST-4028",
+        "invoice_id": "INV-90114",
+    }
+    silent = SimpleNamespace(profile_state={"pending_billing_offer": candidate})
+    _finalize_billing_offer(
+        silent,
+        capability_id=CapabilityId.BILLING_ACTION_PREPARE,
+        tts_chunks=0,
+    )
+    assert "pending_confirm_mutate" not in silent.profile_state
+    assert "pending_billing_offer" not in silent.profile_state
+
+    spoken = SimpleNamespace(profile_state={"pending_billing_offer": candidate})
+    _finalize_billing_offer(
+        spoken,
+        capability_id=CapabilityId.BILLING_ACTION_PREPARE,
+        tts_chunks=1,
+    )
+    assert spoken.profile_state["pending_confirm_mutate"] == candidate
+    assert "pending_billing_offer" not in spoken.profile_state
 
 
 def test_profile_catalogs_do_not_expose_implementation_names():
@@ -243,6 +277,7 @@ def test_profile_catalogs_do_not_expose_implementation_names():
         "select_use_case",
         "lookup_account",
         "ask_genie",
+        "prepare_billing_action",
         "apply_billing_action",
         "start_deep_dive",
     }

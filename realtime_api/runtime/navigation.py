@@ -118,9 +118,21 @@ def navigate_profile(
             reason=NavigationReason.PERMISSION_REQUIRED,
         )
     if proposed.capability_id == CapabilityId.BILLING_ACTION:
-        # An account change needs an offer already open on this call *and*
-        # an explicit confirmation. The classifier boolean is not enough.
-        if not offer_open or not proposed.confirmed:
+        # A first request for a mutation is preparation, not confirmation. Route
+        # it through a read-only capability that resolves the exact account item
+        # and opens a concrete offer. This also safely corrects a classifier that
+        # chose BILLING_ACTION instead of BILLING_ACTION_PREPARE.
+        if not offer_open:
+            preparation = capability_descriptor(CapabilityId.BILLING_ACTION_PREPARE)
+            return NavigationDecision(
+                capability_id=CapabilityId.BILLING_ACTION_PREPARE,
+                confidence=proposed.confidence,
+                depth=preparation.depth,
+                reason=NavigationReason.ACTION_PREPARATION_REQUIRED,
+            )
+        # Even with an offer open, the classifier's explicit-confirmation boolean
+        # must be true before policy exposes the mutation capability.
+        if not proposed.confirmed:
             return NavigationDecision(
                 capability_id=CapabilityId.CLARIFY,
                 confidence=proposed.confidence,
@@ -188,6 +200,7 @@ def route_for_navigation(
         CapabilityId.CARD_STATEMENT,
         CapabilityId.CARD_REWARDS,
         CapabilityId.BILLING_ANALYSIS,
+        CapabilityId.BILLING_ACTION_PREPARE,
         CapabilityId.BILLING_ACTION,
         CapabilityId.CURRENT_TIME,
     }:
@@ -220,5 +233,7 @@ def route_for_navigation(
         )
         return RouteDecision(RoutePath.SELF_KNOW, frame, "self_know", reason)
     if decision.capability_id == CapabilityId.CLARIFY:
+        if decision.reason == NavigationReason.CONFIRMATION_REQUIRED:
+            return RouteDecision(RoutePath.CLARIFY, None, "confirm", reason)
         return RouteDecision(RoutePath.CLARIFY, None, "clarify", reason)
     return RouteDecision(RoutePath.REFUSE, None, "refuse", reason)

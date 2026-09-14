@@ -31,6 +31,7 @@ class CapabilityId(StrEnum):
     CARD_QUERY = "card.query"
     INVESTIGATE_AGENT_MODE = "investigate.agent_mode"
     BILLING_ANALYSIS = "billing.analysis"
+    BILLING_ACTION_PREPARE = "billing.action.prepare"
     BILLING_ACTION = "billing.action"
     CURRENT_TIME = "utility.current_time"
     CLARIFY = "system.clarify"
@@ -47,6 +48,7 @@ class NavigationReason(StrEnum):
     PERMISSION_REQUIRED = "permission_required"
     UNSUPPORTED = "unsupported"
     POLICY_OVERRIDE = "policy_override"
+    ACTION_PREPARATION_REQUIRED = "action_preparation_required"
     CONFIRMATION_REQUIRED = "confirmation_required"
 
 
@@ -316,11 +318,33 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         profiles=frozenset({"billing"}),
     ),
     CapabilityDescriptor(
+        id=CapabilityId.BILLING_ACTION_PREPARE,
+        purpose=(
+            "Prepare a requested billing resolution such as waiving a late fee or "
+            "setting up a payment plan when no exact offer is open yet. Read the "
+            "current caller's account, identify the concrete invoice and amount, "
+            "and ask for confirmation. This capability never changes account state."
+        ),
+        scope="pack",
+        depth="fact",
+        effect="read",
+        adapter="pack_facts",
+        requires_tool=True,
+        tools=frozenset({"prepare_billing_action"}),
+        prompt=(
+            "Call the provided preparation capability exactly once for the requested "
+            "action. Present only the returned proposal and ask for explicit "
+            "confirmation in {language}. Do not claim the action has been applied."
+        ),
+        profiles=frozenset({"billing"}),
+    ),
+    CapabilityDescriptor(
         id=CapabilityId.BILLING_ACTION,
         purpose=(
-            "Continue or execute an explicitly discussed billing resolution such as "
-            "waiving a late fee or setting up a payment plan. Requires a prior offer "
-            "on this call and confirmation."
+            "Execute an exact billing resolution that the agent already offered on "
+            "this call, but only after the caller explicitly confirms that offer. "
+            "A first request to waive a fee or start a plan belongs to "
+            "billing.action.prepare instead."
         ),
         scope="pack",
         depth="fact",

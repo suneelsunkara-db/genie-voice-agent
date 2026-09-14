@@ -22,7 +22,6 @@ import {
   startRealtimeVoice,
 } from "../lib/realtimeVoice";
 import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
-import { getMe } from "../lib/me";
 import { emptyConversation, turnReducer } from "../lib/turnState";
 import {
   languageLabel,
@@ -247,6 +246,7 @@ export function CockpitSession({
     <LiveAssist
       callId={call.call_id}
       customerId={String(facts?.customer_id ?? call.customer_id ?? "")}
+      customerName={customerName}
       sttProvider={sttProvider}
       language={language}
       expectedLanguage={language}
@@ -967,6 +967,7 @@ function AssistStatusPanel({ meta, language }: { meta: LiveNudge | null; languag
 function LiveAssist({
   callId,
   customerId,
+  customerName,
   language,
   expectedLanguage,
   voiceUi,
@@ -984,6 +985,7 @@ function LiveAssist({
 }: {
   callId: string;
   customerId: string;
+  customerName?: string | null;
   sttProvider: string;
   language: InteractionLanguage;
   expectedLanguage?: InteractionLanguage;
@@ -1063,20 +1065,21 @@ function LiveAssist({
   });
 
   // Opening greeting, generated in the call language by the backend (cached per
-  // base language). Same design as the card assistant: the agent speaks first, so
+  // language + selected customer). Same design as the card assistant: the agent speaks first, so
   // it (a) opens the call warmly and (b) LOCKS a clean voice reference for the
   // whole call from a curated line instead of freezing whatever the first live
   // answer happened to sound like. Returns "" if serving is down — we then just
   // open the mic instead of speaking a fake English line.
   const greetingCacheRef = useRef<Map<string, string>>(new Map());
   const fetchGreeting = async (lang: string): Promise<string> => {
-    const key = (lang || "en").split("-")[0];
+    const firstName = (customerName || "").trim().split(/\s+/)[0] || "";
+    const key = `${(lang || "en").split("-")[0]}:${firstName.toLowerCase()}`;
     const cached = greetingCacheRef.current.get(key);
     if (cached !== undefined) return cached;
     try {
-      // Greet the signed-in Databricks user by name (nameless when anonymous).
-      const me = await getMe();
-      const nameQ = me.name ? `&name=${encodeURIComponent(me.name)}` : "";
+      // Telco is a customer call: greet the customer bound to this call, not the
+      // signed-in contact-center operator using the application.
+      const nameQ = firstName ? `&name=${encodeURIComponent(firstName)}` : "";
       const r = await fetch(`${API_BASE_URL}/calls/greeting?language=${encodeURIComponent(lang)}${nameQ}`);
       const data = (await r.json()) as { text?: string };
       const t = typeof data.text === "string" ? data.text : "";
@@ -1098,7 +1101,9 @@ function LiveAssist({
     onLocalTurn({ text: textToSpeak, speaker: 0 });
     voicePhaseRef.current = "agent_reply";
     onVoiceUiChange({ phase: "agent_reply", source: "mic", processingLabel: textToSpeak });
-    session.synthesize(textToSpeak, callLanguageRef.current);
+    session.synthesize(textToSpeak, callLanguageRef.current, {
+      purpose: "opening_greeting",
+    });
   };
 
   useEffect(() => {

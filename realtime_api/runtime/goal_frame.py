@@ -24,6 +24,7 @@ Adapter = Literal[
     "pack_facts",
     "refuse",
     "clarify",
+    "confirm",
 ]
 BargeClass = Literal["amend", "new", "stop"]
 
