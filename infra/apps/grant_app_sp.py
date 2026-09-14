@@ -187,6 +187,7 @@ def grant_card_issuer(settings, sp: str) -> None:
 def grant_model_services(settings, sp: str, names: list[str]) -> None:
     """Grant EXECUTE on Unity Catalog model services used for FM chat."""
     from genie_voice.databricks.ai_gateway import is_unity_model_service, model_service_id
+    from genie_voice.databricks.client import get_workspace_client
     from genie_voice.databricks.warehouse_sql import execute_sql
 
     fqns = [model_service_id(n) for n in names if is_unity_model_service(n)]
@@ -194,6 +195,7 @@ def grant_model_services(settings, sp: str, names: list[str]) -> None:
         _log("no Unity model services to grant; skipping.")
         return
 
+    failures: list[str] = []
     catalogs: set[str] = set()
     schemas: set[tuple[str, str]] = set()
     for fqn in fqns:
@@ -209,6 +211,7 @@ def grant_model_services(settings, sp: str, names: list[str]) -> None:
             _log(f"UC model-service ok: {stmt}")
         except Exception as exc:  # noqa: BLE001
             _log(f"UC model-service WARN ({stmt}): {exc}")
+            failures.append(stmt)
     for catalog, schema in sorted(schemas):
         stmt = f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO {p}"
         try:
@@ -216,16 +219,28 @@ def grant_model_services(settings, sp: str, names: list[str]) -> None:
             _log(f"UC model-service ok: {stmt}")
         except Exception as exc:  # noqa: BLE001
             _log(f"UC model-service WARN ({stmt}): {exc}")
+            failures.append(stmt)
 
+    client = get_workspace_client(settings)
     for fqn in fqns:
-        cat, schema, leaf = fqn.split(".", 2)
-        stmt = f"GRANT EXECUTE ON MODEL SERVICE `{cat}`.`{schema}`.`{leaf}` TO {p}"
         try:
-            execute_sql(settings, stmt)
-            _log(f"UC model-service EXECUTE ok: {stmt}")
+            # MODEL SERVICE is not accepted by the SQL GRANT grammar in this
+            # workspace. The public UC permissions API uses the singular
+            # securable type `model_service`.
+            client.api_client.do(
+                "PATCH",
+                f"/api/2.1/unity-catalog/permissions/model_service/{fqn}",
+                body={"changes": [{"principal": sp, "add": ["EXECUTE"]}]},
+            )
+            _log(f"UC model-service EXECUTE ok: {fqn} -> {sp}")
         except Exception as exc:  # noqa: BLE001
-            _log(f"UC model-service WARN ({stmt}): {exc}")
-            _log(f"UC model-service GRANT failed for {fqn}; grant EXECUTE in the UI.")
+            _log(f"UC model-service WARN ({fqn}): {exc}")
+            failures.append(f"GRANT EXECUTE ON MODEL SERVICE {fqn}")
+
+    if failures:
+        raise RuntimeError(
+            "required model-service grants failed:\n- " + "\n- ".join(failures)
+        )
 
 
 def main() -> None:

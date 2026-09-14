@@ -24,6 +24,25 @@ _RETRY_DELAYS_S = (0.4, 0.8)
 _APP_TAGS = {"app": "genie-voice-agent"}
 
 
+class GatewayPolicyDenied(RuntimeError):
+    """A Unity AI Gateway service policy blocked a request or response."""
+
+    def __init__(self, policy: dict[str, Any]) -> None:
+        self.policy = dict(policy)
+        self.policy_name = str(
+            policy.get("policy_name") or policy.get("name") or policy.get("policy") or "service_policy"
+        )
+        self.reason = str(policy.get("reason") or policy.get("message") or "Blocked by service policy")
+        self.phase = str(policy.get("phase") or policy.get("event_type") or "") or None
+        self.resource: str | None = None
+        super().__init__(f"{self.policy_name}: {self.reason}")
+
+    @property
+    def is_input_denial(self) -> bool:
+        phase = str(self.phase or "").lower().replace("-", "_")
+        return phase in {"input", "request", "on_call", "pre_call"} or not phase
+
+
 def model_service_id(name: str) -> str:
     return (name or "").strip().removeprefix("model-services/")
 
@@ -66,7 +85,9 @@ def iter_sse_json(resp: Any) -> Iterator[dict[str, Any]]:
             payload = line[len("data:") :].strip()
             if payload and payload != "[DONE]":
                 try:
-                    yield json.loads(payload)
+                    chunk = json.loads(payload)
+                    _raise_policy_denial(chunk)
+                    yield chunk
                 except json.JSONDecodeError:
                     continue
 
@@ -86,7 +107,10 @@ def invoke(
     url = chat_completions_url(host) if gateway else serving_invocations_url(host, endpoint)
     body = chat_body(endpoint, inputs) if gateway else inputs
     headers = request_headers(authenticate, gateway=gateway)
-    return _post_json(requests.post, url, headers, body, timeout_s, retry_429=gateway)
+    payload = _post_json(requests.post, url, headers, body, timeout_s, retry_429=gateway)
+    if gateway:
+        _raise_policy_denial(payload)
+    return payload
 
 
 def invoke_stream(
@@ -134,3 +158,12 @@ def _raise_http(resp: Any) -> None:
     except Exception:  # noqa: BLE001
         detail = ""
     raise requests.HTTPError(f"{resp.status_code} {detail}".strip(), response=resp)
+
+
+def _raise_policy_denial(payload: Any) -> None:
+    """Raise for the HTTP-200 denial envelope returned by service policies."""
+    if not isinstance(payload, dict):
+        return
+    policy = payload.get("databricks_service_policy")
+    if isinstance(policy, dict):
+        raise GatewayPolicyDenied(policy)

@@ -10,6 +10,12 @@ import wave
 from typing import AsyncIterator
 
 from ..languages import CATALOG, canonical_base, canonical_tag
+from ..guardrails.boundaries import (
+    SpeechAdmission,
+    SpeechBoundaryViolation,
+    admit_speech_output,
+    admit_transcript,
+)
 from ..session import VoiceSession
 from ..tracing import TurnTrace
 from ..voice_identity import voice_id_for
@@ -93,6 +99,12 @@ async def transcribe(
     # off one clean representation instead of re-parsing raw values. Unmappable
     # detections pass through unchanged so the gate can recognize them as unknown.
     canonical = canonical_tag(detected) if detected else None
+    transcript = admit_transcript(
+        transcript,
+        detected_language=canonical,
+        pinned_language=session.config.language,
+        resource=str(getattr(bundle.stt, "stt_endpoint", "stt")),
+    )
     return transcript, canonical, stt_ms
 
 
@@ -100,7 +112,7 @@ async def stream_tts(
     bundle: ServingBundle,
     session: VoiceSession,
     turn_id: int,
-    text: str,
+    text: str | SpeechAdmission,
     language: str,
     *,
     mark_final: bool = True,
@@ -124,6 +136,20 @@ async def stream_tts(
     same-turn inject), this generator stops and stamped events from the old epoch
     are dropped by the client — so two voices never overlap.
     """
+    resource = str(getattr(bundle.tts, "tts_endpoint", "tts"))
+    if isinstance(text, SpeechAdmission):
+        if text.resource != resource:
+            raise SpeechBoundaryViolation(
+                f"speech admission resource {text.resource!r} does not match {resource!r}"
+            )
+        admission = text
+    else:
+        admission = admit_speech_output(
+            text,
+            resource=resource,
+            ledger=trace.guards if trace is not None else None,
+        )
+    text = admission.text
     reference_b64 = session.voice_reference_b64
     voice_id = session.voice_id
     speech_epoch = session.speech_epoch

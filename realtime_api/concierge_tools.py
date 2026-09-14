@@ -105,15 +105,22 @@ CONCIERGE_SYSTEM_PROMPT = (
 
 
 def _greeting_intent(first_name: str) -> str:
-    who = f" the user by name ({first_name})" if first_name else " the user"
+    user_fact = (
+        f"- The signed-in user's first name is {first_name}.\n"
+        if first_name
+        else ""
+    )
     return (
-        f"Warmly welcome{who} to Databricks Genie Assisted Voice. First, invite them to "
-        "pick their preferred language from the language menu at the top of the screen. "
-        "Then, in one short sentence, say that Genie-assisted voice agents work across "
-        "Telco billing support, a Financial Services credit-card assistant, and a "
-        "Databricks Knowledge Agent, powered by the Genie ontology and deep reasoning. "
-        "Finally ask which they would like to explore — Telco, Financial Services, or the "
-        "Knowledge Agent — and mention they can just say it."
+        "AUTHORITATIVE APPLICATION CONTEXT:\n"
+        "- The application is named Databricks Genie Assisted Voice.\n"
+        "- Its home screen has a language menu at the top.\n"
+        "- It offers Telco billing support, a Financial Services credit-card assistant, "
+        "and a Databricks Knowledge Agent.\n"
+        "- The application uses Genie ontology and deep reasoning.\n"
+        f"{user_fact}\n"
+        "TASK: Using only that context, warmly welcome the user, invite them to choose "
+        "a language, briefly name the three experiences, and ask which one they want. "
+        "Do not add claims beyond the context."
     )
 
 

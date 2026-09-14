@@ -77,3 +77,28 @@ def test_gateway_429_exhausted_raises(monkeypatch) -> None:
         raise AssertionError("expected HTTPError")
     except requests.HTTPError as exc:
         assert "429" in str(exc)
+
+
+def test_service_policy_http_200_is_raised_as_denial() -> None:
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "Blocked"}}],
+        "databricks_service_policy": {
+            "name": "block-unsafe-content",
+            "phase": "pre_call",
+            "reason": "Unsafe content was blocked.",
+        },
+    }
+    try:
+        ai_gateway._raise_policy_denial(payload)
+        raise AssertionError("expected GatewayPolicyDenied")
+    except ai_gateway.GatewayPolicyDenied as exc:
+        assert exc.policy_name == "block-unsafe-content"
+        assert exc.reason == "Unsafe content was blocked."
+        assert exc.is_input_denial
+
+
+def test_service_policy_post_call_is_output_denial() -> None:
+    denial = ai_gateway.GatewayPolicyDenied(
+        {"name": "block-hallucination", "phase": "post_call"}
+    )
+    assert denial.is_input_denial is False

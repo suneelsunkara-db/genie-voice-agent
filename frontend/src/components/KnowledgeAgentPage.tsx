@@ -260,7 +260,7 @@ export function KnowledgeAgentPage() {
       );
       const data = (await r.json()) as { text?: string };
       const text = typeof data.text === "string" ? data.text : "";
-      greetingRef.current.set(language, text);
+      if (text) greetingRef.current.set(language, text);
       return text;
     } catch {
       return "";
@@ -382,6 +382,14 @@ export function KnowledgeAgentPage() {
           },
           onPlaybackStop: (_turnId, speechEpoch, reason) => {
             handlePlaybackStop(speechEpoch, reason);
+          },
+          onGuardrailDenied: ({ message, inputRemoved }) => {
+            if (inputRemoved) setAskedQuestion("");
+            setAnswerText(message);
+            setAnswerFailure("policy_denied");
+            setWaitStartedAt(null);
+            setError(message);
+            setAgentState("speaking");
           },
           onError: (code, message) => {
             if (code === "ws_closed") {

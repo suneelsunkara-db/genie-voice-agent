@@ -671,11 +671,20 @@ _GREETING_CACHE: dict[tuple[str, str], str] = {}
 
 
 def _greeting_intent(first_name: str) -> str:
-    who = f" the user by name ({first_name})" if first_name else " the user"
+    user_fact = (
+        f"- The signed-in user's first name is {first_name}.\n"
+        if first_name
+        else ""
+    )
     return (
-        f"Warmly greet{who} and introduce yourself as the {KNOWLEDGE_BRAND}. In the SAME "
-        "sentence, say you answer questions about the Databricks platform from a governed "
-        "knowledge base with citations, and ask what they would like to know."
+        "AUTHORITATIVE APPLICATION CONTEXT:\n"
+        f"- The assistant is the {KNOWLEDGE_BRAND}.\n"
+        "- It answers questions about the Databricks platform.\n"
+        "- Its answers use a governed knowledge base with citations.\n"
+        f"{user_fact}\n"
+        "TASK: Warmly greet the user by first name when provided and ask what they "
+        "would like to know. Do not make identity, product, platform, knowledge-base, "
+        "citation, or capability claims in the greeting."
     )
 
 

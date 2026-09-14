@@ -45,6 +45,16 @@ export interface AgentTurnEvent {
   payload: Record<string, unknown>;
 }
 
+export interface GuardrailDeniedEvent {
+  turnId: number;
+  seq: number;
+  policyId: string;
+  phase: string;
+  resource?: string;
+  inputRemoved: boolean;
+  message: string;
+}
+
 export interface RealtimeVoiceCallbacks {
   onSpeechStarted?: (turnId: number) => void;
   onTranscript?: (text: string, language: string, turnId: number) => void;
@@ -71,6 +81,8 @@ export interface RealtimeVoiceCallbacks {
   onPlaybackStop?: (turnId: number, speechEpoch?: number, reason?: string) => void;
   onToolCalled?: (name: string, result: unknown, turnId: number) => void;
   onLanguageMismatch?: (expected: string, detected: string, turnId: number) => void;
+  /** Governed policy outcome. The call stays open and a trusted refusal follows. */
+  onGuardrailDenied?: (event: GuardrailDeniedEvent) => void;
   onError?: (code: string, message: string) => void;
   onSessionReady?: (sessionId: string, language: string) => void;
   onLevel?: (level: number) => void;
@@ -397,6 +409,31 @@ export async function startRealtimeVoice(
           if (turnCursor.isStale(turnId)) break;
           callbacks.onLanguageMismatch?.(msg.expected, msg.detected, msg.turn_id);
           break;
+        case "guardrail.denied": {
+          if (turnCursor.isStale(turnId)) break;
+          const denied = {
+            turnId: msg.turn_id,
+            seq: typeof msg.seq === "number" ? msg.seq : 0,
+            policyId: String(msg.policy_id || "service_policy"),
+            phase: String(msg.phase || "unknown"),
+            resource: typeof msg.resource === "string" ? msg.resource : undefined,
+            inputRemoved: msg.input_removed === true,
+            message: String(msg.message || "This request was blocked by policy."),
+          };
+          callbacks.onGuardrailDenied?.(denied);
+          callbacks.onTurnEvent?.({
+            turnId: denied.turnId,
+            seq: denied.seq,
+            kind: "guardrail.denied",
+            payload: {
+              policy_id: denied.policyId,
+              phase: denied.phase,
+              resource: denied.resource,
+              input_removed: denied.inputRemoved,
+            },
+          });
+          break;
+        }
         case "error":
           callbacks.onError?.(msg.code, msg.message);
           break;

@@ -1,0 +1,246 @@
+version: "1.0"
+
+# Policy definitions are model-independent. Bundles assign them to stable trust
+# boundaries; resources can change without copying or renaming policy logic.
+policies:
+  gateway.service_policy:
+    title: Gateway service-policy decision
+    owner: gateway
+    family: gateway
+    group: Unity AI Gateway
+    stage: Model input / output
+    kind: llm
+    status: live
+    phase: ON CALL / ON RESULT
+    description: Records a managed Gateway policy DENY with its policy name and redacted reason.
+  gateway.rate_limit:
+    title: Gateway rate limit
+    owner: gateway
+    family: gateway
+    group: Unity AI Gateway
+    stage: Model request
+    kind: deterministic
+    status: live
+    phase: Traffic governance
+    description: Records HTTP 429 after the bounded retry budget is exhausted.
+  gateway.request:
+    title: Gateway request health
+    owner: gateway
+    family: gateway
+    group: Unity AI Gateway
+    stage: Model request
+    kind: deterministic
+    status: live
+    phase: Transport
+    description: Records non-policy Gateway failures without persisting response bodies or user content.
+  language_id:
+    title: Spoken-language identification
+    owner: qwen
+    family: speech_input
+    group: Qwen3-ASR
+    stage: STT
+    kind: model-signal
+    status: delegated
+    phase: Audio to transcript
+    description: Qwen3-ASR reports language only for unpinned sessions; pinned sessions are not evaluated.
+  no_speech_suppression:
+    title: Silence / no-speech suppression
+    owner: qwen
+    family: speech_input
+    group: Qwen3-ASR
+    stage: STT
+    kind: model-signal
+    status: delegated
+    phase: Audio to transcript
+    description: Empty speech output drops the turn before any downstream model sees it.
+  language_gate:
+    title: Reply-language gate
+    owner: application
+    family: speech_input
+    group: Transcript boundary
+    stage: Routing
+    kind: deterministic
+    status: live
+    phase: Post-STT
+    description: Blocks a confident mismatch with the selected interaction language.
+  navigation.semantic:
+    title: Semantic capability classification
+    owner: qwen
+    family: application
+    group: Action boundary
+    stage: Routing
+    kind: llm
+    status: live
+    phase: Before tools
+    description: Proposes one language-neutral capability with confidence and ambiguity signals.
+  navigation.policy:
+    title: Navigation policy
+    owner: application
+    family: application
+    group: Action boundary
+    stage: Routing
+    kind: deterministic
+    status: live
+    phase: Before tools
+    description: Applies authorization, confidence, conversation-state, and confirmation rules.
+  tool_execution_policy:
+    title: Tool execution policy
+    owner: application
+    family: application
+    group: Action boundary
+    stage: Routing
+    kind: deterministic
+    status: live
+    phase: Tool execution
+    description: Records whether validated arguments and the requested action were accepted.
+  tool_markup_strip:
+    title: Tool-markup strip
+    owner: application
+    family: speech_output
+    group: Speech boundary
+    stage: Pre-TTS
+    kind: deterministic
+    status: live
+    phase: Before synthesis
+    description: Removes leaked tool-call representations before text can be spoken.
+  speech_output_boundary:
+    title: Shared speech-output boundary
+    owner: application
+    family: speech_output
+    group: Speech boundary
+    stage: Pre-TTS
+    kind: deterministic
+    status: live
+    phase: Before synthesis
+    description: Every TTS path crosses one final text sanitation boundary.
+  off_scope:
+    title: Off-scope request
+    owner: application
+    family: planned
+    group: Input stage
+    stage: Input transcript
+    kind: deterministic
+    status: planned
+    phase: Phase 1
+    description: Steers requests outside the active profile back on track.
+  profanity_abuse:
+    title: Profanity / abuse
+    owner: application
+    family: planned
+    group: Input stage
+    stage: Input transcript
+    kind: deterministic
+    status: planned
+    phase: Phase 1
+    description: Optional accent-sensitive abuse detection, installed off by default.
+  fraud_social_engineering:
+    title: Fraud / social engineering
+    owner: application
+    family: planned
+    group: Observer stage
+    stage: Async observer
+    kind: llm
+    status: planned
+    phase: Phase 3
+    description: Watches rolling context for dispute gaming and social engineering.
+  safety_escalation:
+    title: Safety escalation
+    owner: application
+    family: planned
+    group: Observer stage
+    stage: Async observer
+    kind: llm
+    status: planned
+    phase: Phase 3
+    description: Escalates danger, threats, or self-harm rather than continuing a scripted flow.
+  policy_nuance:
+    title: Policy nuance
+    owner: application
+    family: planned
+    group: Observer stage
+    stage: Async observer
+    kind: llm
+    status: planned
+    phase: Phase 3
+    description: Detects nuanced off-policy commitments that deterministic rules cannot establish.
+  unsupported_promise:
+    title: Unsupported promise
+    owner: application
+    family: planned
+    group: Pre-TTS stage
+    stage: Pre-TTS
+    kind: deterministic
+    status: planned
+    phase: Phase 2
+    description: Cross-checks spoken claims against successful tool evidence.
+  reply_language:
+    title: Reply-language check
+    owner: application
+    family: planned
+    group: Pre-TTS stage
+    stage: Pre-TTS
+    kind: deterministic
+    status: planned
+    phase: Phase 2
+    description: Stops a reply that drifted away from the caller's language.
+  output_schema_leak:
+    title: Schema / SQL leak
+    owner: application
+    family: planned
+    group: Pre-TTS stage
+    stage: Pre-TTS
+    kind: deterministic
+    status: planned
+    phase: Phase 2
+    description: Stops raw SQL or internal schema identifiers from being spoken.
+
+gateway_policies:
+  unsafe_content:
+    function: system.ai.block_unsafe_content
+    phases: [input, output]
+    rank: 1
+  jailbreak:
+    function: system.ai.block_jailbreak
+    phases: [input]
+    rank: 2
+  sensitive_data:
+    function: system.ai.detect_sensitive_data
+    phases: [input, output]
+    rank: 3
+  hallucination:
+    function: system.ai.block_hallucination
+    phases: [output]
+    rank: 4
+
+bundles:
+  governed_foundation_model:
+    title: Governed foundation-model traffic
+    enforcer: unity_ai_gateway
+    policies: [unsafe_content, jailbreak, sensitive_data, hallucination]
+  speech_input:
+    title: Shared speech-input boundary
+    enforcer: application
+    policies: [language_id, no_speech_suppression, language_gate]
+  action:
+    title: Governed tool and mutation boundary
+    enforcer: application
+    policies: [navigation.semantic, navigation.policy, tool_execution_policy]
+  speech_output:
+    title: Shared speech-output boundary
+    enforcer: application
+    policies: [tool_markup_strip, speech_output_boundary]
+
+assignments:
+  model_services:
+    qwen: governed_foundation_model
+    gpt55: governed_foundation_model
+  boundaries:
+    post_stt:
+      bundle: speech_input
+      resources: [realtime_voice_stt_qwen3_asr_1_7b]
+    tool_execution:
+      bundle: action
+      resources: [realtime_voice]
+    pre_tts:
+      bundle: speech_output
+      resources: [realtime_voice_tts_voxcpm2]

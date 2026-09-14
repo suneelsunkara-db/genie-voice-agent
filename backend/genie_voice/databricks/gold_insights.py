@@ -52,7 +52,7 @@ def refresh_gold_insights(settings: Settings | None = None) -> dict[str, str]:
     target = _fqtn(settings, T_GOLD)
     facts_history = _history_fqtn(settings, "call_facts")
     utterance_history = _history_fqtn(settings, "live_call_utterances")
-    endpoint = settings.enrichment.model_endpoint.replace("'", "''")
+    endpoint = settings.enrichment.batch_model_endpoint.replace("'", "''")
     # ai_query supports Databricks-provided Unity model services (system.ai.*)
     # over Unity AI Gateway; custom serving aliases are not a drop-in here.
     prompt = (f"{SYSTEM_PROMPT}\n{CALL_INSTRUCTION}\n\nTRANSCRIPT:\n").replace("'", "''")

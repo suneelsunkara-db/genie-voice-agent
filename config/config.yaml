@@ -42,6 +42,26 @@ databricks:
   # Genie space is created/resolved dynamically by NAME (no hardcoded id).
   genie_space_name: "Genie Voice - Contact Center"
 
+# App-owned Unity AI Gateway services. deploy_app.sh reconciles their routes,
+# service-wide limits, inference tables, and app-SP grants. Databricks currently
+# exposes service-policy attachment only in the Gateway UI (Beta). Policy
+# definitions and assignments live once in config/guardrails.yaml.
+ai_gateway:
+  enabled: true
+  requests_per_minute: 60
+  tokens_per_minute: 100000
+  model_services:
+    qwen:
+      service: partner_demo_catalog.genie_voice_contact_center.genie_voice_qwen_guarded
+      destination: system.ai.qwen3-next-80b-a3b-instruct
+      roles: [realtime_llm, enrichment]
+      policy_bundle: governed_foundation_model
+    gpt55:
+      service: partner_demo_catalog.genie_voice_contact_center.genie_voice_gpt55_guarded
+      destination: system.ai.databricks-gpt-5-5
+      roles: [i18n, conversion]
+      policy_bundle: governed_foundation_model
+
 # Unity Catalog Volumes for raw landing.
 volume:
   batch_name: raw_batch_data
@@ -192,7 +212,11 @@ pipeline:
 # ai_query with structured (json_schema) output. No heuristic fallback - if the FM
 # is unavailable the insight is reported as unavailable, not faked.
 enrichment:
-  model_endpoint: "system.ai.qwen3-next-80b-a3b-instruct"  # same multilingual UC model as voice LLM
+  # Online/app enrichment crosses the app-owned guarded service.
+  model_endpoint: "partner_demo_catalog.genie_voice_contact_center.genie_voice_qwen_guarded"
+  # ai_query does not accept custom model services yet. Batch gold therefore
+  # keeps the system service until Databricks adds that support.
+  batch_model_endpoint: "system.ai.qwen3-next-80b-a3b-instruct"
   max_tokens: 512
   # null = omit temperature. Set a number (e.g. 0.0) only when the model supports
   # it and you want deterministic JSON extraction.
@@ -231,7 +255,7 @@ realtime_voice:
   # Middle stage of the voice loop: Unity Catalog model service (Unity AI Gateway
   # chat completions). Benchmarked across en/th/id/zh (6 reps): Qwen3-Next 80B
   # A3B is the fastest option that also accepts `temperature` and `tools`.
-  llm_endpoint: system.ai.qwen3-next-80b-a3b-instruct
+  llm_endpoint: partner_demo_catalog.genie_voice_contact_center.genie_voice_qwen_guarded
   # All language conversion — offline UI copy AND runtime deep-dive text — runs on
   # gpt-5-5 for terminology quality. gemma mistranslated one-word billing labels and
   # mistransliterated terms (Hindi "autopay" -> the non-word "autopet"); gpt-5-5 is
@@ -239,11 +263,11 @@ realtime_voice:
   #
   # Offline UI-copy translation only (scripts/i18n/translate_locales.py); never on a
   # call path.
-  i18n_endpoint: system.ai.gpt-5-5
+  i18n_endpoint: partner_demo_catalog.genie_voice_contact_center.genie_voice_gpt55_guarded
   # Runtime text-to-text language conversion on the deep-dive lane (spoken "why"
   # summary + on-screen report translation). Split from llm_endpoint: these are
   # tool-free text->text turns. Empty falls back to llm_endpoint.
-  conversion_endpoint: system.ai.gpt-5-5
+  conversion_endpoint: partner_demo_catalog.genie_voice_contact_center.genie_voice_gpt55_guarded
   # LLM sampling + tool-calling knobs for the middle stage.
   llm_defaults:
     temperature: 0.4

@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterator, Protocol
 
 from .contracts import AudioChunk, AudioResponse
+from .guardrails.boundaries import (
+    enforce_speech_text,
+    extract_inline_tool_calls as _extract_inline_tool_calls,
+    sanitize_speech_text,
+)
+from .guardrails import report
 from .tool_registry import ToolContext, run_tool, tools_spec
 
 if TYPE_CHECKING:
@@ -449,6 +455,7 @@ class DatabricksServing:
                 messages,
                 tools=tools,
                 tool_choice=(tool_choice if iteration == 0 else "auto"),
+                trace=trace,
             )
             tool_calls = message.get("tool_calls") or []
             assistant_content = _message_text(message)
@@ -474,6 +481,15 @@ class DatabricksServing:
                         for i, c in enumerate(inline)
                     ]
                     assistant_content = cleaned
+                    report(
+                        trace.guards if trace is not None else None,
+                        "tool_markup_strip",
+                        "fired",
+                        stage="pre_tts",
+                        phase="model_output",
+                        resource=self.llm_endpoint,
+                        reason="inline tool-call representation removed",
+                    )
             logger.info(
                 "llm _chat iter %d: %dms tool_calls=%d",
                 iteration, round((time.perf_counter() - _t) * 1000), len(tool_calls),
@@ -486,7 +502,17 @@ class DatabricksServing:
                     "tool_calls_emitted", [((c.get("function") or {}).get("name")) for c in tool_calls]
                 ).end()
             if not tool_calls:
-                text = _strip_tool_markup(assistant_content).strip()
+                cleaned = _strip_tool_markup(assistant_content)
+                report(
+                    trace.guards if trace is not None else None,
+                    "tool_markup_strip",
+                    "fired" if cleaned != assistant_content else "passed",
+                    stage="pre_tts",
+                    phase="model_output",
+                    resource=self.llm_endpoint,
+                    reason="residual tool markup removed" if cleaned != assistant_content else None,
+                )
+                text = cleaned.strip()
                 if not text:
                     raise RuntimeError("LLM endpoint returned no response text")
                 return text, tool_invocations
@@ -509,7 +535,19 @@ class DatabricksServing:
                     except Exception:  # noqa: BLE001
                         logger.debug("on_tool(started) failed", exc_info=True)
                 _tt = time.perf_counter()
-                result = runner(name, arguments, ctx)
+                try:
+                    result = runner(name, arguments, ctx)
+                except Exception as exc:  # noqa: BLE001
+                    report(
+                        trace.guards if trace is not None else None,
+                        "tool_execution_policy",
+                        "error",
+                        stage="routing",
+                        phase="tool_execution",
+                        resource=name or "unknown",
+                        reason=f"{name or 'unknown'}: {type(exc).__name__}",
+                    )
+                    raise
                 logger.info("tool %s: %dms", name, round((time.perf_counter() - _tt) * 1000))
                 messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": result})
                 try:
@@ -526,6 +564,25 @@ class DatabricksServing:
                         "tool %s returned an error: %s",
                         name,
                         str(parsed_result.get("error") or "denied")[:300],
+                    )
+                    report(
+                        trace.guards if trace is not None else None,
+                        "tool_execution_policy",
+                        "fired",
+                        stage="routing",
+                        phase="tool_execution",
+                        resource=name or "unknown",
+                        reason=f"{name or 'unknown'} rejected its arguments or action",
+                    )
+                else:
+                    report(
+                        trace.guards if trace is not None else None,
+                        "tool_execution_policy",
+                        "passed",
+                        stage="routing",
+                        phase="tool_execution",
+                        resource=name or "unknown",
+                        reason=name or "unknown",
                     )
                 if on_tool is not None:
                     try:
@@ -545,11 +602,22 @@ class DatabricksServing:
                 "llm.final", "LLM",
                 input={"messages": [dict(m) for m in messages], "tools_available": []},
             )
-        message = self._chat(messages, tools=None)
+        message = self._chat(messages, tools=None, trace=trace)
         logger.info("llm _chat final: %dms", round((time.perf_counter() - _t) * 1000))
         if final_span is not None:
             final_span.set_output({"content": message.get("content")}).end()
-        text = _strip_tool_markup(_message_text(message)).strip()
+        raw_text = _message_text(message)
+        cleaned = _strip_tool_markup(raw_text)
+        report(
+            trace.guards if trace is not None else None,
+            "tool_markup_strip",
+            "fired" if cleaned != raw_text else "passed",
+            stage="pre_tts",
+            phase="model_output",
+            resource=self.llm_endpoint,
+            reason="residual tool markup removed" if cleaned != raw_text else None,
+        )
+        text = cleaned.strip()
         if not text:
             raise RuntimeError("LLM endpoint returned no response text after tool calls")
         return text, tool_invocations
@@ -645,6 +713,7 @@ class DatabricksServing:
         temperature: float | None = None,
         max_tokens: int | None = None,
         endpoint: str | None = None,
+        trace: "TurnTrace | None" = None,
     ) -> dict[str, Any]:
         inputs: dict[str, Any] = {
             "messages": messages,
@@ -654,7 +723,44 @@ class DatabricksServing:
         if tools:
             inputs["tools"] = tools
             inputs["tool_choice"] = tool_choice
-        response = self.client.predict(endpoint=endpoint or self.llm_endpoint, inputs=inputs)
+        target_endpoint = endpoint or self.llm_endpoint
+        try:
+            response = self.client.predict(endpoint=target_endpoint, inputs=inputs)
+        except Exception as exc:  # noqa: BLE001
+            from genie_voice.databricks.ai_gateway import (
+                GatewayPolicyDenied,
+                is_unity_model_service,
+            )
+
+            if isinstance(exc, GatewayPolicyDenied):
+                exc.resource = target_endpoint
+            if isinstance(exc, GatewayPolicyDenied) and trace is not None:
+                report(
+                    trace.guards,
+                    "gateway.service_policy",
+                    "fired",
+                    stage="input_transcript" if exc.is_input_denial else "routing",
+                    owner="gateway",
+                    phase=exc.phase or "on_call_or_result",
+                    resource=target_endpoint,
+                    reason=(
+                        f"{exc.policy_name}: Gateway service policy denied "
+                        f"{exc.phase or 'request_or_response'}"
+                    ),
+                )
+            elif is_unity_model_service(target_endpoint) and trace is not None:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                report(
+                    trace.guards,
+                    "gateway.rate_limit" if status == 429 else "gateway.request",
+                    "fired" if status == 429 else "error",
+                    stage="routing",
+                    owner="gateway",
+                    phase="model_request",
+                    resource=target_endpoint,
+                    reason=f"HTTP {status}" if status else type(exc).__name__,
+                )
+            raise
         payload = response if isinstance(response, dict) else dict(response)
         choices = payload.get("choices") or []
         if choices and isinstance(choices[0], dict):
@@ -703,6 +809,7 @@ class DatabricksServing:
         reference_audio_b64: str | None = None,
         voice_id: str | None = None,
     ) -> AudioResponse:
+        text, _changed = enforce_speech_text(text)
         send_reference = self._send_reference(reference_audio_b64, voice_id)
         while True:
             response = self._predict(
@@ -756,6 +863,7 @@ class DatabricksServing:
         no audio, so the clip is resent and the turn retried once. The retry happens
         before any chunk is emitted, so it can never duplicate or split audio.
         """
+        text, _changed = enforce_speech_text(text)
         send_reference = self._send_reference(reference_audio_b64, voice_id)
         while True:
             status: dict[str, Any] = {}
@@ -860,80 +968,9 @@ def _message_text(message: dict[str, Any]) -> str:
     return ""
 
 
-_TOOL_CALL_TAG_RE = re.compile(r"</?\s*tool_call\s*>", re.IGNORECASE)
-
-
-def _iter_json_objects(text: str) -> Iterator[tuple[str, Any]]:
-    """Yield (raw_substring, parsed) for each top-level ``{...}`` JSON object.
-
-    A brace-matching scanner (string/escape aware) so it tolerates the malformed
-    markup some endpoints emit (e.g. unpaired ``<tool_call>`` tags) that a strict
-    regex would miss.
-    """
-    i, n = 0, len(text)
-    while i < n:
-        if text[i] != "{":
-            i += 1
-            continue
-        depth, j, in_str, esc = 0, i, False, False
-        while j < n:
-            ch = text[j]
-            if in_str:
-                if esc:
-                    esc = False
-                elif ch == "\\":
-                    esc = True
-                elif ch == '"':
-                    in_str = False
-            elif ch == '"':
-                in_str = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    raw = text[i : j + 1]
-                    try:
-                        yield raw, json.loads(raw)
-                    except json.JSONDecodeError:
-                        pass
-                    break
-            j += 1
-        i = j + 1
-
-
-def _extract_inline_tool_calls(content: str) -> tuple[list[dict[str, Any]], str]:
-    """Parse tool calls a model emitted as inline TEXT and strip them from the text.
-
-    Some serving endpoints don't return the structured ``tool_calls`` field and
-    instead print the call in the message content, e.g.::
-
-        <tool_call> {"name": "start_deep_dive", "arguments": {...}} </tool_call>
-
-    Left unhandled, that raw markup both (a) leaks into the spoken + on-screen
-    transcript and (b) means the tool never actually runs. We only trigger when a
-    ``<tool_call>`` marker is present (so ordinary prose containing JSON is never
-    misread as a tool call), then extract every ``{"name": ...}`` object.
-
-    Returns ``(calls, cleaned_text)`` where ``calls`` is ``[{"name", "arguments"}]``.
-    """
-    if not content or "tool_call" not in content.lower():
-        return [], content
-    calls: list[dict[str, Any]] = []
-    cleaned = content
-    for raw, obj in _iter_json_objects(content):
-        if isinstance(obj, dict) and isinstance(obj.get("name"), str):
-            args = obj.get("arguments")
-            calls.append({"name": obj["name"], "arguments": args if isinstance(args, dict) else {}})
-            cleaned = cleaned.replace(raw, "")
-    cleaned = _TOOL_CALL_TAG_RE.sub("", cleaned).strip()
-    return calls, cleaned
-
-
 def _strip_tool_markup(text: str) -> str:
     """Defense-in-depth: remove any stray inline tool-call markup from spoken text."""
-    _, cleaned = _extract_inline_tool_calls(text)
-    return cleaned if cleaned else text if "tool_call" not in (text or "").lower() else ""
+    return sanitize_speech_text(text)[0]
 
 
 def _recover_bare_tool_call(

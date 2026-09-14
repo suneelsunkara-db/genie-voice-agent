@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from genie_voice.config import get_settings
+
 from ..deps import serving
 
 router = APIRouter(prefix="/traces", tags=["traces"])
@@ -103,6 +105,10 @@ def guardrail_rollup(limit: int = 200) -> dict:
                     "seam": entry.get("seam"),
                     "stage": entry.get("stage"),
                     "owner": entry.get("owner"),
+                    "enforcer": entry.get("enforcer"),
+                    "phase": entry.get("phase"),
+                    "resource": entry.get("resource"),
+                    "policy_version": entry.get("policy_version"),
                     "runs": 0,
                     "outcomes": {},
                     "last_reason": None,
@@ -124,6 +130,8 @@ def guardrail_rollup(limit: int = 200) -> dict:
                         "created_at": row.get("created_at") or row.get("started_at"),
                         "guard_id": guard_id,
                         "stage": entry.get("stage"),
+                        "phase": entry.get("phase"),
+                        "resource": entry.get("resource"),
                         "reason": entry.get("reason"),
                     }
                 )
@@ -138,6 +146,135 @@ def guardrail_rollup(limit: int = 200) -> dict:
         "guards": sorted(guards.values(), key=lambda g: (-g["runs"], g["guard_id"])),
         "by_language": by_language,
         "recent_fired": recent_fired,
+    }
+
+
+def _statement_rows(result) -> list[dict]:
+    columns = [
+        column.name
+        for column in (((result.manifest or {}).get("schema") or {}).get("columns") or [])
+    ] if isinstance(result.manifest, dict) else [
+        column.name for column in (result.manifest.schema.columns if result.manifest else [])
+    ]
+    data = result.result.data_array if result.result and result.result.data_array else []
+    return [dict(zip(columns, row, strict=False)) for row in data]
+
+
+@router.get("/gateway")
+def gateway_insights() -> dict:
+    """Live configuration and seven-day traffic for app-owned model services.
+
+    Attachment writes remain UI-only during the Beta. The public read API now
+    exposes attached policies, so this endpoint verifies each handler, phase,
+    and rank against the manifest instead of relying on a synthetic probe.
+    """
+    settings = get_settings()
+    gateway = settings.ai_gateway
+    from genie_voice.guardrails import get_policy_manifest
+
+    manifest = get_policy_manifest()
+    if not gateway.enabled:
+        return {
+            "enabled": False,
+            "services": [],
+            "policy_manifest": {
+                "version": manifest.version,
+                "catalog": manifest.catalog(),
+                "bundles": {
+                    key: value.model_dump() for key, value in manifest.bundles.items()
+                },
+                "assignments": manifest.assignments.model_dump(),
+            },
+        }
+
+    from genie_voice.databricks.client import get_workspace_client
+
+    client = get_workspace_client(settings)
+    services: list[dict] = []
+    for key, configured in gateway.model_services.items():
+        bundle_id = manifest.assignments.model_services[key]
+        gateway_policy_ids = manifest.bundles[bundle_id].policies
+        required_policies = [
+            manifest.gateway_policies[policy_id].model_dump()
+            | {"policy_id": policy_id}
+            for policy_id in gateway_policy_ids
+        ]
+        item = {
+            "key": key,
+            "service": configured.service,
+            "destination": configured.destination,
+            "roles": configured.roles,
+            "policy_bundle": bundle_id,
+            "required_policies": required_policies,
+            "policy_deployment_state": "external_action_required",
+            "rate_limits": [],
+            "inference_table": None,
+            "traffic_7d": None,
+        }
+        try:
+            model_service = client.api_client.do(
+                "GET",
+                f"/api/2.1/unity-catalog/model-services/{configured.service}",
+            )
+            config = model_service.get("config") or {}
+            item["rate_limits"] = config.get("rate_limits") or []
+            table = (config.get("inference_table") or {}).get("table")
+            item["inference_table"] = str(table or "").removeprefix("tables/") or None
+            policies, fully_configured = manifest.gateway_deployment(
+                key, config.get("service_policies") or []
+            )
+            item["required_policies"] = policies
+            item["policy_deployment_state"] = (
+                "configured" if fully_configured else "external_action_required"
+            )
+        except Exception as exc:  # noqa: BLE001
+            item["configuration_error"] = str(exc)[:500]
+            services.append(item)
+            continue
+
+        if item["inference_table"] and settings.databricks.sql_warehouse_id:
+            table_name = str(item["inference_table"]).replace("`", "``")
+            try:
+                result = client.statement_execution.execute_statement(
+                    warehouse_id=settings.databricks.sql_warehouse_id,
+                    statement=f"""
+                        SELECT
+                          count(*) AS requests,
+                          count_if(status_code >= 400) AS errors,
+                          round(avg(latency_ms), 1) AS avg_latency_ms,
+                          round(percentile_approx(latency_ms, 0.95), 1) AS p95_latency_ms,
+                          max(event_time) AS last_event_time
+                        FROM `{table_name.replace('.', '`.`')}`
+                        WHERE event_time >= current_timestamp() - INTERVAL 7 DAYS
+                    """,
+                    wait_timeout="30s",
+                )
+                rows = _statement_rows(result)
+                item["traffic_7d"] = rows[0] if rows else None
+            except Exception as exc:  # noqa: BLE001
+                # The table is created only after first traffic and logs can lag.
+                item["traffic_note"] = str(exc)[:300]
+        services.append(item)
+
+    return {
+        "enabled": True,
+        "services": services,
+        "policy_manifest": {
+            "version": manifest.version,
+            "catalog": manifest.catalog(),
+            "bundles": {
+                key: value.model_dump() for key, value in manifest.bundles.items()
+            },
+            "assignments": manifest.assignments.model_dump(),
+        },
+        "policy_attachment": {
+            "mode": "ui_only_beta",
+            "observable_via_public_api": True,
+            "note": (
+                "Attachment writes remain UI-only. Deployment and this page verify the "
+                "public read state against the manifest; DENY decisions are recorded in traces."
+            ),
+        },
     }
 
 

@@ -582,6 +582,15 @@ export function CardIssuerPage() {
             ].slice(0, 6));
           }
         },
+        onGuardrailDenied: ({ turnId, message, inputRemoved }) => {
+          if (inputRemoved) {
+            setTurns((previous) =>
+              previous.filter((turn) => !(turn.role === "customer" && turn.turnId === turnId))
+            );
+          }
+          setError(message);
+          setAgentState("speaking");
+        },
         onError: (code, message) => {
           if (code === "ws_closed") {
             setError(message);

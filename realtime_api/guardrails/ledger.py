@@ -31,7 +31,8 @@ Stage = Literal["stt", "input_transcript", "routing", "observer_async", "pre_tts
 # tagged here rather than filtered by a denylist in the frontend (§7.0).
 Surface = Literal["guardrail", "internal"]
 
-Owner = Literal["us", "qwen"]
+Owner = Literal["us", "qwen", "gateway"]
+Enforcer = Literal["application", "model", "unity_ai_gateway"]
 
 Outcome = Literal["passed", "fired", "delegated", "not_evaluated", "disabled", "error"]
 
@@ -44,6 +45,10 @@ class GuardEntry:
     outcome: Outcome
     surface: Surface = "guardrail"
     owner: Owner = "us"
+    enforcer: Enforcer = "application"
+    phase: str | None = None
+    resource: str | None = None
+    policy_version: str = "1.0"
     latency_ms: float = 0.0
     # Human-readable and REDACTED. Never put raw transcript or PII here: the
     # roster is persisted to Lakebase and mirrored to Delta.
@@ -52,13 +57,20 @@ class GuardEntry:
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "guard_id": self.guard_id,
+            "policy_id": self.guard_id,
+            "policy_version": self.policy_version,
             "seam": self.seam,
             "stage": self.stage,
             "surface": self.surface,
             "owner": self.owner,
+            "enforcer": self.enforcer,
             "outcome": self.outcome,
             "latency_ms": round(self.latency_ms, 3),
         }
+        if self.phase:
+            out["phase"] = self.phase
+        if self.resource:
+            out["resource"] = self.resource
         if self.reason:
             out["reason"] = self.reason
         return out
@@ -80,6 +92,10 @@ class GuardLedger:
         stage: Stage = "turn",
         surface: Surface = "guardrail",
         owner: Owner = "us",
+        enforcer: Enforcer | None = None,
+        phase: str | None = None,
+        resource: str | None = None,
+        policy_version: str = "1.0",
         latency_ms: float = 0.0,
         reason: str | None = None,
     ) -> GuardEntry:
@@ -90,6 +106,16 @@ class GuardLedger:
             outcome=outcome,
             surface=surface,
             owner=owner,
+            enforcer=enforcer or (
+                "unity_ai_gateway"
+                if owner == "gateway"
+                else "model"
+                if owner == "qwen"
+                else "application"
+            ),
+            phase=phase,
+            resource=resource,
+            policy_version=policy_version,
             latency_ms=latency_ms,
             reason=reason,
         )

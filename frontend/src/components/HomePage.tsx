@@ -213,7 +213,7 @@ export function HomePage() {
         );
         const data = (await r.json()) as { text?: string };
         const text = typeof data.text === "string" ? data.text : "";
-        greetingRef.current.set(language, text);
+        if (text) greetingRef.current.set(language, text);
         return text;
       } catch {
         return "";
@@ -332,6 +332,11 @@ export function HomePage() {
             if (name === "select_industry" && typeof r.industry === "string") {
               navigateForIndustry(r.industry as Industry["id"]);
             }
+          },
+          onGuardrailDenied: ({ message }) => {
+            setError(message);
+            setCaption(message);
+            setAgentState("speaking");
           },
           onError: (code, message) => {
             if (code === "ws_closed") {

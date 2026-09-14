@@ -8,10 +8,14 @@ import time
 from functools import lru_cache
 from typing import Any, AsyncIterator
 
+from genie_voice.databricks.ai_gateway import GatewayPolicyDenied
+
 from ..capabilities import SPEECH_LLM_TOOLASSIST_SPEECH
 from ..guardrails import report
+from ..guardrails.boundaries import admit_speech_output, admit_transcript
 from ..languages import base_code, english_name
 from ..profiles import get_profile
+from ..runtime.refuse import ErrorCode, refuse_speech
 from ..session import VoiceSession
 from ..tracing import TurnTrace, submit_trace
 from . import ServingBundle
@@ -522,6 +526,14 @@ async def process_turn(
             trace.set_metric("stt_reused_for_barge_classification", True)
         else:
             transcript, detected, stt_ms = await transcribe(bundle, session, audio)
+        stt_resource = str(getattr(bundle.stt, "stt_endpoint", "stt"))
+        transcript = admit_transcript(
+            transcript,
+            detected_language=detected,
+            pinned_language=session.config.language,
+            resource=stt_resource,
+            ledger=trace.guards,
+        )
         stt_span.set_output({"transcript": transcript, "detected_language": detected}).set_attribute(
             "stt_ms", stt_ms
         ).end()
@@ -534,27 +546,6 @@ async def process_turn(
             "stt turn %d: %dms detected=%s len=%d text=%r",
             turn_id, stt_ms, detected, len(transcript), transcript[:120],
         )
-        # Group B: what Qwen3-ASR owns for us. Recorded honestly — "delegated" only
-        # when its language ID actually ran, which it does not when the session
-        # pinned a language (then `detected` merely echoes our own choice).
-        pinned = bool(session.config.language) and session.config.language != "auto"
-        report(
-            trace.guards, "language_id",
-            "not_evaluated" if pinned else "delegated",
-            stage="stt", owner="qwen",
-            reason=(
-                f"session pinned language={session.config.language}"
-                if pinned
-                else f"detected_language={detected or 'unknown'}"
-            ),
-        )
-        report(
-            trace.guards, "no_speech_suppression",
-            "fired" if not transcript.strip() else "passed",
-            stage="stt", owner="qwen",
-            reason="empty transcript from STT" if not transcript.strip() else None,
-        )
-
         if turn_id != session.turn_id:
             trace.status = "superseded"
             report(
@@ -580,12 +571,14 @@ async def process_turn(
             report(
                 trace.guards, "language_gate", "not_evaluated",
                 seam="decision", stage="routing",
+                phase="post_stt", resource="transcript_boundary",
                 reason="session set no expected_language",
             )
         else:
             report(
                 trace.guards, "language_gate", "fired" if mismatch else "passed",
                 seam="decision", stage="routing",
+                phase="post_stt", resource="transcript_boundary",
                 reason=(
                     f"expected={mismatch['expected']} detected={mismatch['detected']}; "
                     "turn dropped, switch prompt spoken"
@@ -1471,6 +1464,16 @@ async def process_turn(
 
                 localization_task = asyncio.create_task(asyncio.to_thread(_localize))
 
+        # Admit the exact words before either the client or TTS can consume them.
+        # The capability token is resource-bound and is reused by stream_tts, so
+        # display, trace, and waveform can never disagree about sanitized text.
+        speech_admission = admit_speech_output(
+            speech_text,
+            resource=str(getattr(bundle.tts, "tts_endpoint", "tts")),
+            ledger=trace.guards,
+        )
+        speech_text = speech_admission.text
+
         # The exact words TTS is about to speak. A client that renders `response.text`
         # would show the model's display prose, which a tool turn never speaks — so
         # publish the committed speech separately and let the UI show what is heard.
@@ -1511,7 +1514,7 @@ async def process_turn(
         tts_chunks = 0
         tts_first_ms: int | None = None
         async for event in stream_tts(
-            bundle, session, turn_id, speech_text, language, trace=trace
+            bundle, session, turn_id, speech_admission, language, trace=trace
         ):
             # Paint any full-answer translation produced since the last audio
             # chunk. Translation and TTS started together, so these ordered events
@@ -1593,6 +1596,79 @@ async def process_turn(
     except asyncio.CancelledError:
         trace.status = "cancelled"
         raise
+    except GatewayPolicyDenied as exc:
+        # Policy DENY is a governed turn outcome, not an infrastructure failure.
+        # An input denial retracts the rejected user message from server history;
+        # the browser receives the same disposition in a typed event.
+        if not any(
+            entry.guard_id == "gateway.service_policy"
+            for entry in trace.guards.entries
+        ):
+            report(
+                trace.guards,
+                "gateway.service_policy",
+                "fired",
+                stage="input_transcript" if exc.is_input_denial else "routing",
+                owner="gateway",
+                phase=exc.phase or "on_call_or_result",
+                resource=exc.resource,
+                reason=(
+                    f"{exc.policy_name}: Gateway service policy denied "
+                    f"{exc.phase or 'request_or_response'}"
+                ),
+            )
+        input_removed = False
+        if (
+            exc.is_input_denial
+            and session.history
+            and session.history[-1].get("role") == "user"
+            and session.history[-1].get("content") == trace.input_transcript
+        ):
+            session.history.pop()
+            input_removed = True
+        if getattr(session, "active_turn", None) is not None and exc.is_input_denial:
+            session.active_turn.meta.pop("utterance", None)
+
+        trace.status = "blocked"
+        trace.error = None
+        language = trace.language or session.config.language or "en-US"
+        refusal = refuse_speech(ErrorCode.UNSUPPORTED, language=language)
+        trace.output_text = refusal
+        seq = int(session.event_seq_by_turn.get(turn_id, 0)) + 1
+        session.event_seq_by_turn[turn_id] = seq
+        yield {
+            "type": "guardrail.denied",
+            "turn_id": turn_id,
+            "seq": seq,
+            "policy_id": exc.policy_name,
+            "phase": exc.phase or "unknown",
+            "resource": exc.resource,
+            "input_removed": input_removed,
+            "message": refusal,
+        }
+        yield {"type": "response.text", "turn_id": turn_id, "text": refusal}
+        admission = admit_speech_output(
+            refusal,
+            resource=str(getattr(bundle.tts, "tts_endpoint", "tts")),
+            ledger=trace.guards,
+        )
+        async for event in stream_tts(
+            bundle,
+            session,
+            turn_id,
+            admission,
+            language,
+            trace=trace,
+        ):
+            yield event
+        yield {
+            "type": "turn.final",
+            "turn_id": turn_id,
+            "status": "blocked",
+            "committed_claims": [],
+        }
+        session.set_cooldown(1.5)
+        return
     except Exception as exc:  # noqa: BLE001
         trace.status = "error"
         trace.error = repr(exc)

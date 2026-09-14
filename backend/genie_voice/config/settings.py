@@ -162,6 +162,22 @@ class PipelineConfig(BaseModel):
     environment_version: str = "3"
 
 
+class AiGatewayModelServiceConfig(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    service: str
+    destination: str
+    roles: list[str] = Field(default_factory=list)
+    policy_bundle: str
+
+
+class AiGatewayConfig(BaseModel):
+    enabled: bool = False
+    requests_per_minute: int = 60
+    tokens_per_minute: int = 100_000
+    model_services: dict[str, AiGatewayModelServiceConfig] = Field(default_factory=dict)
+
+
 class EnrichmentConfig(BaseModel):
     """How conversation insights (intent/sentiment/NBA/summary) are produced.
 
@@ -175,10 +191,13 @@ class EnrichmentConfig(BaseModel):
     # namespace; we use it deliberately, so opt out of the namespace guard.
     model_config = {"protected_namespaces": ()}
 
-    # Unity Catalog model service FQN (system.ai.*) or a serving-endpoint name.
-    # Stronger models improve accuracy; smaller/faster ones lower latency + cost
-    # on the per-utterance live path.
-    model_endpoint: str = "system.ai.qwen3-next-80b-a3b-instruct"
+    # App-owned Unity Catalog model service used by online enrichment.
+    model_endpoint: str = (
+        "partner_demo_catalog.genie_voice_contact_center.genie_voice_qwen_guarded"
+    )
+    # SQL ai_query does not yet accept custom Unity model services, so the batch
+    # gold refresh needs the system-provided destination as a separate setting.
+    batch_model_endpoint: str = "system.ai.qwen3-next-80b-a3b-instruct"
     max_tokens: int = 512
     # Optional. Some reasoning models reject `temperature`; set null to omit it.
     # The engine also retries without it if the model rejects the parameter.
@@ -237,6 +256,7 @@ class Settings(BaseModel):
     mock: MockConfig
     api: ApiConfig
     pipeline: PipelineConfig
+    ai_gateway: AiGatewayConfig = Field(default_factory=AiGatewayConfig)
     enrichment: EnrichmentConfig
     datagen: DatagenConfig
     card_issuer: CardIssuerConfig
@@ -452,6 +472,7 @@ def get_settings() -> Settings:
         mock=MockConfig(**raw.get("mock", {})),
         api=ApiConfig(**raw.get("api", {})),
         pipeline=PipelineConfig(**raw.get("pipeline", {})),
+        ai_gateway=AiGatewayConfig(**raw.get("ai_gateway", {})),
         enrichment=EnrichmentConfig(**raw.get("enrichment", {})),
         datagen=DatagenConfig(**raw.get("datagen", {})),
         card_issuer=CardIssuerConfig(**raw.get("card_issuer", {})),

@@ -335,12 +335,18 @@ _GREETING_CACHE: dict[tuple[str, str], str] = {}
 
 
 def _greeting_intent(first_name: str) -> str:
-    who = f" the customer by name ({first_name})" if first_name else " the customer"
+    customer_fact = (
+        f"- The customer's first name is {first_name}.\n" if first_name else ""
+    )
     return (
-        f"Warmly greet{who} and introduce yourself as {CARD_AGENT_NAME}, their "
-        f"{CARD_BRAND} assistant. In the SAME sentence, offer exactly two things you "
-        "can help with — understanding their latest statement, or checking whether "
-        "they're getting all their rewards — and ask which they'd like."
+        "AUTHORITATIVE APPLICATION CONTEXT:\n"
+        f"- The assistant is named {CARD_AGENT_NAME} and is the {CARD_BRAND} assistant.\n"
+        "- It can help a customer understand their latest statement.\n"
+        "- It can check whether a customer is getting all their rewards.\n"
+        f"{customer_fact}\n"
+        "TASK: Warmly greet the customer by first name when provided and ask what "
+        "they would like help with today. Do not make identity, organization, account, "
+        "product, rewards, or capability claims in the greeting."
     )
 
 

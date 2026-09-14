@@ -13,10 +13,12 @@ its own cache dict.
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 # Keyed by (base-language, lowercased first-name); one model call per key.
 GreetingCache = dict[tuple[str, str], str]
+logger = logging.getLogger("realtime_voice")
 
 IntentBuilder = Callable[[str], str]
 
@@ -45,6 +47,7 @@ def generate_greeting(
 
         text = shared_serving().phrase(intent(first_name), language=language).strip()
     except Exception:  # noqa: BLE001 — no fake fallback; caller handles "".
+        logger.exception("guarded greeting generation failed for language=%s", language)
         text = ""
     if text:
         cache[key] = text

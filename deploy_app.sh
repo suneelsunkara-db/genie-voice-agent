@@ -9,9 +9,9 @@
 # Steps:
 #   1. build the frontend for same-origin (VITE_API_BASE_URL="") -> api/app/static
 #   2. push vendor API keys into a Databricks secret scope
-#   3. attach app resources (warehouse + secrets + STT/TTS serving endpoints) so
-#      the app service principal is auto-granted access on deploy; FM chat uses
-#      Unity Catalog model services (EXECUTE via grant_app_sp.py), then re-assert CAN_USE
+#   3. reconcile app-owned Gateway model services (routing, rate limits, inference
+#      tables), attach app resources (warehouse + secrets + STT/TTS serving
+#      endpoints), and grant EXECUTE on model services; then re-assert CAN_USE
 #      for external callers (see APP_EXTERNAL_* below) so cross-workspace access
 #      survives every redeploy
 #   4. sync source to a workspace folder (respects .gitignore) — this includes
@@ -131,6 +131,15 @@ PY
 log "verifying warehouse and required serving / model-service targets"
 dbx warehouses get "$SQL_WAREHOUSE_ID" >/dev/null 2>&1 \
   || die "SQL warehouse '$SQL_WAREHOUSE_ID' does not exist or is not accessible."
+
+# Model services must exist before their FQNs are validated below. This uses only
+# public Unity AI Gateway APIs. Policy attachments remain UI-only during Beta;
+# the provisioner prints the exact required policy contract on every deploy.
+log "reconciling app-owned Unity AI Gateway model services"
+DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
+  "$PYBIN" infra/apps/provision_ai_gateway.py \
+    --config config/config.yaml \
+    --guardrails-config config/guardrails.yaml
 
 # ---- 2. vendor keys -> secret scope (evals/benchmarks; not injected into the app)
 DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.deepgram_api_key)' 2>/dev/null || true)}"
@@ -365,7 +374,7 @@ if [[ -n "$SP_CLIENT_ID" ]]; then
   log "granting app service principal ($SP_CLIENT_ID): UC + Lakebase + Genie + model services"
   PYTHONPATH=backend "$PYBIN" infra/apps/grant_app_sp.py --sp-client-id "$SP_CLIENT_ID" \
     --model-services "$MODEL_SERVICES" \
-    || warn "some grants failed - review output above and re-run infra/apps/grant_app_sp.py"
+    || die "required app service-principal grants failed"
 else
   warn "could not resolve app service principal id; after deploy run:"
   warn "  PYTHONPATH=backend python3 infra/apps/grant_app_sp.py --sp-client-id <id>"

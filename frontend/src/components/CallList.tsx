@@ -1242,6 +1242,11 @@ function LiveAssist({
             onNudge({ tool_name: name, tool_result: result } as unknown as LiveNudge);
           }
         },
+        onGuardrailDenied: ({ message }) => {
+          setErr(message);
+          voicePhaseRef.current = "speaking";
+          onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
+        },
         onError: (code, message) => {
           setErr(message);
           if (code === "ws_closed") {

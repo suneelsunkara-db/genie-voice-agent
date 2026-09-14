@@ -421,12 +421,17 @@ export interface TraceSummary {
  */
 export interface GuardEntry {
   guard_id: string;
+  policy_id?: string;
+  policy_version?: string;
   /** execution = permits/modifies/blocks content; decision = chooses an action. */
   seam?: "execution" | "decision";
   stage?: "stt" | "input_transcript" | "routing" | "observer_async" | "pre_tts" | "turn";
   surface?: "guardrail" | "internal";
   /** "qwen" for checks the ASR model owns for us. */
-  owner?: "us" | "qwen";
+  owner?: "us" | "qwen" | "gateway";
+  enforcer?: "application" | "model" | "unity_ai_gateway";
+  phase?: string | null;
+  resource?: string | null;
   outcome: "passed" | "fired" | "delegated" | "not_evaluated" | "disabled" | "error";
   latency_ms?: number;
   reason?: string | null;
@@ -437,6 +442,10 @@ export interface GuardRollupGuard {
   seam?: string | null;
   stage?: string | null;
   owner?: string | null;
+  enforcer?: string | null;
+  phase?: string | null;
+  resource?: string | null;
+  policy_version?: string | null;
   runs: number;
   outcomes: Record<string, number>;
   last_reason?: string | null;
@@ -450,6 +459,8 @@ export interface GuardFiredRow {
   created_at?: string | null;
   guard_id: string;
   stage?: string | null;
+  phase?: string | null;
+  resource?: string | null;
   reason?: string | null;
 }
 
@@ -462,6 +473,75 @@ export interface GuardRollup {
   guards: GuardRollupGuard[];
   by_language: Record<string, Record<string, number>>;
   recent_fired: GuardFiredRow[];
+}
+
+export interface GatewayServiceInsight {
+  key: string;
+  service: string;
+  destination: string;
+  roles: string[];
+  policy_bundle: string;
+  policy_deployment_state: "configured" | "external_action_required" | "verified_by_probe";
+  required_policies: Array<{
+    policy_id: string;
+    function: string;
+    phases: Array<"input" | "output">;
+    rank: number;
+    deployment_state?: "configured" | "missing_or_drifted";
+    deployed_name?: string | null;
+  }>;
+  rate_limits: Array<{
+    key?: string;
+    renewal_period?: string;
+    requests?: string | number;
+    tokens?: string | number;
+  }>;
+  inference_table?: string | null;
+  traffic_7d?: {
+    requests?: string | number | null;
+    errors?: string | number | null;
+    avg_latency_ms?: string | number | null;
+    p95_latency_ms?: string | number | null;
+    last_event_time?: string | null;
+  } | null;
+  configuration_error?: string;
+  traffic_note?: string;
+}
+
+export interface PolicyCatalogEntry {
+  guard_id: string;
+  title: string;
+  owner: "application" | "gateway" | "qwen";
+  family: string;
+  group: string;
+  stage: string;
+  kind: "deterministic" | "llm" | "model-signal";
+  status: "live" | "delegated" | "planned";
+  phase: string;
+  description: string;
+}
+
+export interface GatewayInsights {
+  enabled: boolean;
+  services: GatewayServiceInsight[];
+  policy_manifest: {
+    version: string;
+    catalog: PolicyCatalogEntry[];
+    bundles: Record<string, {
+      title: string;
+      enforcer: "application" | "unity_ai_gateway";
+      policies: string[];
+    }>;
+    assignments: {
+      model_services: Record<string, string>;
+      boundaries: Record<string, { bundle: string; resources: string[] }>;
+    };
+  };
+  policy_attachment?: {
+    mode: string;
+    observable_via_public_api: boolean;
+    note: string;
+  };
 }
 
 export interface TraceDetail extends TraceSummary {
@@ -668,6 +748,7 @@ export const api = {
     getJSON<{ sessions: TraceSessionRollup[]; count: number }>(`/traces/sessions?limit=${limit}`),
   voiceTrace: (traceId: string) => getJSON<TraceDetail>(`/traces/${encodeURIComponent(traceId)}`),
   guardRollup: (limit = 200) => getJSON<GuardRollup>(`/traces/guardrails?limit=${limit}`),
+  gatewayInsights: () => getJSON<GatewayInsights>("/traces/gateway"),
   voiceBenchmarks: () => getJSON<VoiceBenchmarksResponse>("/realtime/v1/benchmarks"),
   zhAsrComparisons: (callId?: string, limit = 10) => {
     const params = new URLSearchParams();
