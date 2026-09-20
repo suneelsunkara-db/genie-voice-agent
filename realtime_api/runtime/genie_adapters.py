@@ -244,6 +244,7 @@ def evidence_from_genie_one(result: dict[str, Any] | None) -> Evidence:
         "conversation_id": result.get("conversation_id"),
         "response_id": result.get("response_id"),
         "status": status or None,
+        "source_language": "en",
         # Genie One's own thread URL: the caller can open the exact conversation the
         # spoken answer came from, which is stronger provenance than an id.
         "deep_link": result.get("deep_link"),
@@ -324,6 +325,7 @@ def evidence_from_agent_mode(
             source="agent_mode",
             display_prose=prose,
             error=no_evidence_refuse(detail="Agent Mode returned no tables"),
+            meta={"source_language": "en"},
         )
 
     # Prefer the first table with both columns and rows.
@@ -342,7 +344,11 @@ def evidence_from_agent_mode(
                 source="agent_mode",
                 table=table,
                 display_prose=prose,
-                meta={"table_index": idx, "table_count": len(tables)},
+                meta={
+                    "table_index": idx,
+                    "table_count": len(tables),
+                    "source_language": "en",
+                },
             )
 
     return Evidence(
@@ -353,4 +359,5 @@ def evidence_from_agent_mode(
             message="Agent Mode tables lacked columns/rows",
             retryable=True,
         ),
+        meta={"source_language": "en"},
     )

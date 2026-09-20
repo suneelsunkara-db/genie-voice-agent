@@ -1,10 +1,15 @@
-"""Gate orchestration until Lakebase CDF is running and visible in UC.
+"""Gate UC analytics until its required Lakebase CDF inputs are visible.
 
 Lakebase CDF itself is started in the Lakebase UI. This module only performs the
 documented programmatic checks around that UI-managed feed:
   - source tables exist and use REPLICA IDENTITY FULL
   - wal2delta reports each required table as STREAMING or SNAPSHOTTING
-  - UC has non-empty lb_<table>_history Delta tables
+  - populated required sources have non-empty lb_<table>_history Delta tables
+
+The gate deliberately does not require a CDF event newer than the current
+deployment. Ingest is idempotent and immutable utterances produce no new event
+when their contents are unchanged, so a deployment timestamp is not a valid
+freshness watermark.
 """
 from __future__ import annotations
 
@@ -27,8 +32,18 @@ def _pg_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _expected_tables(s: Settings) -> list[str]:
+def _required_tables(s: Settings) -> list[str]:
     return s.lakebase.cdf_required_tables or list(s.lakebase.sync_tables)
+
+
+def _optional_tables(s: Settings) -> list[str]:
+    required = set(_required_tables(s))
+    return [t for t in s.lakebase.cdf_optional_tables if t not in required]
+
+
+def _expected_tables(s: Settings) -> list[str]:
+    """All configured feeds shown by readiness (required first, then optional)."""
+    return [*_required_tables(s), *_optional_tables(s)]
 
 
 def _history_table(s: Settings, table: str) -> str:
@@ -163,9 +178,53 @@ def _latest_ingest_started_at(settings: Settings) -> str | None:
         return None
 
 
+def _source_row_counts(settings: Settings, tables: list[str]) -> dict[str, int]:
+    """Postgres row counts for CDF source tables.
+
+    ``billing_adjustments`` and ``resolution_events`` are written by the live app,
+    so a fresh install can have STREAMING CDF and empty UC history. The wait must
+    not treat that as a stuck feed.
+    """
+    lb = LakebaseServing(settings)
+    schema = _pg_ident(settings.lakebase.schema_name)
+    out: dict[str, int] = {}
+    with lb._conn() as conn, conn.cursor() as cur:  # noqa: SLF001
+        for table in tables:
+            cur.execute(f"SELECT count(*) FROM {schema}.{_pg_ident(table)}")
+            row = cur.fetchone()
+            out[table] = int(row[0] or 0) if row else 0
+    return out
+
+
+def history_blockers(
+    last_counts: dict[str, dict[str, Any]],
+    source_counts: dict[str, int],
+    min_updated_at: str | None,
+) -> tuple[list[str], list[str], list[str]]:
+    """Return (missing, empty, stale) history tables that still block readiness.
+
+    Empty/stale UC history is only a blocker when the Lakebase source table has
+    rows that CDF should have published.
+    """
+    missing = [t for t, meta in last_counts.items() if meta["total_rows"] is None]
+    empty = [
+        t
+        for t, meta in last_counts.items()
+        if meta["total_rows"] == 0 and source_counts.get(t, 0) > 0
+    ]
+    stale = [
+        t
+        for t, meta in last_counts.items()
+        if min_updated_at
+        and source_counts.get(t, 0) > 0
+        and (meta["fresh_rows"] or 0) == 0
+    ]
+    return missing, empty, stale
+
+
 def _uc_history_status(
     settings: Settings, tables: list[str], min_updated_at: str | None
-) -> dict[str, dict[str, int | str | None]]:
+) -> dict[str, dict[str, Any]]:
     client = get_workspace_client(settings)
     wh = settings.databricks.sql_warehouse_id
     if not wh:
@@ -173,38 +232,55 @@ def _uc_history_status(
 
     catalog = _quote_sql(settings.databricks.catalog)
     schema = _quote_sql(settings.databricks.schema_name)
-    out: dict[str, dict[str, int | str | None]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for source in tables:
         hist = _quote_sql(_history_table(settings, source))
         fqtn = f"{catalog}.{schema}.{hist}"
         try:
+            # _timestamp is wal2delta metadata present on every CDF history
+            # table. Source business timestamps differ (updated_at, applied_at,
+            # created_at), so they cannot be queried generically.
             freshness_expr = (
-                f"sum(CASE WHEN CAST(updated_at AS TIMESTAMP) >= TIMESTAMP '{min_updated_at}' "
+                f"sum(CASE WHEN CAST(_timestamp AS TIMESTAMP) >= TIMESTAMP '{min_updated_at}' "
                 "THEN 1 ELSE 0 END) AS fresh_rows, "
-                "CAST(max(CAST(updated_at AS TIMESTAMP)) AS STRING) AS max_updated_at"
+                "CAST(max(CAST(_timestamp AS TIMESTAMP)) AS STRING) AS max_event_at"
                 if min_updated_at
-                else "count(*) AS fresh_rows, CAST(max(CAST(updated_at AS TIMESTAMP)) AS STRING) AS max_updated_at"
+                else "count(*) AS fresh_rows, "
+                "CAST(max(CAST(_timestamp AS TIMESTAMP)) AS STRING) AS max_event_at"
             )
             res = client.statement_execution.execute_statement(
                 warehouse_id=wh,
                 statement=f"SELECT count(*) AS total_rows, {freshness_expr} FROM {fqtn}",
                 wait_timeout="30s",
             )
+            state = getattr(getattr(res, "status", None), "state", None)
+            state = getattr(state, "value", state)
+            if state and str(state) != "SUCCEEDED":
+                error = getattr(getattr(res, "status", None), "error", None)
+                message = getattr(error, "message", None) or str(error or state)
+                raise RuntimeError(message)
             rows = (res.result.data_array if res.result else None) or []
             if not rows:
-                out[source] = {"total_rows": 0, "fresh_rows": 0, "max_updated_at": None}
+                out[source] = {
+                    "total_rows": 0, "fresh_rows": 0, "max_event_at": None,
+                    "error": None,
+                }
             else:
                 out[source] = {
                     "total_rows": int(rows[0][0] or 0),
                     "fresh_rows": int(rows[0][1] or 0),
-                    "max_updated_at": rows[0][2],
+                    "max_event_at": rows[0][2],
+                    "error": None,
                 }
-        except Exception:
-            out[source] = {"total_rows": None, "fresh_rows": None, "max_updated_at": None}
+        except Exception as exc:  # noqa: BLE001
+            out[source] = {
+                "total_rows": None, "fresh_rows": None, "max_event_at": None,
+                "error": str(exc),
+            }
     return out
 
 
-def wait_for_lakebase_cdf(settings: Settings | None = None) -> dict[str, dict[str, int | str | None]]:
+def wait_for_lakebase_cdf(settings: Settings | None = None) -> dict[str, dict[str, Any]]:
     s = settings or get_settings()
     if not s.lakebase.enabled:
         print("lakebase.enabled=false -> skipping Lakebase CDF check.")
@@ -216,8 +292,9 @@ def wait_for_lakebase_cdf(settings: Settings | None = None) -> dict[str, dict[st
     client = get_workspace_client(s)
     resolved = _resolve_lakebase_branch(client.api_client, s.lakebase.instance)
     branch_name = resolved["branch"].get("name") or resolved["branch"].get("branch_id")
-    tables = _expected_tables(s)
-    min_updated_at = _latest_ingest_started_at(s)
+    # Only Gold's actual inputs block this orchestration stage. Optional audit /
+    # Genie feeds are surfaced by readiness but do not prevent Gold generation.
+    tables = _required_tables(s)
     print(f"Lakebase branch ready: {branch_name}")
     print(
         "CDF must already be started in the Lakebase UI for "
@@ -225,14 +302,11 @@ def wait_for_lakebase_cdf(settings: Settings | None = None) -> dict[str, dict[st
         f"{s.databricks.catalog}.{s.databricks.schema_name}."
     )
     print(f"Checking REPLICA IDENTITY FULL for {s.lakebase.schema_name}: {', '.join(tables)}")
-    if min_updated_at:
-        print(f"Waiting for UC CDF history at or after latest ingest: {min_updated_at} UTC")
-    else:
-        print("No latest ingest marker found; falling back to non-empty UC history check.")
+    print("Idempotent redeploys accept existing history; unchanged rows need no new CDF event.")
     _replica_identity_ok(s, tables)
 
     deadline = time.time() + s.lakebase.cdf_wait_timeout_seconds
-    last_counts: dict[str, dict[str, int | str | None]] = {}
+    last_counts: dict[str, dict[str, Any]] = {}
     last_status: dict[str, dict[str, Any]] = {}
     while time.time() < deadline:
         try:
@@ -248,25 +322,33 @@ def wait_for_lakebase_cdf(settings: Settings | None = None) -> dict[str, dict[st
                 for table, meta in sorted(last_status.items())
             )
         )
-        last_counts = _uc_history_status(s, tables, min_updated_at)
-        missing = [t for t, meta in last_counts.items() if meta["total_rows"] is None]
-        empty = [t for t, meta in last_counts.items() if meta["total_rows"] == 0]
-        stale = [
-            t
-            for t, meta in last_counts.items()
-            if min_updated_at and (meta["fresh_rows"] or 0) == 0
-        ]
+        last_counts = _uc_history_status(s, tables, None)
+        source_counts = _source_row_counts(s, tables)
+        missing, empty, stale = history_blockers(last_counts, source_counts, None)
         if not missing and not empty and not stale:
             for table, meta in sorted(last_counts.items()):
+                source_n = source_counts.get(table, 0)
                 print(
                     f"  CDF ready: {_history_table(s, table)} "
                     f"(rows={meta['total_rows']}, fresh={meta['fresh_rows']}, "
-                    f"max_updated_at={meta['max_updated_at']})"
+                    f"source_rows={source_n}, "
+                    f"max_event_at={meta['max_event_at']})"
                 )
             return last_counts
+        skipped = [
+            t for t in tables
+            if source_counts.get(t, 0) == 0 and last_counts.get(t, {}).get("total_rows") == 0
+        ]
+        errors = {
+            table: last_counts[table].get("error")
+            for table in missing
+            if last_counts[table].get("error")
+        }
         print(
             "Waiting for Lakebase CDF -> UC history tables; "
             f"missing={missing or '-'} empty={empty or '-'} stale={stale or '-'} "
+            f"empty_sources_ok={skipped or '-'} "
+            f"errors={errors or '-'} "
             f"expected={[ _history_table(s, t) for t in tables ]}"
         )
         time.sleep(s.lakebase.cdf_poll_seconds)

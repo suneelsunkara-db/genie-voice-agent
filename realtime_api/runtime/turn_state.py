@@ -24,7 +24,6 @@ class TurnState:
     turn_id: int
     phase: TurnPhase = TurnPhase.WORKING
     cancel: CancellationToken = field(default_factory=CancellationToken)
-    committed_claims: list[dict[str, Any]] = field(default_factory=list)
     # Opaque work metadata (e.g. agent_mode timeout budget).
     meta: dict[str, Any] = field(default_factory=dict)
 

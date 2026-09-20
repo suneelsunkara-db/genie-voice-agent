@@ -172,9 +172,10 @@ app.yaml           Databricks Apps runtime config
   `GENIE_OBO_LOCAL_TOKEN` from your Databricks CLI U2M token automatically (or
   honors an existing env/.env value). Never use the app SP secret.
 
-Set workspace values in **`config/config.local.yaml`** (gitignored full config,
-deep-merged over `config/config.yaml`). Copy `config/config.yaml` as a starting
-point and replace placeholders with your workspace values.
+For local development, set workspace values in
+**`config/config.local.yaml`** (gitignored and deep-merged over
+`config/config.yaml`). Hosted customer deployment instead reads the committed
+`config/config.yaml` exclusively.
 
 ```yaml
 databricks:
@@ -209,9 +210,10 @@ the process runs and how it authenticates.
 | Frontend URL | `http://localhost:5173` | `https://<app>.<region>.databricksapps.com` (same origin as API) |
 | Command | `./local-deploy.sh` / `./start_app.sh` | `./deploy_app.sh` |
 
-`config/config.yaml` in git is a placeholder template only. **`config/config.local.yaml`**
-(gitignored) is your full profile and is deep-merged on top at runtime. Both setups
-read defaults from it.
+Local development deep-merges gitignored `config/config.local.yaml` over
+`config/config.yaml`. Hosted deployment intentionally uses
+`config/config.yaml` only, so the app and every deploy/model/job process receive
+the same values.
 
 ---
 
@@ -247,8 +249,12 @@ and the app authenticates as its own **service principal** (no personal tokens
 at runtime).
 
 ```bash
-./deploy_app.sh                  # zero-arg: reads defaults from config.local.yaml
+DATABRICKS_PROFILE=<profile> ./deploy_app.sh
 ```
+
+Before running, edit `config/config.yaml` for the target workspace. See
+[`docs/CUSTOMER_INSTALL.md`](docs/CUSTOMER_INSTALL.md) for the complete
+greenfield checklist and the UI-only checkpoints.
 
 ### Prerequisites
 
@@ -256,56 +262,63 @@ at runtime).
   `databricks auth login --profile <profile>`.
 - `npm` (builds the frontend) and the repo virtualenv at `.venv/` (the script
   uses `.venv/bin/python` so backend deps are available when reading config).
-- The `partner_demo_catalog`, Lakebase instance, SQL warehouse, Whisper/STT/TTS
-  serving endpoints, and Unity Catalog **destination** model services
-  (`system.ai.*`) already exist and are owned by (or grantable by) you. App-owned
-  Gateway services (`genie_voice_qwen_guarded`, `genie_voice_gpt55_guarded`) are
-  created by `infra/apps/provision_ai_gateway.py`. Service-policy **attachments**
-  remain UI-only during the Databricks Beta.
+- An existing UC catalog and SQL warehouse that the deployer can use/administer.
+- GPU Model Serving capacity, Hugging Face egress, and access to the configured
+  `system.ai.*` foundation models.
+- The installer creates the Lakebase project (when allowed), schemas, data,
+  Qwen3-ASR/VoxCPM2 endpoints, app-owned Gateway services, Genie spaces, and App.
+  Lakebase CDF, Gateway policy attachments, Apps User Authorization, and the
+  optional Agent Mode preview have documented UI checkpoints.
 
 ### What `deploy_app.sh` does (idempotent)
 
-1. **Builds the frontend** for same-origin (`VITE_API_BASE_URL=""`) and copies
+1. **Validates one deployment config** (`config/config.yaml`), builds the
+   frontend for same-origin (`VITE_API_BASE_URL=""`), and copies
    `frontend/dist` → `api/app/static`.
-2. **Pushes optional vendor keys** from `config.local.yaml` into the `genie-voice` secret
-   scope (`elevenlabs_api_key` only if set).
-3. **Reconciles app-owned Unity AI Gateway model services** (routing, rate limits,
+2. **Bootstraps data services**: UC schemas/Volumes, deterministic telco/card
+   data, Lakebase, orchestration job, serving snapshots, and both Genie spaces.
+3. **Registers and deploys Qwen3-ASR + VoxCPM2**, waits for both endpoints to
+   become READY, and runs the multilingual ResponsesAgent smoke test.
+4. **Pushes optional vendor keys** supplied through the environment into the
+   `genie-voice` secret scope.
+5. **Reconciles app-owned Unity AI Gateway model services** (routing, rate limits,
    inference tables) via `infra/apps/provision_ai_gateway.py`, then **fails closed**
    if the attached service policies drift from `config/guardrails.yaml`. Attachment
    writes are UI-only in the current Beta; the provisioner only reads public APIs.
-4. **Runs the Gateway conformance matrix** (`infra/apps/probe_ai_gateway_policies.py`):
+6. **Runs the Gateway conformance matrix** (`infra/apps/probe_ai_gateway_policies.py`):
    allow, jailbreak/unsafe/credential deny, contact redaction, and hallucination
    pass-through against the live Qwen and GPT-5.5 services.
-5. **Creates/updates the app** with declared **resources** (SQL warehouse,
-   Whisper/STT/TTS serving endpoints) so the app's service
+7. **Creates/updates the app** with declared **resources** (SQL warehouse and
+   Qwen3-ASR/VoxCPM2 serving endpoints) so the app's service
    principal is auto-granted `CAN_QUERY`. Foundation-model chat uses the app-owned
    Gateway services (`EXECUTE` granted in `grant_app_sp.py`), not a serving resource.
    ElevenLabs is included only when its key exists.
-6. **Grants the service principal** its runtime access:
+8. **Grants the service principal** its runtime access:
    - `workspace-access` **entitlement** via SCIM (needed to mint Lakebase Postgres
      OAuth tokens at runtime).
    - **UC + Lakebase + Genie** grants via `infra/apps/grant_app_sp.py`
      (catalog/schema/volume `SELECT`/`MODIFY`/`READ VOLUME`, Lakebase role +
      table/sequence grants, Genie `CAN_RUN`).
-7. **Applies and verifies OBO scopes** `genie` + `sql`; deployment fails if User
+9. **Applies and verifies OBO scopes** `genie` + `sql`; deployment fails if User
    Authorization is disabled or the scopes are not effective.
-8. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
+10. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
    `.gitignore`) and **deploys** in `SNAPSHOT` mode, printing the app URL.
-9. **Smoke-tests** health, realtime, Knowledge, capabilities, and forwarded user
+11. **Smoke-tests** health, realtime, Knowledge, capabilities, and forwarded user
    identity through the authenticated Databricks Apps URL.
 
 ### Configuration
 
-Defaults live at the top of `deploy_app.sh` (sourced from `config.local.yaml`);
-override any of them via env vars before running:
+Workspace/runtime values live in `config/config.yaml`. Environment variables
+control installer behavior and caller ACLs, not a second copy of workspace
+configuration:
 
 ```bash
 APP_NAME=genie-voice-agent \
 DATABRICKS_PROFILE=<profile> \
 SECRET_SCOPE=genie-voice \
-SQL_WAREHOUSE_ID=<warehouse-id> \
-ENRICHMENT_MODEL_SERVICE=system.ai.qwen3-next-80b-a3b-instruct \
-WHISPER_ENDPOINT=voice_asr_en_finetuned_whisper_lora \
+APP_EXTERNAL_USERS=user1@example.com,user2@example.com \
+DEPLOY_DATA=1 \
+DEPLOY_REALTIME_MODELS=auto \
 ./deploy_app.sh
 ```
 
@@ -366,7 +379,7 @@ The post-STT application boundary applies the same PII split before browser,
 history, model, tool, or persistence admission: emails/phones are masked;
 Luhn cards / SSN / credentials are denied (`sensitive.blocked` speech).
 
-### Deterministic product speech and cite-or-silence
+### Deterministic product speech and upstream answers
 
 Greetings, fillers, progress narration, language-switch prompts, and navigation
 confirmations come from `realtime_api/phrases/runtime.json` — committed localized
@@ -374,10 +387,11 @@ copy, never a runtime FM call. Refresh translations with
 `scripts/i18n/translate_runtime_phrases.py` (placeholder-preserving, full
 language/key coverage).
 
-Factual spoken answers are **cite-or-silence**: only tool cells or an attributed
-governed answer may cross the pre-TTS boundary. Unsupported model prose becomes a
-localized refusal. Browser `response.text` is the admitted committed speech, not
-uncited model output. Agent Mode reports stay display-only.
+Genie One, Genie Space, and Agent Mode natural-language responses are authoritative
+customer answers. Structured rows remain typed evidence for tables and traces; the
+application never converts them into `column: value` speech. Canonical-English
+Agent Mode and Genie One reports are translated at the shared rendering boundary,
+while already-localized Genie Space answers are not translated twice.
 
 ### Live policy test (2026-09-14)
 
@@ -843,7 +857,7 @@ Server → client events:
 - `response.audio` (streamed chunks; first carries `tts_first_ms`; progressive dual flags:
   `segment_final` = this speech segment ended, `turn_final` = the whole turn is done;
   legacy `final` mirrors `turn_final` during migration — STT/TTS-only routes unchanged)
-- `turn.final` (after answer audio; carries `committed_claims` for next-turn context)
+- `turn.final` (after answer audio; marks the turn complete)
 - `playback.stop`
 - `error`
 - `barge_in` (client → server) immediately cancels the current turn and increments the turn ID,
@@ -1095,7 +1109,10 @@ your U2M identity:
   call tables (runs in parallel with reference UC ingest).
 - **Lakebase CDF sync check** — resolves project/branch, verifies `REPLICA IDENTITY FULL`,
   requires `wal2delta.tables` status `STREAMING`/`SNAPSHOTTING`, then waits for
-  `lb_<table>_history` tables in UC.
+  the populated Gold inputs (`lb_call_facts_history` and
+  `lb_live_call_utterances_history`) in UC. Idempotent redeploys accept existing
+  immutable utterance history; they do not require a synthetic fresh CDF event.
+  Optional billing-adjustment CDF is reported separately by Setup readiness.
 - **Gold insights refresh** — creates UC Delta `gold_call_insights` from Lakebase call
   and utterance history.
 - **UC constraints** — adds informational PK/FK metadata so Genie sees relationships.

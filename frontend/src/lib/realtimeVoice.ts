@@ -73,8 +73,8 @@ export interface RealtimeVoiceCallbacks {
   ) => void;
   onTurnStarted?: (turnId: number) => void;
   onTurnDone?: (turnId: number) => void;
-  /** Progressive: turn completed with optional committed claims for next-turn UI. */
-  onTurnFinal?: (turnId: number, claims: Array<Record<string, unknown>>) => void;
+  /** Progressive: turn completed. */
+  onTurnFinal?: (turnId: number) => void;
   /** Ordered domain-neutral AgentRuntime event. Consumers must drop seq regressions. */
   onTurnEvent?: (event: AgentTurnEvent) => void;
   /** Server asked the client to stop playback (barge-in / same-turn inject). */
@@ -389,10 +389,7 @@ export async function startRealtimeVoice(
           break;
         case "turn.final":
           if (turnCursor.isStale(turnId)) break;
-          callbacks.onTurnFinal?.(
-            msg.turn_id,
-            Array.isArray(msg.committed_claims) ? msg.committed_claims : []
-          );
+          callbacks.onTurnFinal?.(msg.turn_id);
           if (typeof turnId === "number") callbacks.onTurnDone?.(turnId);
           break;
         case "playback.stop":

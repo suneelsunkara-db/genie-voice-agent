@@ -37,10 +37,9 @@ import "../styles/knowledge.css";
  * searches, so the topic tiles on screen and the spoken answers can never
  * disagree about what the agent knows.
  *
- * CITE-OR-SILENCE made visible: every `knowledge_search` result carries its own
- * citation, and this page renders those citations beside the answer. When the
- * search comes back empty the agent says so instead of improvising, and the
- * sources panel stays empty — the UI shows exactly what grounded the answer.
+ * Every `knowledge_search` result carries its own citation, and this page renders
+ * those citations beside the natural-language answer. When the search comes back
+ * empty, the sources panel stays empty.
  *
  * Uses the FRAMEWORK primitives like every other voice surface: the shared voice
  * stack (startRealtimeVoice + useHalfDuplexVoice), the shared config-driven

@@ -17,9 +17,9 @@ version, bundles, and assignments independently of model names.
    does not define a second policy catalog.
 7. Greetings, wait prompts, progress narration, language prompts, and navigation
    confirmations are committed localized application copy, never runtime inference.
-8. Factual speech is cite-or-silence: only tool cells or an attributed governed
-   answer can cross the response boundary. Unsupported model prose becomes a
-   localized refusal.
+8. Genie and Agent Mode own factual answer composition. The application preserves
+   their natural-language answer, keeps structured rows in typed evidence, and
+   localizes canonical-English reports without turning columns into speech.
 
 ## Control, enforcement, and evidence planes
 

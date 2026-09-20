@@ -7,6 +7,7 @@ registry/serving settings now live under the ``realtime_voice:`` block.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,13 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def load_config() -> dict[str, Any]:
+    explicit = (os.environ.get("GENIE_CONFIG") or "").strip()
+    if explicit:
+        path = Path(explicit).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"GENIE_CONFIG does not exist: {path}")
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
     config: dict[str, Any] = {}
     if _BASE.exists():
         config = yaml.safe_load(_BASE.read_text(encoding="utf-8")) or {}

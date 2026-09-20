@@ -498,6 +498,7 @@ export function HomePage() {
             <a href="#/voice-benchmarks">Benchmarks</a>
             <a href="#/traces">Traces</a>
             <a href="#/guardrails">Guardrails</a>
+            <a href="#/setup" title="Deployment readiness & setup checklist">Setup</a>
           </nav>
         </div>
       </header>

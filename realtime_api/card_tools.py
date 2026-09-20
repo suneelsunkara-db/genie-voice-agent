@@ -195,7 +195,7 @@ def _run_ask_card_genie(arguments: dict[str, Any], ctx: ToolContext) -> str:
         )
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"Genie query failed: {exc}"})
-    return shape_genie_answer(result)
+    return shape_genie_answer(result, language=ctx._detected_language)
 
 
 register(_ASK_CARD_GENIE_SPEC, _run_ask_card_genie, profile=_PROFILE)

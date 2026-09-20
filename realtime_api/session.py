@@ -59,8 +59,6 @@ class VoiceSession:
     # U2M stand-in). Genie / workspace paths fail closed when token is missing.
     principal: object | None = None
     history: list = field(default_factory=list)
-    # Authoritative SpokenClaim[] committed on turn_final (cross-turn memory).
-    committed_claims: list = field(default_factory=list)
     # Last emitted AgentEvent sequence per logical turn. Amendments retain the
     # turn id and continue from this value so clients can drop regressions.
     event_seq_by_turn: dict[int, int] = field(default_factory=dict)

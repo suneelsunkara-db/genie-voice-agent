@@ -24,10 +24,10 @@ def test_speech_scheduler_ack_budget():
     assert "ack:budget" in s.skipped
 
 
-def test_speech_scheduler_final_requires_cite():
+def test_speech_scheduler_final_budget():
     s = SpeechScheduler()
-    assert not s.accept(SpeechRequest(SpeechKind.FINAL, "42 dollars", cited=False))
-    assert s.accept(SpeechRequest(SpeechKind.FINAL, "42 dollars", cited=True))
+    assert s.accept(SpeechRequest(SpeechKind.FINAL, "42 dollars"))
+    assert not s.accept(SpeechRequest(SpeechKind.FINAL, "Duplicate"))
 
 
 def test_speech_scheduler_preview_stable_only():

@@ -109,9 +109,11 @@ class LakebaseConfig(BaseModel):
     cdf_history_suffix: str = "_history"
     cdf_wait_timeout_seconds: int = 600
     cdf_poll_seconds: int = 15
-    # Seeded non-empty Lakebase tables whose CDF history tables must exist before
-    # UC analytics/Genie runs. Live tables can be empty and are not required here.
+    # Gold inputs whose CDF history must be available before orchestration runs.
     cdf_required_tables: list[str] = Field(default_factory=list)
+    # Feature-specific audit/Genie feeds checked by readiness but not allowed to
+    # block Gold or the live voice hot path.
+    cdf_optional_tables: list[str] = Field(default_factory=list)
     # Lakebase-native serving/source tables loaded under `schema` using primary
     # names. No duplicate *_serving managed-sync tables are created.
     sync_tables: list[str] = Field(default_factory=list)

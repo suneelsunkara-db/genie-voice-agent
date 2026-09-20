@@ -648,9 +648,56 @@ async function getJSON<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type ReadinessStatus = "ok" | "warn" | "fail";
+export type ReadinessCategory = "prereq" | "scripted" | "manual";
+
+export interface ReadinessFix {
+  kind: "auto" | "link" | "cli";
+  label: string;
+  action?: string;
+  href?: string;
+}
+
+export interface ReadinessCheck {
+  id: string;
+  title: string;
+  category: ReadinessCategory;
+  status: ReadinessStatus;
+  detail: string;
+  fix?: ReadinessFix;
+  explanation?: string;
+  resolution_steps?: string[];
+  technical_detail?: string;
+  objects?: string[];
+  required_configuration?: string[];
+  workspace_actions?: string[];
+}
+
+export interface ReadinessResponse {
+  ready: boolean;
+  summary: { ok: number; warn: number; fail: number; total: number };
+  checks: ReadinessCheck[];
+  validation_mode?: "quick" | "full";
+  viewer?: {
+    email?: string | null;
+    username?: string | null;
+    user_authorization_token: boolean;
+  };
+}
+
 export const api = {
   status: () => getJSON<StatusResponse>("/status"),
   health: () => getJSON<Record<string, unknown>>("/health"),
+  readiness: () => getJSON<ReadinessResponse>("/readiness"),
+  readinessFix: async (action: string): Promise<{ fix: unknown; readiness: ReadinessResponse }> => {
+    const res = await fetch(`${API_BASE_URL}/readiness/fix`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  },
   asrBenchmarkOverview: (source?: "auto" | "ml_asr" | "legacy") => {
     const params = new URLSearchParams();
     if (source) params.set("source", source);

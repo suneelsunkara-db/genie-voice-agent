@@ -384,20 +384,12 @@ def test_card_query_exposes_only_the_space_tool():
     assert [item["function"]["name"] for item in selected] == ["ask_card_genie"]
 
 
-def test_attributed_governed_answer_can_use_its_grounded_render():
-    """A rendered answer is speakable only after its source passed attribution."""
+def test_upstream_answer_render_is_preferred_for_speech():
     from realtime_api.pipelines.speech_llm_toolassist_speech import _spoken_answer
 
     spoken = _spoken_answer(
-        claims=[
-            {"text": "category: Travel; delta: 1240.55; share: 0.41"},
-            {"text": "category: Dining; delta: 880.10; share: 0.29"},
-            {"text": "category: Fuel; delta: 410.00; share: 0.14"},
-        ],
-        tool_invocations=[{"name": "start_deep_dive"}],
         response_text="Here is a long unused model reply.",
         rendered_summary="Travel drove most of the increase this cycle.",
-        requires_tool=True,
         runtime_error_code=None,
         refuse_text=None,
         language="en-US",
@@ -405,34 +397,27 @@ def test_attributed_governed_answer_can_use_its_grounded_render():
     assert spoken == "Travel drove most of the increase this cycle."
 
 
-def test_tool_evidence_without_a_summary_falls_back_to_cited_claims():
+def test_natural_response_is_never_replaced_by_structured_claims():
     from realtime_api.pipelines.speech_llm_toolassist_speech import _spoken_answer
 
     spoken = _spoken_answer(
-        claims=[{"text": "balance: 412.90"}],
-        tool_invocations=[{"name": "card_account_facts"}],
-        response_text="Uncited model prose.",
+        response_text="Your current balance is $412.90.",
         rendered_summary="",
-        requires_tool=True,
         runtime_error_code=None,
         refuse_text=None,
         language="en-US",
     )
-    assert spoken == "balance: 412.90"
+    assert spoken == "Your current balance is $412.90."
 
 
-def test_factual_capability_without_a_tool_call_is_refused():
+def test_empty_answer_uses_the_upstream_refusal():
     from realtime_api.pipelines.speech_llm_toolassist_speech import _spoken_answer
-    from realtime_api.runtime.refuse import ErrorCode, refuse_speech
 
     spoken = _spoken_answer(
-        claims=[],
-        tool_invocations=[],
-        response_text="I think you spent about 60 million tokens.",
+        response_text="",
         rendered_summary="",
-        requires_tool=True,
         runtime_error_code=None,
-        refuse_text=None,
+        refuse_text="Genie could not answer that question.",
         language="en-US",
     )
-    assert spoken == refuse_speech(ErrorCode.NO_EVIDENCE, language="en-US")
+    assert spoken == "Genie could not answer that question."

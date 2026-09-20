@@ -277,37 +277,22 @@ def _forced_tool_choice(tools: list[dict[str, Any]]) -> dict[str, Any] | str:
 
 def _spoken_answer(
     *,
-    claims: list[dict[str, Any]],
-    tool_invocations: list[dict[str, Any]],
     response_text: str,
     rendered_summary: str,
-    requires_tool: bool,
     runtime_error_code: str | None,
     refuse_text: str | None,
     language: str,
 ) -> str:
-    """What TTS may speak.
-
-    A governed long answer (Agent Mode report, Genie One answer) is spoken as its
-    short rendered summary — the tool's own text, condensed. Reading the composed
-    row claims instead turns a report into minutes of "column: value" narration.
-    The claims still ship as the turn's cites. Without a tool result there is
-    nothing attributable, so a factual capability refuses rather than improvises.
-    """
+    """Choose natural customer-facing text; structured claims are citations only."""
     from ..runtime.refuse import ErrorCode, refuse_speech
 
     if runtime_error_code == "timeout":
         return refuse_speech(ErrorCode.TIMEOUT, language=language)
-    if tool_invocations:
-        if rendered_summary:
-            return rendered_summary
-        cited = " ".join(str(claim["text"]) for claim in claims if claim.get("text"))
-        return cited or refuse_text or refuse_speech(
-            ErrorCode.NO_EVIDENCE, language=language
-        )
-    if requires_tool:
-        return refuse_speech(ErrorCode.NO_EVIDENCE, language=language)
-    return response_text
+    if rendered_summary:
+        return rendered_summary
+    if response_text.strip():
+        return response_text
+    return refuse_text or refuse_speech(ErrorCode.NO_EVIDENCE, language=language)
 
 
 def _finalize_billing_offer(
@@ -747,15 +732,6 @@ async def process_turn(
             trace.set_metric("workspace_conversation_turns", conversation.turns)
         turn_budget_s = _timeout_for_route(route.adapter, session.config.profile)
         trace.set_metric("turn_budget_s", turn_budget_s)
-
-        # Prior-turn committed claims feed next-turn context (cite memory).
-        if session.committed_claims:
-            claim_blob = json.dumps(session.committed_claims[:8], default=str)
-            context = (
-                f"{context}\n\nCommitted claims from prior turn:\n{claim_blob}"
-                if context
-                else f"Committed claims from prior turn:\n{claim_blob}"
-            )
 
         # ── Deterministic intent pre-router (framework seam) ──────────────
         # Navigation/selection is a DETERMINISTIC action; don't gate it solely
@@ -1273,10 +1249,9 @@ async def process_turn(
                 "result": invocation.get("result"),
             }
 
-        # Compose the ONLY speakable factual text from structured Evidence. The
-        # model's final prose remains internal and is never published or promoted
-        # to factual TTS after a tool call.
-        claims: list[dict] = []
+        # Structured evidence remains available for tables and traces.
+        # Customer-facing speech comes from natural prose returned by Genie/Agent
+        # Mode, or from the conversational response when the tool returns rows only.
         refuse_text: str | None = None
         # A long written answer may need the same dual rendering as the FSI deep
         # dive: short translated voice summary + full translated panel report.
@@ -1288,15 +1263,10 @@ async def process_turn(
         render_report = ""
         render_question = transcript
         render_source = ""
-        from ..runtime import (
-            ErrorCode,
-            EvidenceComposer,
-            evidence_from_tool_result,
-            refuse_speech,
-        )
-        from ..runtime.answer_rendering import governed_answer_render
+        render_source_language = language
+        from ..runtime import evidence_from_tool_result
+        from ..runtime.answer_rendering import upstream_answer_render
 
-        composer = EvidenceComposer()
         for invocation in tool_invocations:
             name = str(invocation.get("name") or "")
             raw = invocation.get("result")
@@ -1309,44 +1279,19 @@ async def process_turn(
                 name,
                 raw if isinstance(raw, dict) else {"answer": raw},
             )
-            if name == "workspace_query":
-                # Genie answers a "how much" / "top N" question with rows and often
-                # no narrative. The row claims exist to CITE those numbers, not to be
-                # read out: speaking them turns an answer into "category: Shopping;
-                # total spend sgd: 416659.61; ...". A table-only result therefore gets
-                # the same rendering a narrative one does.
-                answer_source, panel_report = governed_answer_render(ev)
-                if answer_source and ev.has_attributed_prose:
-                    render_answer = answer_source
-                    render_report = panel_report
-                    render_source = ev.source
-                    args = invocation.get("arguments")
-                    if isinstance(args, dict) and args.get("question"):
-                        render_question = str(args["question"])
-            elif name == "start_deep_dive" and isinstance(raw, dict):
-                # Agent Mode's report is model-written display prose over its query
-                # tables. It may paint in the panel, but it is not attributed prose
-                # and therefore can never become speech. TTS uses cited table cells.
-                long_report = str(raw.get("report") or "").strip()
-                if long_report:
-                    render_report = long_report
-                    render_source = ev.source
-                    args = invocation.get("arguments")
-                    if isinstance(args, dict) and args.get("question"):
-                        render_question = str(args["question"])
-            built, refused = composer.compose_or_refuse(ev, language=language)
-            if built:
-                claims.extend(
-                    {
-                        "text": c.text,
-                        "field_paths": list(c.field_paths),
-                        "source": ev.source,
-                        "durable": c.durable,
-                    }
-                    for c in built
+            answer_source, panel_report = upstream_answer_render(ev)
+            if answer_source:
+                render_answer = answer_source
+                render_report = panel_report
+                render_source = ev.source
+                render_source_language = str(
+                    ev.meta.get("source_language") or language
                 )
-            elif refuse_text is None:
-                refuse_text = refused
+                args = invocation.get("arguments")
+                if isinstance(args, dict) and args.get("question"):
+                    render_question = str(args["question"])
+            if ev.error is not None and refuse_text is None:
+                refuse_text = refuse_speech(ev.error.code, language=language)
 
         rendered_summary = ""
         if render_answer:
@@ -1358,56 +1303,34 @@ async def process_turn(
                     render_question,
                     render_answer,
                     language,
+                    source_language=render_source_language,
                     trace=trace,
                 )
             except Exception:  # noqa: BLE001
                 logger.warning("long-answer summary failed for turn %d", turn_id, exc_info=True)
 
         speech_text = _spoken_answer(
-            claims=claims,
-            tool_invocations=tool_invocations,
             response_text=response_text,
             rendered_summary=rendered_summary,
-            requires_tool=capability.requires_tool,
             runtime_error_code=runtime_error_code,
             refuse_text=refuse_text,
             language=language,
         )
-        if capability.requires_tool:
-            grounded = bool(tool_invocations) and bool(
-                claims or rendered_summary or refuse_text
-            )
-            report(
-                trace.guards,
-                "evidence_grounding",
-                "passed" if grounded else "fired",
-                stage="response_composition",
-                owner="application",
-                phase="before_browser_and_tts",
-                resource=capability.id.value,
-                reason=(
-                    "tool-backed evidence admitted"
-                    if grounded
-                    else "unsupported model prose replaced with a refusal"
-                ),
-            )
         if navigation_decision.capability_id == CapabilityId.BILLING_ACTION:
             session.profile_state.pop("pending_confirm_mutate", None)
 
-        trace.set_metric("citation_reject_count", composer.citation_reject_count)
-        trace.set_metric("evidence_empty_refuse", composer.evidence_empty_refuse)
-        session.committed_claims = claims
-
         localization_queue: asyncio.Queue[str | None] | None = None
-        from ..runtime.answer_rendering import is_english, localize_answer_stream
+        from ..runtime.answer_rendering import localize_answer_stream, same_language
 
         # Full report rendering is independent of the optional spoken summary.
         # Previously an empty summary suppressed answer.render.* entirely, leaving
         # the UI's raw English action result visible on every non-English call.
-        localization_pending = bool(render_report) and not is_english(language)
+        localization_pending = bool(render_report) and not same_language(
+            render_source_language, language
+        )
         if render_report or rendered_summary:
-            # Nothing to translate when the answer was a table: the panel renders the
-            # typed rows, whose headers and figures are not ours to rewrite.
+            # Tables are rendered separately from typed evidence. This event carries
+            # natural prose only, in either its source language or the call language.
             last_event_seq += 1
             session.event_seq_by_turn[turn_id] = last_event_seq
             yield {
@@ -1421,7 +1344,9 @@ async def process_turn(
                     # Never flash English during a non-English call. The panel
                     # opens with the translated summary while deltas fill the report.
                     "report": "" if localization_pending else render_report,
-                    "report_language": language if localization_pending else "en",
+                    "report_language": (
+                        language if localization_pending else render_source_language
+                    ),
                     "localization_pending": localization_pending,
                     "source": render_source,
                 },
@@ -1434,7 +1359,10 @@ async def process_turn(
                 def _localize() -> None:
                     try:
                         for delta in localize_answer_stream(
-                            render_report, language, trace=trace
+                            render_report,
+                            language,
+                            source_language=render_source_language,
+                            trace=trace,
                         ):
                             loop.call_soon_threadsafe(localization_queue.put_nowait, delta)
                     finally:
@@ -1442,9 +1370,8 @@ async def process_turn(
 
                 localization_task = asyncio.create_task(asyncio.to_thread(_localize))
 
-        # Admit the exact words before either the client or TTS can consume them.
-        # The capability token is resource-bound and is reused by stream_tts, so
-        # display, trace, and waveform can never disagree about sanitized text.
+        # Transport sanitation removes accidental tool-call markup. It does not
+        # inspect, rewrite, reject, or replace Genie/Agent Mode answer content.
         speech_admission = admit_speech_output(
             speech_text,
             resource=str(getattr(bundle.tts, "tts_endpoint", "tts")),
@@ -1472,7 +1399,6 @@ async def process_turn(
             "payload": {
                 "text": speech_text,
                 "basis": "evidence" if tool_invocations else "conversation",
-                "claim_count": len(claims),
             },
         }
 
@@ -1567,7 +1493,6 @@ async def process_turn(
         yield {
             "type": "turn.final",
             "turn_id": turn_id,
-            "committed_claims": claims,
         }
 
         scheduler = getattr(session, "speech_scheduler", None)
@@ -1659,7 +1584,6 @@ async def process_turn(
             "type": "turn.final",
             "turn_id": turn_id,
             "status": "blocked",
-            "committed_claims": [],
         }
         session.set_cooldown(1.5)
         return

@@ -3,8 +3,9 @@
 Service creation, routing, rate limits, and inference tables have public APIs
 and are safe to reconcile on every deploy. Service-policy writes remain UI-only
 during the Databricks beta, but the public read API exposes their configuration.
-Deployment therefore fails closed when an attachment is missing or drifts from
-the manifest's handler, phase, or rank.
+Missing attachments are printed as an explicit warning so deployment can
+continue far enough to publish the Setup page, whose behavioral probes remain
+fail-closed until the operator attaches the exact policies in the UI.
 """
 from __future__ import annotations
 
@@ -228,9 +229,10 @@ def main() -> None:
             policy_errors.append(f"{fqn}: {', '.join(missing)}")
 
     if policy_errors:
-        raise SystemExit(
-            "Gateway policy attachments are missing or drifted. "
-            "Attachment writes are UI-only during the current Beta:\n- "
+        _log(
+            "WARNING: Gateway policy attachments are missing or drifted. "
+            "Attachment writes are UI-only during the current Beta; complete "
+            "the following in AI Gateway, then use Setup → Re-check:\n- "
             + "\n- ".join(policy_errors)
         )
 

@@ -29,9 +29,15 @@ written to Lakebase first, then Lakebase CDF publishes call history into UC.
 | Source-system | `customers`, `agents`, `invoices`, `payments` | `raw_batch_data` reference files | `batch_reference_ingest` task |
 | Telephony grain | `lb_call_facts_history` | Lakebase `call_facts` | Lakebase CDF |
 | Utterance history | `lb_live_call_utterances_history` | Lakebase `live_call_utterances` | Lakebase CDF |
+| Billing audit history | `lb_billing_adjustments_history` | Lakebase `billing_adjustments` | Lakebase CDF |
 | Gold | `gold_call_insights` | — (from call + utterance history) | `gold_insights_refresh` task |
 | Live assist (Lakebase) | `call_state`, `live_call_utterances`, `call_facts`, `resolution_events`, `billing_adjustments` | per-call session + timeline | Voice API (`POST /assist`, reset) |
-| Live assist (UC) | `billing_adjustments` | audit mirror of Lakebase adjustments; updates linked `invoices` | Voice API via **SQL warehouse** |
+
+The live voice path writes billing adjustments only to Lakebase and overlays
+them on account reads. CDF publishes the governed audit copy off the hot path;
+the legacy synchronous SQL-warehouse write helper is not a runtime producer.
+`call_state` and `resolution_events` have no UC history consumer and are not
+deployment CDF requirements.
 
 `gold_call_insights` has a single producer of record: `gold_insights_refresh`
 derives it from the transcript using the Foundation Model path (`ai_query` with structured

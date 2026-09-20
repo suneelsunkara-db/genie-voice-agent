@@ -94,8 +94,8 @@ lakebase:
   # With U2M we MINT a short-lived Postgres OAuth token at runtime (no stored password).
   serving_table: call_state         # live state served to agents
   live_utterances_table: live_call_utterances # live transcript turns for CDF back to UC
-  # Lakebase CDF is started in the UI. The orchestration job gates UC analytics /
-  # Genie until wal2delta.tables reports sync running and UC history tables exist.
+  # Lakebase CDF is started in the UI. Gold blocks only on its actual inputs.
+  # Feature-specific audit/Genie feeds remain visible as readiness warnings.
   cdf_required: true
   cdf_history_prefix: "lb_"
   cdf_history_suffix: "_history"
@@ -104,9 +104,8 @@ lakebase:
   cdf_required_tables:
     - call_facts
     - live_call_utterances
+  cdf_optional_tables:
     - billing_adjustments
-    - call_state
-    - resolution_events
   # Lakebase-native operational call tables loaded under lakebase.schema using
   # primary names. Customer/billing reference tables stay in UC Delta only.
   sync_tables:
@@ -144,26 +143,13 @@ providers:
         redact: [pci, ssn, numbers]
         endpointing_ms: 10
       databricks:
-        endpoint: voice_asr_en_finetuned_whisper_lora
-        # Fine-tuned Whisper endpoint is utterance-level, not streaming.
+        # Shared multilingual ResponsesAgent deployed from realtime_voice below.
+        # Both the cockpit upload path and realtime loop use this one Qwen3-ASR
+        # endpoint; deploy_app.sh registers, deploys, grants, and smokes it.
+        endpoint: realtime_voice_stt_qwen3_asr_1_7b
         mode: utterance
         postprocess_invoice_ids: false
-        # Optional per-language endpoint routes for the UI interaction-language
-        # dropdown. Keep business facts canonical (USD, INV-900xx) unless the data
-        # model is explicitly localized later.
-        routes:
-          en-US:
-            endpoint: voice_asr_en_finetuned_whisper_lora
-          th-TH:
-            endpoint: voice_asr_th_oss_pathumma_whisper_large_v3
-          id-ID:
-            endpoint: voice_asr_id_oss_qwen3_asr_0_6b
-          zh-CN:
-            endpoint: voice_asr_zh_oss_qwen3_asr_0_6b
-          zh-CN-sensevoice:
-            endpoint: voice_asr_zh_oss_sensevoice_small
-          zh-CN-paraformer:
-            endpoint: voice_asr_zh_oss_paraformer_8k
+        routes: {}
   tts:
     adapters:
       elevenlabs: "genie_voice.providers.tts.elevenlabs:ElevenLabsTTS"

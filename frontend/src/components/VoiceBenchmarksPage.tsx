@@ -667,6 +667,9 @@ export function VoiceBenchmarksPage() {
         <button className="vb-btn ghost" onClick={() => (window.location.hash = "#/traces")}>
           Traces
         </button>
+        <button className="vb-btn ghost" onClick={() => (window.location.hash = "#/setup")}>
+          Setup
+        </button>
         <button className="vb-btn" onClick={load}>
           Refresh
         </button>

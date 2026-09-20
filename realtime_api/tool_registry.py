@@ -57,7 +57,11 @@ class ToolContext:
             self.account_store.pop(customer_id, None)
 
 
-def shape_genie_answer(result: dict[str, Any]) -> str:
+def shape_genie_answer(
+    result: dict[str, Any],
+    *,
+    language: str | None = None,
+) -> str:
     """Serialize a Genie Conversation-API result into the tool's JSON reply.
 
     Every ``ask_genie``-style tool (telco billing + card issuer + any future
@@ -68,6 +72,7 @@ def shape_genie_answer(result: dict[str, Any]) -> str:
     return json.dumps(
         {
             "answer": result.get("answer") or result.get("description"),
+            "answer_language": language,
             "rows": result.get("rows"),
             "columns": result.get("columns"),
         },

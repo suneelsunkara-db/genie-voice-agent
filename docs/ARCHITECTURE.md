@@ -150,8 +150,9 @@ flowchart LR
 ## Deployment topology
 
 The **same** FastAPI backend + React frontend run in two shapes. Application
-logic, config (`config/config.local.yaml`), and the assist flow are identical;
-only the process model, the identity, and how vendor keys are supplied differ.
+logic and the assist flow are identical; local development overlays
+`config/config.local.yaml`, while hosted deployment pins `config/config.yaml`
+for the app and every deployment job.
 
 | Concern | Local (dev) | Databricks App (hosted) |
 |---|---|---|
@@ -186,9 +187,10 @@ flowchart TB
     SEC --- RES
 ```
 
-`deploy_app.sh` builds the SPA, pushes vendor keys to the secret scope, declares
-the app **resources** (SQL warehouse, Claude + Whisper serving
-endpoints) so the service principal is auto-granted, applies UC/Lakebase/Genie
+`deploy_app.sh` bootstraps UC/Lakebase/data/Genie, deploys and smoke-tests the
+Qwen3-ASR and VoxCPM2 agents, builds the SPA, pushes optional vendor keys to the
+secret scope, and declares the app **resources** (SQL warehouse and voice serving
+endpoints) so the service principal is auto-granted. It applies UC/Lakebase/Genie
 grants (`infra/apps/grant_app_sp.py`) plus the `workspace-access` entitlement
 (required to mint Lakebase Postgres OAuth tokens at runtime), syncs source
 (`.gitignore`-aware; large non-runtime assets excluded to respect the 10 MB
@@ -217,8 +219,9 @@ flowchart LR
     BLOB --> ASSIST
 ```
 
-- `POST /mic-transcribe` sends the recorded clip to the configured Databricks
-  ASR endpoint and feeds the transcript into the assist flow.
+- `POST /mic-transcribe` sends the recorded 16 kHz WAV to the shared Qwen3-ASR
+  ResponsesAgent endpoint and feeds `custom_outputs.transcript` into the assist
+  flow.
 - `WS /mic-stream` is disabled (utterance-level serving, not a live vendor socket).
 - Only **final utterances** enter `POST /assist` — audio frames never reach the FM
   or Genie (see token economics below).
@@ -343,12 +346,15 @@ Genie reads:
 - `agents`
 - `invoices`
 - `payments`
-- `billing_adjustments` (live assist waiver / payment-plan writes)
+- `lb_call_facts_history` (latest non-delete row per call)
+- `lb_billing_adjustments_history` (latest active waiver / payment-plan row)
 - `gold_call_insights`
 
-Genie does not read raw `lb_*_history`, `call_state`, `resolution_events`, or
-raw transcript events. Live agent-facing prose is produced by the Foundation Model;
-Genie remains the governed analytics and validation layer.
+Genie does not read `call_state`, `resolution_events`, or raw utterance history.
+The voice hot path reads those operational entities directly from Lakebase;
+CDF history is an off-path analytics/audit input. Live agent-facing prose is
+produced by the Foundation Model, while Genie remains the governed analytics
+and validation layer.
 
 **Genie's runtime roles**
 

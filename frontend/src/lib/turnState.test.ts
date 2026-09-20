@@ -17,16 +17,15 @@ describe("turnReducer", () => {
     expect(list[0].status).toBe("streaming");
   });
 
-  it("stores committed claims on turn_final", () => {
+  it("marks the response final on turn_final", () => {
     let s = emptyConversation();
     s = turnReducer(s, { type: "response_text", turnId: 1, text: "Balance is $42" });
     s = turnReducer(s, {
       type: "turn_final",
       turnId: 1,
-      claims: [{ text: "Balance is $42", cite: "row:0" }],
     });
     expect(s.byTurnId[1].status).toBe("final");
-    expect(s.byTurnId[1].claims).toHaveLength(1);
+    expect(s.byTurnId[1].text).toBe("Balance is $42");
   });
 
   it("keeps user and assistant turns distinct", () => {

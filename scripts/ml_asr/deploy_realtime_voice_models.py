@@ -11,6 +11,7 @@ Serving endpoint. Two modes:
 from __future__ import annotations
 
 import argparse
+import time
 
 from databricks.sdk import WorkspaceClient
 
@@ -24,6 +25,7 @@ def main() -> None:
     parser.add_argument("--workload-size", default="Small")
     parser.add_argument("--scale-to-zero", action="store_true")
     parser.add_argument("--profile", default=None)
+    parser.add_argument("--wait-timeout-seconds", type=int, default=2700)
     args = parser.parse_args()
 
     if args.registered_model and args.endpoint:
@@ -74,6 +76,28 @@ def main() -> None:
     else:
         client.api_client.do("PUT", f"/api/2.0/serving-endpoints/{endpoint}/config", body=endpoint_config)
         print(f"updated {endpoint} from {registered_model}@{version}")
+
+    deadline = time.monotonic() + args.wait_timeout_seconds
+    last_state: tuple[str, str] | None = None
+    while time.monotonic() < deadline:
+        payload = client.api_client.do("GET", f"/api/2.0/serving-endpoints/{endpoint}")
+        state = payload.get("state") or {}
+        current = (
+            str(state.get("ready") or ""),
+            str(state.get("config_update") or ""),
+        )
+        if current != last_state:
+            print(f"{endpoint}: ready={current[0]} config_update={current[1]}")
+            last_state = current
+        if current[1] == "UPDATE_FAILED":
+            raise RuntimeError(f"{endpoint} serving configuration update failed")
+        if current[0] == "READY" and current[1] in {"NOT_UPDATING", ""}:
+            print(f"{endpoint} is ready")
+            return
+        time.sleep(15)
+    raise TimeoutError(
+        f"{endpoint} did not become ready within {args.wait_timeout_seconds} seconds"
+    )
 
 
 if __name__ == "__main__":

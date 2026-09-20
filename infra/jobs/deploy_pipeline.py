@@ -358,8 +358,7 @@ def main() -> None:
     try:
         client.workspace.mkdirs(api_dir)
     except Exception as exc:  # noqa: BLE001
-        print(f"Could not create workspace folder {api_dir}: {exc}")
-        return
+        raise RuntimeError(f"Could not create workspace folder {api_dir}: {exc}") from exc
 
     with tempfile.TemporaryDirectory() as tmp:
         wheel_local = _build_wheel(tmp)
@@ -370,8 +369,7 @@ def main() -> None:
             _ws_upload(client, os.path.join(_repo_root(), "config", "config.yaml"),
                        f"{api_dir}/config.yaml")
         except Exception as exc:  # noqa: BLE001
-            print(f"Source copy to workspace failed: {exc}")
-            return
+            raise RuntimeError(f"Source copy to workspace failed: {exc}") from exc
 
     wheel_ws = wheel_volume
     cfg_ws = _ws_fs(f"{api_dir}/config.yaml")
@@ -386,8 +384,7 @@ def main() -> None:
             _orchestration_job_settings(s, wheel_ws, cfg_ws, args.paused),
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"Job create/update failed: {exc}")
-        return
+        raise RuntimeError(f"Job create/update failed: {exc}") from exc
 
     host = s.databricks_host.rstrip("/")
     print(f"Orchestration job: {host}/jobs/{job_id}")

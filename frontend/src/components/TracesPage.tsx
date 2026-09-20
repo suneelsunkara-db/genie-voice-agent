@@ -606,6 +606,9 @@ export function TracesPage() {
               {f}
             </button>
           ))}
+          <button className="tv-btn ghost" onClick={() => (window.location.hash = "#/setup")}>
+            Setup
+          </button>
           <button className="tv-btn ghost" onClick={() => (window.location.hash = "#/")}>
             ← Cockpit
           </button>

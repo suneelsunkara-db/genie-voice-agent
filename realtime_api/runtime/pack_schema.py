@@ -1,4 +1,4 @@
-"""Wrap legacy pack tool JSON into Evidence (cite-or-silence path)."""
+"""Wrap pack tool JSON into typed evidence plus upstream answer prose."""
 from __future__ import annotations
 
 from typing import Any
@@ -67,13 +67,16 @@ def evidence_from_tool_result(
 
     Recognizes:
       - ``{columns, rows}`` / ``{columns, data}``
-      - ``{answer, columns, rows}`` (Genie Space — prose is display-only)
+      - ``{answer, columns, rows}`` (Genie Space prose plus typed evidence)
       - ``{tables: [{columns, rows}, ...]}`` (Agent Mode)
       - empty / missing → ErrorEvidence.NO_EVIDENCE
     """
     src = source or f"tool:{name}"
     if not isinstance(result, dict):
         return Evidence(source=src, error=no_evidence_refuse(detail="non-object tool result"))
+    source_meta = {
+        "source_language": result.get("answer_language"),
+    }
 
     # Failures are classified BEFORE any per-tool mapping: a denied OBO call must
     # surface as a permission refusal, not as "no evidence" from an empty result.
@@ -128,6 +131,7 @@ def evidence_from_tool_result(
                 source=src,
                 table=TableEvidence(columns=[str(c) for c in cols], rows=rows),
                 display_prose=str(prose) if prose else None,
+                meta=source_meta,
             )
 
     for value in result.values():
@@ -143,6 +147,7 @@ def evidence_from_tool_result(
                         citations=[src],
                     ),
                     display_prose=str(result.get("answer") or result.get("report") or "") or None,
+                    meta=source_meta,
                 )
 
     cols = result.get("columns")
@@ -153,6 +158,7 @@ def evidence_from_tool_result(
             source=src,
             table=TableEvidence(columns=[str(c) for c in cols], rows=list(rows)),
             display_prose=str(prose) if prose else None,
+            meta=source_meta,
         )
 
     scalar_fields = _flatten_scalars(result)
@@ -165,10 +171,14 @@ def evidence_from_tool_result(
                 citations=[src],
             ),
             display_prose=str(prose) if prose else None,
+            meta=source_meta,
         )
 
     if prose:
-        # Prose without tables — display only; composer will refuse speech.
-        return Evidence(source=src, display_prose=str(prose))
+        return Evidence(
+            source=src,
+            display_prose=str(prose),
+            meta=source_meta,
+        )
 
     return Evidence(source=src, error=no_evidence_refuse(detail="empty tool result"))

@@ -1,6 +1,6 @@
 """Tests for the Databricks Knowledge Agent profile (knowledge_tools).
 
-These guard the CITE-OR-SILENCE contract without any model or Databricks calls:
+These guard the corpus and citation contract without model or Databricks calls:
 an on-corpus question returns entries that each carry a citation, and an
 off-corpus question returns NO matches so the agent has nothing to answer from.
 """

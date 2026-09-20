@@ -124,13 +124,6 @@ function interventionCopy(row: GuardFiredRow, policyTitle?: string) {
       outcome: "Customer state remained unchanged",
     };
   }
-  if (row.guard_id === "evidence_grounding") {
-    return {
-      risk: "Unsupported factual claim",
-      decision: "Silenced model prose",
-      outcome: "Caller only received evidence-backed facts",
-    };
-  }
   if (row.guard_id.startsWith("gateway.")) {
     return {
       risk: "Risky model interaction",
@@ -222,10 +215,10 @@ export function GuardrailsPage() {
       description: "Unapproved mutations prevented",
     },
     {
-      key: "grounding",
-      label: "Answer integrity",
-      count: firedFor("evidence_grounding", "tool_markup_strip", "speech_output_boundary"),
-      description: "Unsupported claims withheld from speech",
+      key: "delivery",
+      label: "Speech delivery",
+      count: firedFor("tool_markup_strip", "speech_output_boundary"),
+      description: "Malformed tool markup kept out of synthesized audio",
     },
     {
       key: "gateway",
@@ -285,6 +278,7 @@ export function GuardrailsPage() {
         <div className="tv-header-spacer" />
         <div className="tv-filters">
           <button className="tv-btn ghost" onClick={() => (window.location.hash = "#/traces")}>Trace Explorer</button>
+          <button className="tv-btn ghost" onClick={() => (window.location.hash = "#/setup")}>Setup</button>
           <button className="tv-btn ghost" onClick={() => (window.location.hash = "#/")}>← Home</button>
           <button className="tv-btn" onClick={() => load()}>Refresh</button>
         </div>

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -104,8 +105,16 @@ def main() -> None:
     parser.add_argument("--tts", default=None, help="TTS candidate id (default: all)")
     parser.add_argument("--no-deploy", action="store_true", help="Register only")
     parser.add_argument("--wait", action="store_true", help="Block until the run finishes")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Deployment config to use exclusively (sets GENIE_CONFIG; no local overlay)",
+    )
+    parser.add_argument("--wait-timeout-seconds", type=int, default=7200)
     args = parser.parse_args()
 
+    if args.config:
+        os.environ["GENIE_CONFIG"] = str(Path(args.config).expanduser().resolve())
     config = load_config()
     rv = realtime_voice(config)
     db = databricks(config)
@@ -113,7 +122,12 @@ def main() -> None:
     catalog, schema = db["catalog"], db["schema"]
     serving = rv.get("serving") or {}
     env_version = str((config.get("pipeline") or {}).get("environment_version") or "3")
-    hf_token = ((config.get("secrets") or {}).get("hf_token") or "").strip()
+    hf_token = (
+        (config.get("secrets") or {}).get("hf_token")
+        or os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        or ""
+    ).strip()
 
     stt = rv.get("stt_candidates") or {}
     tts = rv.get("tts_candidates") or {}
@@ -130,10 +144,18 @@ def main() -> None:
     if not selected:
         parser.error("No candidates selected/configured")
 
-    run_as = db.get("run_as") or "me"
-    code_dir = (serving.get("code_dir") or "").strip() or f"/Workspace/Users/{run_as}/realtime_voice_agents"
-
     dbx = _dbx(profile)
+    run_as = (db.get("run_as") or "").strip()
+    if not run_as:
+        who = _run([*dbx, "current-user", "me", "--output", "json"], capture=True)
+        run_as = str(json.loads(who.stdout).get("userName") or "").strip()
+    if not run_as:
+        raise RuntimeError("could not resolve the deploying user for the model staging folder")
+    code_dir = (
+        (serving.get("code_dir") or "").strip()
+        or f"/Workspace/Users/{run_as}/realtime_voice_agents"
+    )
+
     remote = _upload_agents(dbx, code_dir)
 
     tasks: list[dict] = []
@@ -176,11 +198,18 @@ def main() -> None:
     print(json.dumps({"run_id": run_id, "run_page_url": f"{host}/jobs/runs/{run_id}", "tasks": [t["task_key"] for t in tasks]}, indent=2))
 
     if args.wait:
-        print(json.dumps(_wait(dbx, run_id), indent=2))
+        result = _wait(dbx, run_id, timeout_s=args.wait_timeout_seconds)
+        print(json.dumps(result, indent=2))
+        if result["lifecycle"] != "TERMINATED" or result["result"] != "SUCCESS":
+            raise SystemExit(
+                f"realtime voice model job failed: "
+                f"lifecycle={result['lifecycle']} result={result['result']}"
+            )
 
 
-def _wait(dbx: list[str], run_id: int) -> dict:
-    while True:
+def _wait(dbx: list[str], run_id: int, *, timeout_s: int) -> dict:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
         proc = _run([*dbx, "jobs", "get-run", str(run_id), "--output", "json"], capture=True)
         payload = json.loads(proc.stdout)
         state = payload.get("state") or {}
@@ -193,6 +222,13 @@ def _wait(dbx: list[str], run_id: int) -> dict:
                 "run_page_url": payload.get("run_page_url"),
             }
         time.sleep(20)
+    _run([*dbx, "jobs", "cancel-run", str(run_id)], check=False)
+    return {
+        "run_id": run_id,
+        "lifecycle": "TIMED_OUT",
+        "result": None,
+        "run_page_url": payload.get("run_page_url"),
+    }
 
 
 if __name__ == "__main__":

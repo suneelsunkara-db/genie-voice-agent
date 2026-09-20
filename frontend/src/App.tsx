@@ -9,6 +9,7 @@ import { CockpitPage } from "./components/CockpitPage";
 import { GuardrailsPage } from "./components/GuardrailsPage";
 import { HomePage } from "./components/HomePage";
 import { KnowledgeAgentPage } from "./components/KnowledgeAgentPage";
+import { SetupPage } from "./components/SetupPage";
 import { TracesPage } from "./components/TracesPage";
 import { VoiceBenchmarksPage } from "./components/VoiceBenchmarksPage";
 import { SentientShell } from "./components/sentient/Sentient";
@@ -80,6 +81,7 @@ export default function App() {
   const showGuardrails = page === "#/guardrails";
   const showVoiceBenchmarks = page === "#/voice-benchmarks";
   const showCard = page === "#/card";
+  const showSetup = page === "#/setup";
 
   useEffect(() => {
     // The UI language picker defaults to English and stays where the agent puts
@@ -111,6 +113,9 @@ export default function App() {
   if (showVoiceBenchmarks) {
     return <VoiceBenchmarksPage />;
   }
+  if (showSetup) {
+    return <SetupPage />;
+  }
   // Credit-card issuer: a separate, agent-initiated voice-first product surface
   // with its own chrome (does not reuse the telco cockpit).
   if (showCard) {
@@ -140,6 +145,14 @@ export default function App() {
           style={navPill}
         >
           ← Home
+        </button>
+        <button
+          type="button"
+          onClick={() => (window.location.hash = "#/setup")}
+          title="Deployment readiness & setup checklist"
+          style={navPill}
+        >
+          Setup
         </button>
       </div>
       {showBenchmark ? (

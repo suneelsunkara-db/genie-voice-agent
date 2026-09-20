@@ -43,6 +43,7 @@ from .routers import (
     me,
     mic_stream,
     pipeline_status,
+    readiness,
     traces,
 )
 
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(card.router)
     app.include_router(asr_benchmark.router)
     app.include_router(pipeline_status.router)
+    app.include_router(readiness.router)
     app.include_router(traces.router)
 
     @app.on_event("startup")

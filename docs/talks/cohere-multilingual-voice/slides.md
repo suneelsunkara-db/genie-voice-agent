@@ -358,7 +358,7 @@ CONDITION → BOUNDED BEHAVIOR (owner)
 - Silence or noise, empty ASR transcript → **withholds the reply and re-prompts** (ASR-signaled, runtime action) — not a response assembled from noise.
 - Detected language differs from the session language → **speaks a localized switch-prompt** (runtime) — not an answer in the wrong language.
 - No confident route for the request → **asks to clarify, or defers to the LLM** (runtime) — not a guessed action.
-- A drafted fact is absent from the retrieved tool evidence → **blocks the unsupported claim** via cite-or-silence (runtime) — not an unverified number spoken as fact.
+- A Genie or Agent Mode answer returns with typed rows → **preserves the upstream natural-language answer** while rendering rows separately — not column labels read as speech.
 - A tool call would change account/billing state → **requires explicit confirmation first** (runtime) — not a mutation on a single utterance.
 
 WHERE CONTROL LIVES

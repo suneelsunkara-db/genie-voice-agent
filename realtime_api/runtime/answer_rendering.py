@@ -1,13 +1,13 @@
-"""Shared long-answer rendering for voice + screen.
+"""Shared upstream-answer rendering for voice + screen.
 
 This is the WebSocket-runtime home of the proven FSI deep-dive rendering flow:
 
-1. turn a long governed answer into a short spoken summary in the call language;
+1. turn a natural-language Genie answer into a short spoken answer;
 2. release that summary immediately so TTS can start; and
 3. translate the full written answer concurrently, streaming deltas to the panel.
 
-The source adapter remains responsible for deciding whether text is governed
-evidence. This module only renders text that already passed that boundary.
+Structured rows remain typed evidence for tables and charts. They are never
+promoted into customer-facing ``column: value`` narration.
 """
 from __future__ import annotations
 
@@ -37,6 +37,12 @@ def _render_knobs() -> tuple[int, int, str | None]:
 
 def is_english(language: str | None) -> bool:
     return not language or str(language).split("-", 1)[0].strip().lower() == "en"
+
+
+def same_language(left: str | None, right: str | None) -> bool:
+    """Compare BCP-47 primary language tags."""
+    primary = lambda value: str(value or "en").split("-", 1)[0].strip().lower()
+    return primary(left) == primary(right)
 
 
 def language_name(language: str | None) -> str:
@@ -132,24 +138,21 @@ def table_as_markdown(
     return "\n".join(lines)
 
 
-def governed_answer_render(evidence: "Evidence") -> tuple[str, str]:
-    """Split a governed result into (text to summarize for voice, panel report).
+def upstream_answer_render(evidence: "Evidence") -> tuple[str, str]:
+    """Return natural upstream prose for speech and the report panel.
 
-    A narrative answer is both: it is summarized for speech and painted as the
-    written report. A result that arrived as rows only is summarized from its table
-    but has no report — the panel renders the typed rows as a table and chart, so
-    emitting the same rows again as markdown would just duplicate them.
-
-    Returning ("", "") means there is nothing to render, and the turn falls back to
-    the composed row claims as its spoken evidence.
+    Genie One prose, Genie Space answers, and Agent Mode reports are authoritative
+    natural-language answers from their upstream service. Tables remain structured
+    UI evidence. If an upstream service returns rows without prose, the caller can
+    use the conversational model's natural response instead of narrating columns.
     """
     prose = evidence.prose
     if prose is not None and prose.text.strip():
         text = prose.text.strip()
         return text, text
-    table = evidence.table
-    if table is not None and table.columns and table.rows:
-        return table_as_markdown(list(table.columns), [list(row) for row in table.rows]), ""
+    display = (evidence.display_prose or "").strip()
+    if display:
+        return display, display
     return "", ""
 
 
@@ -172,6 +175,7 @@ def summarize_for_voice(
     answer: str,
     language: str | None,
     *,
+    source_language: str | None = "en",
     trace: "TurnTrace | None" = None,
 ) -> str:
     """Return a short, translated summary suitable for both TTS and the panel."""
@@ -179,7 +183,7 @@ def summarize_for_voice(
     if not text:
         return ""
     excerpt = _extractive_voice_excerpt(text)
-    if not excerpt or is_english(language):
+    if not excerpt or same_language(source_language, language):
         return excerpt
 
     from ..serving_factory import shared_serving
@@ -187,7 +191,7 @@ def summarize_for_voice(
     lang = language or "en-US"
     summary_tokens, _, endpoint = _render_knobs()
     system = (
-        "You render a governed analytical answer for a realtime voice assistant. "
+        "You translate an upstream analytical answer for a realtime voice assistant. "
         "Translate the supplied extract into the language identified by BCP-47 "
         f"code '{lang}'. Preserve every fact, limitation, name, date, identifier, "
         "and number exactly. Do not summarize, round, omit, infer, or add anything. "
@@ -224,7 +228,7 @@ def summarize_for_voice(
 def _translation_system(language: str | None) -> str:
     name = language_name(language)
     return (
-        f"Translate the user's governed analytical answer into {name}. Preserve the "
+        f"Translate the user's analytical answer into {name}. Preserve the "
         "markdown structure, numbers, currency amounts, dates, names, SQL, and citation "
         "markers exactly. Translate only the surrounding prose and table headers. Do "
         "not summarize, add commentary, or answer the report. Output only the translated "
@@ -236,6 +240,7 @@ def localize_answer_stream(
     answer: str,
     language: str | None,
     *,
+    source_language: str | None = "en",
     trace: "TurnTrace | None" = None,
 ) -> Iterator[str]:
     """Yield translated full-answer deltas; empty for English or empty answers.
@@ -245,7 +250,7 @@ def localize_answer_stream(
     paint the original report immediately, never pay for a same-language rewrite.
     """
     text = (answer or "").strip()
-    if not text or is_english(language):
+    if not text or same_language(source_language, language):
         return
 
     from ..serving_factory import shared_serving

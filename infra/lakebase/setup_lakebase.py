@@ -22,6 +22,7 @@ Run:  python infra/lakebase/setup_lakebase.py
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import time
@@ -83,6 +84,13 @@ def _wait_project_ready(ac, project_id: str, timeout_s: int = 900) -> bool:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--skip-reference-snapshot",
+        action="store_true",
+        help="Ensure the project/schema only; snapshot after UC reference ingest completes",
+    )
+    args = parser.parse_args()
     s = get_settings()
     if not s.lakebase.enabled:
         print("lakebase.enabled=false -> skipping (app uses in-memory fallback).")
@@ -111,23 +119,24 @@ def main() -> None:
                 print(f"  created project {project_id}")
                 project = _find_project(ac, inst)
             except Exception as exc:  # noqa: BLE001
-                print(f"  (could not create project: {exc})")
-                return
+                raise RuntimeError(f"could not create Lakebase project '{project_id}': {exc}") from exc
         else:
             print(
                 f"  Lakebase project '{inst}' not found.\n"
                 "  Create it in the UI (Compute > Lakebase > Create project) with display\n"
                 f"  name '{inst}', or re-run with GENIE_LAKEBASE_AUTOCREATE=true to create it."
             )
-            return
+            raise RuntimeError(
+                f"Lakebase project '{inst}' is required. Create it in the UI or "
+                "set GENIE_LAKEBASE_AUTOCREATE=true."
+            )
 
     project_id = project["project_id"]
     print(f"  found project: {project_id} "
           f"(display '{(project.get('status') or {}).get('display_name')}')")
 
     if not _wait_project_ready(ac, project_id):
-        print("  endpoint not ready yet - serving will retry at runtime.")
-        return
+        raise TimeoutError(f"Lakebase project '{project_id}' endpoint did not become ready")
 
     # Verify end to end: mint a token, connect, ensure the serving table exists.
     print("Verifying connectivity + Lakebase serving schema ...")
@@ -142,12 +151,12 @@ def main() -> None:
         # sub-ms from Postgres. This cache is the ONLY serving read path (there is
         # no warehouse fallback), so a snapshot failure must surface, not be
         # swallowed — the error propagates and fails setup.
-        counts = lb.snapshot_reference_tables()
-        print("  ok: snapshotted reference tables -> Lakebase: "
-              + ", ".join(f"{t}={n}" for t, n in sorted(counts.items())))
+        if not args.skip_reference_snapshot:
+            counts = lb.snapshot_reference_tables()
+            print("  ok: snapshotted reference tables -> Lakebase: "
+                  + ", ".join(f"{t}={n}" for t, n in sorted(counts.items())))
     except Exception as exc:  # noqa: BLE001
-        print(f"  WARNING: could not verify serving connectivity: {exc}")
-        return
+        raise RuntimeError(f"could not verify Lakebase serving connectivity: {exc}") from exc
 
     print(
         "Done. The app connects via runtime-minted Postgres tokens "

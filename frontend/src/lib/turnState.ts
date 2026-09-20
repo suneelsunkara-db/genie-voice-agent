@@ -11,7 +11,6 @@ export interface TurnBubble {
   turnId: number;
   role: TurnRole;
   text: string;
-  claims?: Array<Record<string, unknown>>;
   tools?: Array<{ name: string; result?: unknown }>;
   evidence?: Array<Record<string, unknown>>;
   events?: Array<{ seq: number; kind: string; payload: Record<string, unknown> }>;
@@ -39,7 +38,6 @@ export type TurnAction =
       type: "turn_final";
       turnId: number;
       text?: string;
-      claims?: Array<Record<string, unknown>>;
     }
   | { type: "turn_cancelled"; turnId: number }
   | { type: "reset" };
@@ -58,7 +56,6 @@ function upsert(
     turnId,
     role: patch.role,
     text: patch.text ?? prev?.text ?? "",
-    claims: patch.claims ?? prev?.claims,
     tools: patch.tools ?? prev?.tools,
     evidence: patch.evidence ?? prev?.evidence,
     events: patch.events ?? prev?.events,
@@ -146,7 +143,6 @@ export function turnReducer(
       return upsert(state, action.turnId, {
         role: "assistant",
         text: action.text,
-        claims: action.claims,
         status: "final",
       });
     case "turn_cancelled":

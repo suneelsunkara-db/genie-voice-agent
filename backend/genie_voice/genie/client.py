@@ -28,6 +28,17 @@ class GenieClient:
         # stale-space retry below re-resolves the RIGHT space, not the default.
         self._space_name: str = space_name or self.settings.databricks.genie_space_name
         self._space_id: str | None = None
+        # Resolve the configured name through the process identity up front.
+        # OBO tokens are intentionally narrow and can invoke a known Genie
+        # space while being unable to enumerate spaces.
+        try:
+            matches = find_space_ids(
+                self._workspace_client(access_token=None), self._space_name
+            )
+            if len(matches) == 1:
+                self._space_id = matches[0]
+        except Exception:  # noqa: BLE001 - local/offline construction is valid
+            pass
 
     @staticmethod
     def _looks_like_stale_space_error(exc: Exception) -> bool:
@@ -47,6 +58,14 @@ class GenieClient:
         try:
             client = self._workspace_client(access_token=access_token)
             matches = find_space_ids(client, self._space_name)
+            # Apps OBO tokens can invoke Genie with the `genie` scope but may
+            # not be allowed to enumerate spaces. Resolve the configured name
+            # with the App SP in that case, then still invoke using the viewer's
+            # token below; CAN_RUN remains enforced by Genie on the invocation.
+            if not matches and access_token:
+                matches = find_space_ids(
+                    self._workspace_client(access_token=None), self._space_name
+                )
             if len(matches) > 1:
                 raise RuntimeError(
                     "Multiple Genie spaces share the configured name; run "
@@ -249,7 +268,10 @@ class GenieClient:
             host = self.settings.databricks_host
             if not host:
                 raise RuntimeError("Databricks host is not configured for OBO Genie client")
-            return WorkspaceClient(host=host, token=access_token)
+            # Hosted Apps also inject the App SP's OAuth client credentials.
+            # Pin PAT auth so the forwarded user token does not conflict with
+            # those environment credentials in the SDK auth chain.
+            return WorkspaceClient(host=host, token=access_token, auth_type="pat")
         from genie_voice.databricks.client import get_workspace_client
 
         return get_workspace_client(self.settings)

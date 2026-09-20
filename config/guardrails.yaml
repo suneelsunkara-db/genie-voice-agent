@@ -133,16 +133,6 @@ policies:
     status: live
     phase: Post-STT
     description: Blocks high-risk credentials and masks contact identifiers before conversational model admission.
-  evidence_grounding:
-    title: Evidence and citation boundary
-    owner: application
-    family: speech_output
-    group: Evidence boundary
-    stage: Response composition
-    kind: deterministic
-    status: live
-    phase: Before browser and TTS
-    description: Factual answers must carry tool or governed-service evidence; unsupported model prose is silenced.
   hallucination_evaluation:
     title: Hallucination evaluation
     owner: gateway
@@ -313,7 +303,7 @@ bundles:
   speech_output:
     title: Shared speech-output boundary
     enforcer: application
-    policies: [tool_markup_strip, deterministic_speech, evidence_grounding, speech_output_boundary]
+    policies: [tool_markup_strip, deterministic_speech, speech_output_boundary]
 
 assignments:
   model_services:

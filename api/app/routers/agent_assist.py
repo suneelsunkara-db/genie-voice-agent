@@ -99,17 +99,6 @@ async def greeting(language: str = "en-US", name: str = "") -> dict:
 
 
 
-def _prediction_response_dict(response) -> dict:
-    if isinstance(response, dict):
-        return response
-    if hasattr(response, "as_dict"):
-        return response.as_dict()
-    predictions = getattr(response, "predictions", None)
-    if predictions is not None:
-        return {"predictions": predictions}
-    return {}
-
-
 def _transcribe_with_databricks_model(body: MicAudioIn, settings) -> str:
     options = stt_options_for_language(settings, body.language)
     endpoint = str(options.get("endpoint") or "").strip()
@@ -118,25 +107,23 @@ def _transcribe_with_databricks_model(body: MicAudioIn, settings) -> str:
 
     client = get_workspace_client(settings)
     try:
-        response = client.serving_endpoints.query(
-            name=endpoint,
-            dataframe_records=[
-                {
+        response = client.api_client.do(
+            "POST",
+            f"/serving-endpoints/{endpoint}/invocations",
+            body={
+                "input": [{"role": "user", "content": "transcribe"}],
+                "custom_inputs": {
                     "audio_b64": body.audio_b64,
-                    "mime_type": body.mime_type or "audio/webm",
-                    "speaker": body.speaker,
                     "language": asr_model_language(body.language),
-                    "task": "transcribe",
-                }
-            ],
+                    "sample_rate_hz": 16_000,
+                },
+            },
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Databricks STT call failed: {exc}") from exc
 
-    payload = _prediction_response_dict(response)
-    predictions = payload.get("predictions") or []
-    first = predictions[0] if predictions else {}
-    transcript = str(first.get("raw_transcript") or first.get("transcript") or "").strip()
+    payload = response if isinstance(response, dict) else {}
+    transcript = str((payload.get("custom_outputs") or {}).get("transcript") or "").strip()
     if not transcript:
         raise HTTPException(status_code=422, detail="No transcript returned from Databricks STT")
     return transcript

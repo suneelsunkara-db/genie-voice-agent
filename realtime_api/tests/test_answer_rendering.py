@@ -41,6 +41,25 @@ def test_summary_uses_call_language_and_is_voice_bounded(monkeypatch):
     assert call["max_tokens"] > 0
 
 
+def test_already_localized_genie_answer_is_not_translated_again(monkeypatch):
+    serving = _Serving()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+
+    answer = "Los vuelos fueron el principal factor del aumento."
+    summary = answer_rendering.summarize_for_voice(
+        "¿Por qué aumentaron mis gastos?",
+        answer,
+        "es-ES",
+        source_language="es",
+    )
+
+    assert summary == answer
+    assert serving.calls == []
+
+
 def test_empty_reasoning_summary_retries_with_larger_budget(monkeypatch):
     class _ReasoningServing(_Serving):
         def summarize(self, **kwargs):
@@ -82,6 +101,23 @@ def test_full_translation_streams_in_order(monkeypatch):
         answer_rendering.localize_answer_stream("English report.", "es-ES")
     ) == ["Informe ", "traducido."]
     assert "Translate" in serving.calls[0]["system"]
+
+
+def test_localized_genie_report_bypasses_full_translation(monkeypatch):
+    serving = _Serving()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+
+    assert list(
+        answer_rendering.localize_answer_stream(
+            "Informe de Genie.",
+            "es-ES",
+            source_language="es",
+        )
+    ) == []
+    assert serving.calls == []
 
 
 def test_agent_mode_question_is_canonicalized_to_english(monkeypatch):
@@ -153,7 +189,7 @@ def test_english_spoken_excerpt_is_extractive_and_model_free(monkeypatch):
     assert serving.calls == []
 
 
-def test_a_narrative_answer_is_both_the_spoken_source_and_the_panel_report():
+def test_an_upstream_narrative_is_both_spoken_source_and_panel_report():
     from realtime_api.runtime.genie_adapters import evidence_from_genie_one
 
     evidence = evidence_from_genie_one(
@@ -171,18 +207,13 @@ def test_a_narrative_answer_is_both_the_spoken_source_and_the_panel_report():
         }
     )
 
-    spoken_source, panel_report = answer_rendering.governed_answer_render(evidence)
+    spoken_source, panel_report = answer_rendering.upstream_answer_render(evidence)
     assert "Shopping leads" in spoken_source
     assert panel_report == spoken_source
 
 
-def test_a_table_only_answer_still_gets_rendered_instead_of_read_out():
-    """Genie answered "top spending categories" with rows and no narrative.
-
-    Before this, no narrative meant no summary, and the voice fell through to the
-    row cites — "category: Shopping; total spend sgd: 416659.61; ..." — while the
-    panel showed no detail at all, because both were gated on prose existing.
-    """
+def test_table_only_evidence_is_not_promoted_into_customer_prose():
+    """Typed rows belong in tables; the conversational answer remains natural."""
     from realtime_api.runtime.genie_adapters import evidence_from_genie_one
 
     evidence = evidence_from_genie_one(
@@ -203,18 +234,26 @@ def test_a_table_only_answer_still_gets_rendered_instead_of_read_out():
         }
     )
 
-    spoken_source, panel_report = answer_rendering.governed_answer_render(evidence)
-    assert "| category | total_spend_sgd |" in spoken_source
-    assert "416659.61" in spoken_source
-    # The typed rows render as the table and chart, so the report would only be a
-    # second copy of them.
-    assert panel_report == ""
+    assert answer_rendering.upstream_answer_render(evidence) == ("", "")
 
 
-def test_an_unusable_result_renders_nothing_and_leaves_the_cites_to_speak():
+def test_agent_mode_display_report_is_an_authoritative_upstream_answer():
+    from realtime_api.runtime.genie_adapters import evidence_from_agent_mode
+
+    evidence = evidence_from_agent_mode(
+        [{"columns": ["driver", "amount_usd"], "preview_rows": [["flight", 1400]]}],
+        report_text="Flights were the main expense driver at $1,400.",
+    )
+
+    spoken_source, panel_report = answer_rendering.upstream_answer_render(evidence)
+    assert spoken_source == "Flights were the main expense driver at $1,400."
+    assert panel_report == spoken_source
+
+
+def test_an_unusable_result_renders_nothing():
     from realtime_api.runtime.evidence import Evidence
 
-    assert answer_rendering.governed_answer_render(Evidence(source="genie_one")) == ("", "")
+    assert answer_rendering.upstream_answer_render(Evidence(source="genie_one")) == ("", "")
 
 
 def test_table_markdown_is_available_for_display_rendering():

@@ -14,7 +14,7 @@ from realtime_api.runtime.agent_runtime import (
     RespondWithToolsAdapter,
 )
 from realtime_api.runtime.cancellation import CancellationToken
-from realtime_api.runtime.evidence import Evidence, EvidenceComposer, SpokenClaim, TableEvidence
+from realtime_api.runtime.evidence import Evidence, TableEvidence
 from realtime_api.runtime.events import AgentEventKind
 from realtime_api.runtime.genie_adapters import (
     evidence_from_agent_mode,
@@ -45,36 +45,12 @@ from realtime_api.tools import _run_ask_genie
 # ---------------------------------------------------------------------------
 
 
-def test_spoken_claim_requires_cites():
-    with pytest.raises(ValueError, match="field_path"):
-        SpokenClaim(text="forty two dollars", field_paths=())
-
-
-def test_composer_rejects_uncited_and_ignores_genie_prose():
-    composer = EvidenceComposer()
-    # Prose-only Genie payload → refuse, never speak prose numbers.
-    ev = evidence_from_genie_space(
-        {"answer": "The balance is $1,234.56", "rows": None, "columns": []}
-    )
-    assert ev.display_prose and "1,234" in ev.display_prose
-    assert ev.error is not None and ev.error.code == ErrorCode.NO_EVIDENCE
-    claims, refuse = composer.compose_or_refuse(ev)
-    assert claims == []
-    assert refuse
-    assert "cite" in refuse.lower() or "data" in refuse.lower() or "find" in refuse.lower()
-
-
-def test_empty_genie_refuses():
-    composer = EvidenceComposer()
+def test_empty_genie_returns_typed_error():
     ev = evidence_from_genie_space(None)
-    claims, refuse = composer.compose_or_refuse(ev)
-    assert claims == []
-    assert refuse
     assert ev.error is not None and ev.error.code == ErrorCode.NO_EVIDENCE
 
 
-def test_tabular_genie_produces_cited_claims():
-    composer = EvidenceComposer()
+def test_tabular_genie_preserves_rows_and_upstream_prose():
     ev = evidence_from_genie_space(
         {
             "answer": "ignore this prose amount $999",
@@ -84,15 +60,11 @@ def test_tabular_genie_produces_cited_claims():
         }
     )
     assert ev.has_tabular
-    claims, refuse = composer.compose_or_refuse(ev)
-    assert refuse is None
-    assert len(claims) == 1
-    assert claims[0].field_paths
-    assert "42" in claims[0].text
-    assert "999" not in claims[0].text  # prose not spoken
+    assert ev.table is not None and ev.table.rows == [["CH-1", 42]]
+    assert ev.display_prose == "ignore this prose amount $999"
 
 
-def test_genie_one_prose_answer_is_attributed_and_speakable():
+def test_genie_one_prose_answer_preserves_upstream_provenance():
     # Many legitimate questions ("what can you answer for me?") have no tabular
     # answer at all. Genie One IS the governed answering service, and its answer
     # arrives under a response id, so it is cited evidence — refusing it would make
@@ -107,11 +79,6 @@ def test_genie_one_prose_answer_is_attributed_and_speakable():
     )
     assert ev.has_attributed_prose
     assert ev.prose is not None and ev.prose.citations == ["genie_one:r1"]
-    claims, refuse = EvidenceComposer().compose_or_refuse(ev)
-    assert refuse is None
-    assert len(claims) == 1
-    assert "revenue" in claims[0].text
-    assert claims[0].field_paths == (EvidenceComposer.PROSE_PATH,)
 
 
 def test_genie_one_live_payload_shape_is_mapped():
@@ -136,8 +103,6 @@ def test_genie_one_live_payload_shape_is_mapped():
     assert "Banking" in ev.prose.text
     assert ev.prose.citations == ["genie_one:f9ba376b9da448bab481989311dee05d"]
     assert ev.meta["deep_link"].endswith("threads/5ed7")
-    claims, refuse = EvidenceComposer().compose_or_refuse(ev)
-    assert refuse is None and claims
 
 
 def test_genie_one_typed_query_results_become_table_evidence():
@@ -207,12 +172,9 @@ def test_genie_one_multi_step_answer_is_read_off_the_measure_not_the_first_step(
     assert ev.table is not None
     assert ev.table.columns == ["destination_model", "total_tokens"]
     assert ev.table.sql is not None and "SUM" in ev.table.sql
-    # Every step still reaches the screen; only the speech evidence is chosen.
+    # Every step still reaches the screen while the upstream prose remains the answer.
     assert len(ev.meta["query_results"]) == 2
-
-    claims, refuse = EvidenceComposer().compose_or_refuse(ev)
-    assert refuse is None
-    assert "56999730" in claims[0].text
+    assert ev.table.rows == [["Qwen3 Next Instruct", "56999730"]]
 
 
 def test_genie_one_answer_survives_a_table_so_it_can_be_rendered():
@@ -260,20 +222,14 @@ def test_genie_one_step_without_a_measure_is_still_usable_evidence():
     assert ev.table.sql == "SELECT DISTINCT domain FROM catalog"
 
 
-def test_genie_one_prose_without_an_upstream_id_is_not_speakable():
-    # No id means nothing to attribute the sentence to, so it stays display-only.
+def test_genie_one_prose_without_an_upstream_id_retains_its_text():
+    # Provenance remains distinguishable without suppressing the upstream answer.
     ev = evidence_from_genie_one({"status": "completed", "answer": "Revenue is up 40%."})
     assert not ev.has_attributed_prose
     assert ev.display_prose == "Revenue is up 40%."
-    claims, refuse = EvidenceComposer().compose_or_refuse(ev)
-    assert claims == [] and refuse
 
 
-def test_genie_one_cells_are_quoted_ahead_of_its_own_rounding():
-    # A number spoken as a fact comes from a cell, so "1042" is quoted rather than
-    # Genie's "roughly a thousand". The answer itself stays attributed: it is the
-    # governed service's own reply under this response id, and the runtime renders it
-    # for the caller's language and the screen.
+def test_genie_one_keeps_natural_answer_and_typed_cells_separate():
     ev = evidence_from_genie_one(
         {
             "status": "completed",
@@ -285,10 +241,8 @@ def test_genie_one_cells_are_quoted_ahead_of_its_own_rounding():
         }
     )
     assert ev.has_tabular and ev.has_attributed_prose
-    claims, refuse = EvidenceComposer().compose_or_refuse(ev)
-    assert refuse is None
-    assert "1042" in claims[0].text
-    assert "thousand" not in claims[0].text
+    assert ev.prose is not None and ev.prose.text == "Roughly a thousand orders."
+    assert ev.table is not None and ev.table.rows == [[1042]]
 
 
 def test_genie_one_statement_shaped_result_is_read_as_a_table():
@@ -322,18 +276,13 @@ def test_workspace_query_results_route_through_the_genie_one_adapter():
     assert ev.has_attributed_prose
 
 
-def test_long_prose_is_trimmed_for_speech_but_kept_whole_on_the_wire():
+def test_long_upstream_prose_is_kept_whole_on_the_wire():
     body = "First sentence about the data. " + ("Filler detail follows. " * 60)
     ev = evidence_from_genie_one(
         {"status": "completed", "response_id": "r6", "answer": f"## Heading\n\n- {body}"}
     )
-    claims, refuse = EvidenceComposer().compose_or_refuse(ev)
-    assert refuse is None
-    spoken = claims[0].text
-    assert len(spoken) <= 601
-    assert "#" not in spoken and "- " not in spoken
-    # The full answer still reaches the client for display.
-    assert len(str(ev.as_dict()["prose"]["text"])) > len(spoken)
+    assert ev.prose is not None
+    assert ev.as_dict()["prose"]["text"] == f"## Heading\n\n- {body}".strip()
 
 
 def test_agent_mode_tables_to_evidence():
@@ -343,9 +292,7 @@ def test_agent_mode_tables_to_evidence():
     )
     assert ev.has_tabular
     assert ev.display_prose and "Fees rose" in ev.display_prose
-    composer = EvidenceComposer()
-    claims, refuse = composer.compose_or_refuse(ev)
-    assert refuse is None and claims
+    assert ev.table is not None and ev.table.rows == [["fees", 10]]
 
 
 def test_tool_events_emit_before_final_text():
@@ -575,6 +522,5 @@ def test_evidence_table_direct():
         source="lakebase",
         table=TableEvidence(columns=["a"], rows=[[1]], citations=["lakebase"]),
     )
-    composer = EvidenceComposer()
-    claims, refuse = composer.compose_or_refuse(ev)
-    assert refuse is None and claims[0].field_paths[0].endswith(".a")
+    assert ev.has_tabular
+    assert ev.as_dict()["table"]["rows"] == [[1]]

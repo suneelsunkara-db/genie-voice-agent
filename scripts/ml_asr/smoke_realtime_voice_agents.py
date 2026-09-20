@@ -24,9 +24,11 @@ import base64
 import io
 import json
 import math
+import os
 import struct
 import time
 import wave
+from pathlib import Path
 from typing import Any
 
 from _realtime_config import databricks, find_candidate, realtime_voice
@@ -96,8 +98,15 @@ def main() -> None:
     parser.add_argument("--tts", default=None, help="TTS candidate id (default: first configured)")
     parser.add_argument("--languages", default="en-US,th-TH,id-ID,zh-CN", help="Comma-separated BCP 47 tags")
     parser.add_argument("--mode", choices=["roundtrip", "separate"], default="roundtrip")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Deployment config to use exclusively (sets GENIE_CONFIG; no local overlay)",
+    )
     args = parser.parse_args()
 
+    if args.config:
+        os.environ["GENIE_CONFIG"] = str(Path(args.config).expanduser().resolve())
     rv = realtime_voice()
     stt_id = args.stt or next(iter(rv.get("stt_candidates") or {}), None)
     tts_id = args.tts or next(iter(rv.get("tts_candidates") or {}), None)
@@ -153,6 +162,14 @@ def main() -> None:
         report["languages"][language] = entry
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
+    failures = [
+        f"{language}/{direction}"
+        for language, entry in report["languages"].items()
+        for direction in ("tts", "stt")
+        if direction in entry and not entry[direction].get("ok")
+    ]
+    if failures:
+        raise SystemExit("realtime voice smoke test failed: " + ", ".join(failures))
 
 
 if __name__ == "__main__":

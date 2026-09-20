@@ -20,7 +20,6 @@ class SpeechKind(str, Enum):
 class SpeechRequest:
     kind: SpeechKind
     text: str
-    cited: bool = False
     stable: bool = True
 
 
@@ -32,7 +31,7 @@ class SpeechScheduler:
       - ack ≤ 1
       - progress ≤ the long-work cadence's own ceiling (runtime.engagement)
       - preview only when evidence is stable
-      - final only when cited (cite-or-silence)
+      - final ≤ 1
       - inject always allowed (same-turn synthesize) but never bumps turn_id
     """
 
@@ -73,9 +72,6 @@ class SpeechScheduler:
             return True
 
         if req.kind == SpeechKind.FINAL:
-            if not req.cited:
-                self.skipped.append("final:uncited")
-                return False
             if self.final_emitted >= 1:
                 self.skipped.append("final:budget")
                 return False

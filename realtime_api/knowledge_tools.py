@@ -5,10 +5,8 @@ corpus, so the end-to-end flow (greeting + voice + cited answers) works today.
 The corpus is the single source of truth for both this tool and the
 ``/knowledge/corpus`` UI endpoint, so spoken answers and on-screen cards agree.
 
-Cite-or-silence: ``knowledge_search`` only ever returns entries from the corpus,
-each carrying its own ``citation``. The agent is instructed to answer from those
-entries and to say it does not know when the search comes back empty — it must
-not improvise Databricks behaviour.
+``knowledge_search`` returns natural-language corpus entries together with their
+citations. The UI renders those sources separately from the answer.
 
 SEAM for Tier 2: replace ``KNOWLEDGE_CORPUS`` / ``_run_knowledge_search`` with
 Databricks Vector Search (or a Genie space) over real docs; the profile
