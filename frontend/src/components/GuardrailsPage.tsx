@@ -36,6 +36,53 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   );
 }
 
+type SpeechEndpoint = NonNullable<GatewayInsights["speech_endpoints"]>[number];
+
+function SpeechModelCard({ model }: { model: SpeechEndpoint }) {
+  const isTts = model.model_role === "tts";
+  const inference = model.inference_table;
+  const inferenceTable = inference?.enabled
+    ? `${inference.catalog_name}.${inference.schema_name}.${inference.table_name_prefix}_payload`
+    : null;
+  return (
+    <article className="gr-speech-model-card">
+      <div className="gr-speech-model-head">
+        <div>
+          <div className="gr-control-eyebrow">{isTts ? "Text to speech" : "Speech to text"} · Gateway-enabled serving endpoint</div>
+          <h3>{model.model_name}</h3>
+        </div>
+        <span className={`gr-control-status ${statusClass(model.provenance_status)}`}>
+          <span className="gr-control-status-dot" />
+          {model.provenance_status}
+        </span>
+      </div>
+      <code className="gr-speech-endpoint" title={model.endpoint}>{model.endpoint}</code>
+      <div className="gr-speech-metrics">
+        <Metric label="Conversation calls" value={fmt(model.requests)} detail={`${fmt(model.trace_count)} matched traces`} />
+        <Metric label="Errors" value={fmt(model.errors)} detail={model.errors ? "Inspect traces" : "No failed calls"} />
+        <Metric label="Average latency" value={`${fmt(model.avg_latency_ms)} ms`} detail={`P95 ${fmt(model.p95_latency_ms)} ms`} />
+        <Metric
+          label={isTts ? "Time to first audio" : "Execution plane"}
+          value={isTts ? `${fmt(model.avg_ttfb_ms)} ms` : "GPU endpoint"}
+          detail={isTts ? `P95 ${fmt(model.p95_ttfb_ms)} ms · generation ${fmt(model.avg_generation_ms)} ms` : "Model Serving + AI Gateway"}
+        />
+      </div>
+      <div className="gr-speech-coverage">
+        <span><strong>Surfaces</strong> {model.surfaces.join(", ") || "unavailable"}</span>
+        <span><strong>Profiles</strong> {model.profiles.join(", ") || "unavailable"}</span>
+      </div>
+      <div className="gr-speech-telemetry-note">
+        <span>{inferenceTable ? "AI Gateway enabled" : "Trace-derived telemetry"}</span>
+        <p>
+          {inferenceTable
+            ? <>Inference table <code>{inferenceTable}</code>. Rate limits, usage tracking, fallback, and chat guardrails are unsupported for ResponsesAgent endpoints.</>
+            : <>Inference table is not configured. No Gateway telemetry is available for this endpoint.</>}
+        </p>
+      </div>
+    </article>
+  );
+}
+
 function ServicePanel({ service }: { service: GatewayServiceInsight }) {
   const traffic = service.traffic_7d ?? {};
   const all = service.traffic_all_7d ?? {};
@@ -137,6 +184,10 @@ export function GuardrailsPage() {
   const pages = gateway?.page_coverage ?? [];
   const events = gateway?.recent_events ?? [];
   const speech = gateway?.speech_endpoints ?? [];
+  const speechModels = speech.filter((item) => item.model_role === "stt" || item.model_role === "tts");
+  const unclassifiedSpeechCalls = speech
+    .filter((item) => item.model_role !== "stt" && item.model_role !== "tts")
+    .reduce((total, item) => total + item.requests, 0);
 
   return (
     <div className="tv-root gr-control-root">
@@ -178,79 +229,107 @@ export function GuardrailsPage() {
               </div>
             </section>
 
-            <section className="gr-control-section">
-              <div className="gr-control-section-head">
+            <section className="gr-gateway-plane">
+              <div className="gr-gateway-plane-head">
                 <div>
-                  <div className="gr-control-eyebrow">Governed model traffic</div>
-                  <h2>Unity AI Gateway services</h2>
+                  <div className="gr-control-eyebrow">Databricks governance plane</div>
+                  <h2>AI Gateway</h2>
+                  <p>
+                    One control plane, shown by resource type because supported capabilities and telemetry differ.
+                  </p>
                 </div>
-                <span className="gr-control-section-meta">Trailing 7 days · conversation only</span>
+                <div className="gr-gateway-capability-summary">
+                  <div>
+                    <strong>{speechModels.length}</strong>
+                    <span>Serving endpoints</span>
+                    <small>Inference tables</small>
+                  </div>
+                  <div>
+                    <strong>{gateway.services.length}</strong>
+                    <span>Model services</span>
+                    <small>Policies · limits · tokens · tables</small>
+                  </div>
+                </div>
               </div>
-              <div className="gr-control-service-list">
-                {gateway.services.map((service) => <ServicePanel key={service.key} service={service} />)}
+
+              <div className="gr-gateway-subsection">
+                <div className="gr-gateway-subsection-head">
+                  <div>
+                    <div className="gr-control-eyebrow">Gateway-enabled custom models</div>
+                    <h3>Serving endpoint Gateway</h3>
+                    <p>Qwen3-ASR and VoxCPM2 remain GPU Model Serving endpoints with AI Gateway inference tables attached.</p>
+                  </div>
+                  <span className="gr-gateway-capability-badge">ResponsesAgent · inference tables supported</span>
+                </div>
+                {speechModels.length > 0 ? (
+                  <div className="gr-speech-model-grid">
+                    {speechModels.map((model) => (
+                      <SpeechModelCard key={`${model.endpoint}-${model.model_role}`} model={model} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="gr-control-empty">No tagged conversation speech calls are persisted yet.</div>
+                )}
+                {unclassifiedSpeechCalls > 0 && (
+                  <div className="gr-speech-unclassified">
+                    {fmt(unclassifiedSpeechCalls)} legacy serving call(s) have no model role and remain excluded from these model cards.
+                  </div>
+                )}
+              </div>
+
+              <div className="gr-gateway-subsection">
+                <div className="gr-gateway-subsection-head">
+                  <div>
+                    <div className="gr-control-eyebrow">Gateway-routed foundation models</div>
+                    <h3>Unity Catalog model services</h3>
+                    <p>App-owned routes expose conversation token usage, limits, attached policies, inference tables, and trace matching.</p>
+                  </div>
+                  <span className="gr-gateway-capability-badge">Trailing 7 days · conversation only</span>
+                </div>
+                <div className="gr-control-service-list">
+                  {gateway.services.map((service) => <ServicePanel key={service.key} service={service} />)}
+                </div>
               </div>
             </section>
 
-            <div className="gr-control-split">
-              <section className="gr-control-panel">
-                <div className="gr-control-section-head is-compact">
-                  <div>
-                    <div className="gr-control-eyebrow">Model Serving lineage</div>
-                    <h2>Speech endpoints</h2>
-                  </div>
+            <section className="gr-control-panel">
+              <div className="gr-control-section-head is-compact">
+                <div>
+                  <div className="gr-control-eyebrow">Trace-linked evidence</div>
+                  <h2>Recent model-service Gateway events</h2>
                 </div>
-                <div className="gr-control-speech-grid">
-                  {speech.map((item) => (
-                    <Metric
-                      key={`${item.endpoint}-${item.model_role}`}
-                      label={item.model_role}
-                      value={`${fmt(item.requests)} calls`}
-                      detail={`${item.endpoint} · ${fmt(item.errors)} errors`}
-                    />
-                  ))}
+                <span className="gr-control-section-meta">{events.length} requests</span>
+              </div>
+              {events.length > 0 ? (
+                <div className="gr-control-table-wrap">
+                  <table className="gr-control-table gr-events-table">
+                    <thead><tr><th>Time</th><th>Service / role</th><th>Surface</th><th>Status</th><th>Latency</th><th>Trace</th></tr></thead>
+                    <tbody>
+                      {events.map((event, index) => (
+                        <tr key={`${event.request_id}-${index}`}>
+                          <td>{event.event_time ? new Date(event.event_time).toLocaleString() : "—"}</td>
+                          <td><strong>{event.service_key}</strong><span>{event.model_role ?? "unknown"}</span></td>
+                          <td>{event.surface ?? "—"}<span>{event.profile ?? "—"}</span></td>
+                          <td><span className={`gr-http-status ${n(event.status_code) < 400 ? "is-ok" : "is-error"}`}>{event.status_code ?? "—"}</span></td>
+                          <td>{fmt(event.latency_ms)} ms</td>
+                          <td>
+                            {event.trace_id ? (
+                              <button
+                                className="gr-trace-link"
+                                disabled={!event.trace_matched}
+                                onClick={() => (window.location.hash = `#/traces?trace=${event.trace_id}`)}
+                              >
+                                {event.trace_matched ? String(event.trace_id).slice(0, 8) : "unmatched"}
+                              </button>
+                            ) : "missing"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                {speech.length === 0 && <div className="gr-control-empty">No tagged speech calls are persisted yet.</div>}
-              </section>
-
-              <section className="gr-control-panel">
-                <div className="gr-control-section-head is-compact">
-                  <div>
-                    <div className="gr-control-eyebrow">Trace-linked evidence</div>
-                    <h2>Recent Gateway events</h2>
-                  </div>
-                  <span className="gr-control-section-meta">{events.length} requests</span>
-                </div>
-                {events.length > 0 ? (
-                  <div className="gr-control-table-wrap">
-                    <table className="gr-control-table gr-events-table">
-                      <thead><tr><th>Time</th><th>Service / role</th><th>Surface</th><th>Status</th><th>Latency</th><th>Trace</th></tr></thead>
-                      <tbody>
-                        {events.map((event, index) => (
-                          <tr key={`${event.request_id}-${index}`}>
-                            <td>{event.event_time ? new Date(event.event_time).toLocaleString() : "—"}</td>
-                            <td><strong>{event.service_key}</strong><span>{event.model_role ?? "unknown"}</span></td>
-                            <td>{event.surface ?? "—"}<span>{event.profile ?? "—"}</span></td>
-                            <td><span className={`gr-http-status ${n(event.status_code) < 400 ? "is-ok" : "is-error"}`}>{event.status_code ?? "—"}</span></td>
-                            <td>{fmt(event.latency_ms)} ms</td>
-                            <td>
-                              {event.trace_id ? (
-                                <button
-                                  className="gr-trace-link"
-                                  disabled={!event.trace_matched}
-                                  onClick={() => (window.location.hash = `#/traces?trace=${event.trace_id}`)}
-                                >
-                                  {event.trace_matched ? String(event.trace_id).slice(0, 8) : "unmatched"}
-                                </button>
-                              ) : "missing"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : <div className="gr-control-empty">No verified Gateway events in the current window.</div>}
-              </section>
-            </div>
+              ) : <div className="gr-control-empty">No verified Gateway events in the current window.</div>}
+            </section>
 
             <details className="gr-control-disclosure">
               <summary>

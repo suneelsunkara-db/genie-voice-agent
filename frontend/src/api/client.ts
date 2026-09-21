@@ -609,8 +609,31 @@ export interface GatewayInsights {
   speech_endpoints?: Array<{
     endpoint: string;
     model_role: string;
+    model_name: string;
     requests: number;
     errors: number;
+    trace_count: number;
+    surfaces: string[];
+    profiles: string[];
+    avg_latency_ms?: number | null;
+    p95_latency_ms?: number | null;
+    avg_ttfb_ms?: number | null;
+    p95_ttfb_ms?: number | null;
+    avg_generation_ms?: number | null;
+    provenance_status: "verified" | "partial" | "unavailable";
+    telemetry_source: "voice_trace_model_calls";
+    endpoint_task?: string | null;
+    ai_gateway_configured?: boolean;
+    inference_table?: {
+      enabled?: boolean;
+      catalog_name?: string;
+      schema_name?: string;
+      table_name_prefix?: string;
+    };
+    gateway_telemetry: boolean;
+    supported_gateway_features?: string[];
+    unsupported_gateway_features?: string[];
+    gateway_configuration_error?: string;
   }>;
   model_inventory?: Array<{
     id: string;

@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -63,3 +64,81 @@ def test_page_inventory_covers_every_routed_and_external_surface() -> None:
         "realtime-test",
         "mcp",
     } <= surfaces
+
+
+def test_speech_endpoint_metrics_are_trace_derived_and_gateway_free() -> None:
+    realtime = SimpleNamespace(stt_endpoint="qwen-asr", tts_endpoint="voxcpm2")
+    conversation_traces = {
+        "trace-1": {
+            "trace_id": "trace-1",
+            "surface": "card",
+            "profile": "card",
+            "server_ttfb_ms": 180.0,
+            "server_gen_ms": 900.0,
+            "model_calls": [
+                {
+                    "endpoint": "qwen-asr",
+                    "model_role": "stt",
+                    "transport": "model_serving",
+                    "duration_ms": 320.0,
+                    "status": "ok",
+                },
+                {
+                    "endpoint": "voxcpm2",
+                    "model_role": "tts",
+                    "transport": "model_serving",
+                    "duration_ms": 1100.0,
+                    "status": "ok",
+                },
+            ],
+        },
+        "trace-2": {
+            "trace_id": "trace-2",
+            "surface": "knowledge",
+            "profile": "knowledge",
+            "server_ttfb_ms": 220.0,
+            "server_gen_ms": 1300.0,
+            "model_calls": [
+                {
+                    "endpoint": "qwen-asr",
+                    "model_role": "stt",
+                    "transport": "model_serving",
+                    "duration_ms": 480.0,
+                    "status": "ok",
+                },
+                {
+                    "endpoint": "voxcpm2",
+                    "model_role": "tts",
+                    "transport": "model_serving",
+                    "duration_ms": 1500.0,
+                    "status": "error",
+                },
+            ],
+        },
+    }
+
+    insights = traces._speech_endpoint_insights(conversation_traces, realtime)
+    by_role = {item["model_role"]: item for item in insights}
+    assert by_role["stt"] == {
+        "endpoint": "qwen-asr",
+        "model_role": "stt",
+        "requests": 2,
+        "errors": 0,
+        "model_name": "Qwen/Qwen3-ASR-1.7B",
+        "trace_count": 2,
+        "surfaces": ["card", "knowledge"],
+        "profiles": ["card", "knowledge"],
+        "avg_latency_ms": 400.0,
+        "p95_latency_ms": 480.0,
+        "avg_ttfb_ms": None,
+        "p95_ttfb_ms": None,
+        "avg_generation_ms": None,
+        "provenance_status": "verified",
+        "telemetry_source": "voice_trace_model_calls",
+        "gateway_telemetry": False,
+    }
+    assert by_role["tts"]["model_name"] == "openbmb/VoxCPM2"
+    assert by_role["tts"]["errors"] == 1
+    assert by_role["tts"]["avg_ttfb_ms"] == 200.0
+    assert by_role["tts"]["p95_ttfb_ms"] == 220.0
+    assert by_role["tts"]["avg_generation_ms"] == 1100.0

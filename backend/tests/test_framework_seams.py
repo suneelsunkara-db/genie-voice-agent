@@ -462,6 +462,10 @@ def test_deploy_orders_gateway_before_gpu_and_grants_viewers():
     assert "infra/apps/ensure_deploy_ip.py" in sh
     # AI Gateway provision/probe must run before the (billable) GPU model job.
     assert sh.index("provision_ai_gateway.py") < sh.index("submit_realtime_voice_jobs.py")
+    # Endpoint AI Gateway is reconciled after the voice endpoints exist.
+    assert sh.index("submit_realtime_voice_jobs.py") < sh.index(
+        "provision_voice_endpoint_gateway.py"
+    )
     # Viewer Genie CAN_RUN is granted from the installer, not left manual.
     assert "--run-users" in sh
     # Group viewers receive both App CAN_USE and Genie CAN_RUN.

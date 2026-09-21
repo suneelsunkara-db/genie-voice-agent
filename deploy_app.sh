@@ -10,7 +10,8 @@
 #   1. validate the committed deployment config, build the frontend, and run tests
 #   2. bootstrap UC/Lakebase, land demo data, run the orchestration job, and
 #      reconcile both Genie spaces
-#   3. register/deploy/smoke the Qwen3-ASR and VoxCPM2 ResponsesAgent endpoints
+#   3. register/deploy Qwen3-ASR and VoxCPM2, reconcile their supported AI
+#      Gateway configuration, and smoke their ResponsesAgent contracts
 #   4. push optional vendor API keys into a Databricks secret scope
 #   5. reconcile app-owned Gateway model services (routing, rate limits, inference
 #      tables), attach app resources (warehouse + secrets + STT/TTS serving
@@ -384,6 +385,11 @@ elif [[ "$_ALL_MODELS_READY" -eq 1 ]]; then
 else
   die "Realtime model deployment was disabled but one or more configured endpoints are not READY."
 fi
+
+log "reconciling AI Gateway inference tables for voice agent endpoints"
+DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
+  "$PYBIN" infra/apps/provision_voice_endpoint_gateway.py \
+    --config "$DEPLOY_CONFIG"
 
 log "smoke-testing realtime voice model contracts"
 PYTHONPATH=scripts/ml_asr "$PYBIN" scripts/ml_asr/smoke_realtime_voice_agents.py \

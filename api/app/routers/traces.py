@@ -206,6 +206,134 @@ def _page_coverage() -> list[dict]:
     ]
 
 
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = round((len(ordered) - 1) * percentile)
+    return round(ordered[index], 1)
+
+
+def _speech_endpoint_insights(
+    conversation_traces: dict[str, dict], realtime
+) -> list[dict]:
+    """Aggregate custom Model Serving calls without claiming Gateway telemetry."""
+    stats: dict[tuple[str, str], dict] = {}
+    for trace_id, row in conversation_traces.items():
+        for call in row.get("model_calls") or []:
+            if str(call.get("transport") or "") != "model_serving":
+                continue
+            endpoint = str(call.get("endpoint") or "")
+            role = str(call.get("model_role") or "unknown")
+            key = (endpoint, role)
+            stat = stats.setdefault(
+                key,
+                {
+                    "endpoint": endpoint,
+                    "model_role": role,
+                    "requests": 0,
+                    "errors": 0,
+                    "_durations": [],
+                    "_trace_ids": set(),
+                    "_surfaces": set(),
+                    "_profiles": set(),
+                    "_ttfb": [],
+                    "_generation": [],
+                },
+            )
+            stat["requests"] += 1
+            if call.get("status") != "ok":
+                stat["errors"] += 1
+            duration = call.get("duration_ms")
+            if isinstance(duration, (int, float)):
+                stat["_durations"].append(float(duration))
+            first_call_for_trace = trace_id not in stat["_trace_ids"]
+            stat["_trace_ids"].add(trace_id)
+            if row.get("surface"):
+                stat["_surfaces"].add(str(row["surface"]))
+            if row.get("profile"):
+                stat["_profiles"].add(str(row["profile"]))
+            if role == "tts" and first_call_for_trace:
+                ttfb = row.get("server_ttfb_ms") or row.get("tts_first_ms")
+                generation = row.get("server_gen_ms")
+                if isinstance(ttfb, (int, float)):
+                    stat["_ttfb"].append(float(ttfb))
+                if isinstance(generation, (int, float)):
+                    stat["_generation"].append(float(generation))
+
+    output: list[dict] = []
+    for (endpoint, role), stat in stats.items():
+        model_name = (
+            "Qwen/Qwen3-ASR-1.7B"
+            if endpoint == realtime.stt_endpoint and role == "stt"
+            else "openbmb/VoxCPM2"
+            if endpoint == realtime.tts_endpoint and role == "tts"
+            else "Unclassified Model Serving call"
+        )
+        durations = stat.pop("_durations")
+        trace_ids = stat.pop("_trace_ids")
+        surfaces = stat.pop("_surfaces")
+        profiles = stat.pop("_profiles")
+        ttfb = stat.pop("_ttfb")
+        generation = stat.pop("_generation")
+        output.append(
+            {
+                **stat,
+                "model_name": model_name,
+                "trace_count": len(trace_ids),
+                "surfaces": sorted(surfaces),
+                "profiles": sorted(profiles),
+                "avg_latency_ms": round(sum(durations) / len(durations), 1)
+                if durations
+                else None,
+                "p95_latency_ms": _percentile(durations, 0.95),
+                "avg_ttfb_ms": round(sum(ttfb) / len(ttfb), 1) if ttfb else None,
+                "p95_ttfb_ms": _percentile(ttfb, 0.95),
+                "avg_generation_ms": round(sum(generation) / len(generation), 1)
+                if generation
+                else None,
+                "provenance_status": "verified" if trace_ids else "unavailable",
+                "telemetry_source": "voice_trace_model_calls",
+                "gateway_telemetry": False,
+            }
+        )
+    return sorted(output, key=lambda item: (item["model_role"], item["endpoint"]))
+
+
+def _attach_voice_gateway_config(client, speech: list[dict]) -> None:
+    """Attach endpoint configuration without conflating it with Gateway request logs."""
+    for item in speech:
+        try:
+            endpoint = client.api_client.do(
+                "GET", f"/api/2.0/serving-endpoints/{item['endpoint']}"
+            )
+            gateway = endpoint.get("ai_gateway") or {}
+            inference = gateway.get("inference_table_config") or {}
+            item.update(
+                {
+                    "endpoint_task": endpoint.get("task"),
+                    "ai_gateway_configured": bool(gateway),
+                    "inference_table": inference,
+                    "gateway_telemetry": bool(inference.get("enabled")),
+                    "supported_gateway_features": ["inference_tables"],
+                    "unsupported_gateway_features": [
+                        "rate_limits",
+                        "usage_tracking",
+                        "fallback",
+                        "chat_guardrails",
+                    ],
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            item.update(
+                {
+                    "ai_gateway_configured": False,
+                    "gateway_configuration_error": str(exc),
+                    "supported_gateway_features": ["inference_tables"],
+                }
+            )
+
+
 def _model_inventory(settings, realtime, services: list[dict], speech: list[dict]) -> list[dict]:
     gateway_models = [
         {
@@ -346,22 +474,14 @@ def gateway_insights() -> dict:
         for row in trace_rows
         if row.get("traffic_class") == "conversation" and row.get("trace_id")
     }
-    speech_counts: dict[tuple[str, str], dict] = {}
+    speech = _speech_endpoint_insights(conversation_traces, realtime)
+    _attach_voice_gateway_config(client, speech)
     expected_gateway_calls: dict[str, int] = {}
     for row in conversation_traces.values():
         for call in row.get("model_calls") or []:
             endpoint = str(call.get("endpoint") or "")
-            role = str(call.get("model_role") or "unknown")
             transport = str(call.get("transport") or "")
-            if transport == "model_serving":
-                key = (endpoint, role)
-                stat = speech_counts.setdefault(
-                    key, {"endpoint": endpoint, "model_role": role, "requests": 0, "errors": 0}
-                )
-                stat["requests"] += 1
-                if call.get("status") != "ok":
-                    stat["errors"] += 1
-            elif transport == "unity_ai_gateway":
+            if transport == "unity_ai_gateway":
                 expected_gateway_calls[endpoint] = expected_gateway_calls.get(endpoint, 0) + 1
     services: list[dict] = []
     recent_events: list[dict] = []
@@ -549,7 +669,6 @@ def gateway_insights() -> dict:
         if statuses and all(status == "unavailable" for status in statuses)
         else "partial"
     )
-    speech = sorted(speech_counts.values(), key=lambda item: (item["model_role"], item["endpoint"]))
     return {
         "enabled": True,
         "services": services,

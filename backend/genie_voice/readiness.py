@@ -274,8 +274,19 @@ def _readiness_objects(settings: Settings, check_id: str) -> list[str]:
             if endpoint:
                 objects.append(f"Serving endpoint: {endpoint}")
         return objects
-    if check_id in {"model_endpoints", "voice_contract"}:
+    if check_id in {"model_endpoints", "voice_endpoint_gateway", "voice_contract"}:
         objects = [f"Serving endpoint: {endpoint}" for endpoint in endpoints]
+        if check_id == "voice_endpoint_gateway":
+            objects.extend(
+                f"AI Gateway inference table: {catalog}.{schema}.{prefix}_payload"
+                for prefix in (
+                    (
+                        ((_deployment_config().get("realtime_voice") or {}).get("serving") or {})
+                        .get("ai_gateway", {})
+                        .get("table_prefixes", {})
+                    ).values()
+                )
+            )
         objects.append(f"App resource grants: {app_sp} → CAN_QUERY")
         return objects
     if check_id in {"genie_spaces", "viewer_genie"}:
@@ -708,6 +719,86 @@ def check_model_endpoints(settings: Settings, obo_token: str | None) -> Check:
         id="model_endpoints", title="Voice model endpoints", category=CATEGORY_SCRIPTED,
         status=OK, detail="Qwen3-ASR + VoxCPM2 READY",
         explanation="Both GPU serving endpoints exist and Databricks reports them ready.",
+    )
+
+
+def check_voice_endpoint_gateway(settings: Settings, obo_token: str | None) -> Check:
+    """Verify AI Gateway inference tables on the ResponsesAgent endpoints."""
+    raw = _deployment_config()
+    voice = raw.get("realtime_voice") or {}
+    gateway = ((voice.get("serving") or {}).get("ai_gateway") or {})
+    if not gateway.get("enabled", False):
+        return Check(
+            id="voice_endpoint_gateway",
+            title="Voice endpoint AI Gateway",
+            category=CATEGORY_SCRIPTED,
+            status=FAIL,
+            detail="AI Gateway is disabled for the voice endpoints.",
+            fix=Fix(kind="cli", label="Enable voice AI Gateway and redeploy"),
+        )
+
+    prefixes = gateway.get("table_prefixes") or {}
+    catalog = settings.databricks.catalog
+    schema = settings.databricks.schema_name
+    from genie_voice.databricks.client import get_workspace_client
+
+    client = get_workspace_client(settings)
+    failures: list[str] = []
+    verified: list[str] = []
+    for candidate_key, candidate in _voice_candidates():
+        candidate_id = candidate_key.split(":", 1)[1]
+        endpoint = str(candidate.get("endpoint") or "")
+        prefix = str(prefixes.get(candidate_id) or "")
+        if not endpoint or not prefix:
+            failures.append(f"{candidate_id}: endpoint or table prefix missing")
+            continue
+        try:
+            payload = client.api_client.do(
+                "GET", f"/api/2.0/serving-endpoints/{endpoint}"
+            )
+            if str(payload.get("task") or "") != "agent/v1/responses":
+                raise RuntimeError("endpoint is not an MLflow ResponsesAgent")
+            actual = ((payload.get("ai_gateway") or {}).get("inference_table_config") or {})
+            expected = {
+                "enabled": True,
+                "catalog_name": catalog,
+                "schema_name": schema,
+                "table_name_prefix": prefix,
+            }
+            drift = {
+                key: (actual.get(key), value)
+                for key, value in expected.items()
+                if actual.get(key) != value
+            }
+            if drift:
+                raise RuntimeError(f"inference-table configuration drift: {drift}")
+            verified.append(f"{endpoint} → {catalog}.{schema}.{prefix}_payload")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{endpoint}: {_error_text(exc)}")
+
+    if failures:
+        return Check(
+            id="voice_endpoint_gateway",
+            title="Voice endpoint AI Gateway",
+            category=CATEGORY_SCRIPTED,
+            status=FAIL,
+            detail="Voice endpoint AI Gateway inference tables are missing or drifted.",
+            technical_detail="; ".join(failures),
+            explanation=(
+                "These endpoints use task=agent/v1/responses. Databricks currently "
+                "supports AI Gateway inference tables, but not rate limits, usage "
+                "tracking, fallback, or chat guardrails, for agent endpoints."
+            ),
+            resolution_steps=["Re-run deploy_app.sh to reconcile the endpoint configuration."],
+            fix=Fix(kind="cli", label="Reconcile voice endpoint AI Gateway"),
+        )
+    return Check(
+        id="voice_endpoint_gateway",
+        title="Voice endpoint AI Gateway",
+        category=CATEGORY_SCRIPTED,
+        status=OK,
+        detail=f"{len(verified)} voice endpoint inference table(s) enabled.",
+        explanation="; ".join(verified),
     )
 
 
@@ -1462,6 +1553,7 @@ _CHECKS: list[Callable[[Settings, str | None], Check]] = [
     check_pipeline_job,
     check_model_registration,
     check_model_endpoints,
+    check_voice_endpoint_gateway,
     check_genie_spaces,
     check_lakebase_cdf,
     check_reference_cache,

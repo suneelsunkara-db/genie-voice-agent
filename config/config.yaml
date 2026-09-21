@@ -367,6 +367,14 @@ realtime_voice:
     workload_type: GPU_MEDIUM
     workload_size: Small
     scale_to_zero: false
+    # These models are MLflow ResponsesAgent endpoints. Databricks currently
+    # supports AI Gateway inference tables—but not rate limits, usage tracking,
+    # fallback, or chat guardrails—for agent endpoints.
+    ai_gateway:
+      enabled: true
+      table_prefixes:
+        qwen3_asr_1_7b_multilingual: voice_qwen3_asr
+        voxcpm2_multilingual: voice_voxcpm2
     # Ephemeral scratch on the serverless registration job for HF snapshots
     # before they are uploaded into the UC model (not a persistent Volume).
     package_dir: /tmp/realtime_voice_packages
