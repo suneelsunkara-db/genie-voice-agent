@@ -156,6 +156,13 @@ def _query_fm_chat(settings: Settings, messages: list[dict[str, str]]) -> str:
             endpoint=settings.enrichment.model_endpoint,
             inputs=inputs,
             timeout_s=45.0,
+            request_tags={
+                "traffic_class": "enrichment",
+                "surface": "assist_api",
+                "profile": "billing",
+                "capability": "conversation_enrichment",
+                "model_role": "enrichment",
+            },
         )
 
     try:

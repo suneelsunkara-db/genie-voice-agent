@@ -39,7 +39,7 @@ cd "$ROOT"
 
 # ---- config (runtime and jobs use this exact committed file) ----------------
 APP_NAME="${APP_NAME:-genie-voice-agent}"
-DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-}"            # ~/.databrickscfg profile
+DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-${DATABRICKS_CONFIG_PROFILE:-}}" # ~/.databrickscfg profile
 SECRET_SCOPE="${SECRET_SCOPE:-genie-voice}"           # scope holding vendor keys
 SQL_WAREHOUSE_ID_OVERRIDE="${SQL_WAREHOUSE_ID:-}"     # must match config/config.yaml
 SQL_WAREHOUSE_ID=""

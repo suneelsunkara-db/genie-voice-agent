@@ -7,6 +7,8 @@ calls (arguments + results) → TTS.
 """
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
 
 from genie_voice.config import get_settings
@@ -83,21 +85,10 @@ def guardrail_rollup(limit: int = 200) -> dict:
     limit = max(1, min(int(limit), 500))
     rows = serving().list_voice_traces(limit=limit)
     standalone = serving().list_guard_events(limit=limit)
-    evidence_rows = [
-        *rows,
-        *[
-            {
-                "trace_id": event.get("trace_id"),
-                "session_id": event.get("session_id"),
-                "turn_id": event.get("turn_id"),
-                "language": event.get("language"),
-                "created_at": event.get("occurred_at"),
-                "guard_roster": [event],
-                "standalone_context": event.get("context"),
-            }
-            for event in standalone
-        ],
+    conversation_rows = [
+        row for row in rows if row.get("traffic_class") == "conversation"
     ]
+    legacy_rows = [row for row in rows if not row.get("traffic_class")]
 
     totals: dict[str, int] = {}
     guards: dict[str, dict] = {}
@@ -106,9 +97,9 @@ def guardrail_rollup(limit: int = 200) -> dict:
     turns_with_roster = 0
     turn_checks = 0
 
-    for row in evidence_rows:
+    for row in conversation_rows:
         roster = [e for e in (row.get("guard_roster") or []) if e.get("surface", "guardrail") == "guardrail"]
-        if roster and not row.get("standalone_context"):
+        if roster:
             turns_with_roster += 1
             turn_checks += len(roster)
         language = str(row.get("language") or "unknown")
@@ -151,14 +142,16 @@ def guardrail_rollup(limit: int = 200) -> dict:
                         "phase": entry.get("phase"),
                         "resource": entry.get("resource"),
                         "reason": entry.get("reason"),
-                        "context": row.get("standalone_context") or "turn",
+                        "context": "turn",
                     }
                 )
 
     checks = sum(totals.values())
     return {
-        "turns": len(rows),
+        "turns": len(conversation_rows),
+        "legacy_unclassified_turns": len(legacy_rows),
         "standalone_events": len(standalone),
+        "standalone_recent": standalone[:50],
         "turns_with_roster": turns_with_roster,
         "checks": checks,
         "checks_per_turn": (
@@ -182,6 +175,124 @@ def _statement_rows(result) -> list[dict]:
     ]
     data = result.result.data_array if result.result and result.result.data_array else []
     return [dict(zip(columns, row, strict=False)) for row in data]
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed if item]
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+def _page_coverage() -> list[dict]:
+    return [
+        {"surface": "home", "profile": "concierge", "traffic_class": "conversation", "models": ["stt", "navigation", "realtime_llm", "tts"], "managed_services": []},
+        {"surface": "telco", "profile": "billing", "traffic_class": "conversation", "models": ["stt", "navigation", "realtime_llm", "tts"], "managed_services": ["genie_space"]},
+        {"surface": "card", "profile": "card", "traffic_class": "conversation", "models": ["stt", "navigation", "realtime_llm", "conversion", "tts"], "managed_services": ["genie_space", "genie_agent_mode"]},
+        {"surface": "knowledge", "profile": "knowledge", "traffic_class": "conversation", "models": ["stt", "navigation", "realtime_llm", "conversion", "tts"], "managed_services": ["genie_one"]},
+        {"surface": "setup", "profile": None, "traffic_class": "readiness_probe", "models": ["stt", "tts", "policy_probe"], "managed_services": ["genie_configuration_checks"]},
+        {"surface": "voice-benchmarks", "profile": None, "traffic_class": "read_only", "models": [], "managed_services": ["benchmark_delta"]},
+        {"surface": "asr-benchmark", "profile": None, "traffic_class": "read_only", "models": [], "managed_services": ["benchmark_artifacts"]},
+        {"surface": "traces", "profile": None, "traffic_class": "read_only", "models": [], "managed_services": ["voice_traces"]},
+        {"surface": "guardrails", "profile": None, "traffic_class": "read_only", "models": [], "managed_services": ["voice_traces", "gateway_inference_tables"]},
+        {"surface": "realtime-test", "profile": "selected", "traffic_class": "diagnostic", "models": ["stt", "navigation", "realtime_llm", "tts"], "managed_services": []},
+        {"surface": "mcp", "profile": "selected", "traffic_class": "mcp", "models": ["stt", "navigation", "realtime_llm", "conversion", "tts"], "managed_services": ["profile_dependent"]},
+    ]
+
+
+def _model_inventory(settings, realtime, services: list[dict], speech: list[dict]) -> list[dict]:
+    gateway_models = [
+        {
+            "id": item["key"],
+            "name": item["destination"],
+            "plane": "unity_ai_gateway",
+            "roles": item["roles"],
+            "resource": item["service"],
+            "telemetry": "gateway_inference_table",
+        }
+        for item in services
+    ]
+    return [
+        *gateway_models,
+        {
+            "id": "stt",
+            "name": "Qwen/Qwen3-ASR-1.7B",
+            "plane": "model_serving",
+            "roles": ["stt"],
+            "resource": realtime.stt_endpoint,
+            "telemetry": "voice_trace_model_calls",
+        },
+        {
+            "id": "tts",
+            "name": "openbmb/VoxCPM2",
+            "plane": "model_serving",
+            "roles": ["tts"],
+            "resource": realtime.tts_endpoint,
+            "telemetry": "voice_trace_model_calls",
+        },
+        {
+            "id": "gateway_evaluator",
+            "name": "system.ai.gpt-5-2",
+            "plane": "gateway_policy_evaluator",
+            "roles": ["unsafe_content", "jailbreak", "hallucination_observer"],
+            "resource": "attached_service_policies",
+            "telemetry": "configuration_only",
+        },
+        {
+            "id": "silero_vad",
+            "name": "Silero VAD",
+            "plane": "local_onnx",
+            "roles": ["speech_detection"],
+            "resource": "realtime_api/models",
+            "telemetry": "local_runtime_only",
+        },
+        {
+            "id": "smart_turn_v3",
+            "name": "Smart Turn v3",
+            "plane": "local_onnx",
+            "roles": ["turn_completeness"],
+            "resource": "realtime_api/models",
+            "telemetry": "local_runtime_only",
+        },
+        {
+            "id": "genie_space",
+            "name": "Genie Space Conversation API",
+            "plane": "managed_genie",
+            "roles": ["telco_analytics", "card_analytics"],
+            "resource": settings.databricks.genie_space_name,
+            "telemetry": "tool_spans",
+        },
+        {
+            "id": "genie_agent_mode",
+            "name": "Genie Agent Mode",
+            "plane": "managed_genie",
+            "roles": ["card_deep_dive"],
+            "resource": settings.card_issuer.genie_space_name,
+            "telemetry": "tool_spans",
+        },
+        {
+            "id": "genie_one",
+            "name": "Genie One MCP",
+            "plane": "managed_genie",
+            "roles": ["workspace_knowledge"],
+            "resource": "/api/2.0/mcp/genie",
+            "telemetry": "tool_spans",
+        },
+        {
+            "id": "batch_qwen",
+            "name": settings.enrichment.batch_model_endpoint,
+            "plane": "sql_ai_query",
+            "roles": ["batch_gold_insights"],
+            "resource": "pipeline_job",
+            "telemetry": "warehouse_history",
+        },
+    ]
 
 
 @router.get("/gateway")
@@ -213,8 +324,47 @@ def gateway_insights() -> dict:
 
     from genie_voice.databricks.client import get_workspace_client
 
+    from realtime_api.config import RealtimeSettings
+
     client = get_workspace_client(settings)
+    realtime = RealtimeSettings.resolve()
+    try:
+        me = client.current_user.me()
+        requesters = sorted({
+            str(value)
+            for value in (getattr(me, "id", None), getattr(me, "user_name", None))
+            if value
+        })
+    except Exception:  # noqa: BLE001
+        requesters = []
+    requester_sql = ", ".join(
+        f"'{value.replace(chr(39), chr(39) * 2)}'" for value in requesters
+    ) or "''"
+    trace_rows = serving().list_voice_traces(limit=5000)
+    conversation_traces = {
+        str(row.get("trace_id")): row
+        for row in trace_rows
+        if row.get("traffic_class") == "conversation" and row.get("trace_id")
+    }
+    speech_counts: dict[tuple[str, str], dict] = {}
+    expected_gateway_calls: dict[str, int] = {}
+    for row in conversation_traces.values():
+        for call in row.get("model_calls") or []:
+            endpoint = str(call.get("endpoint") or "")
+            role = str(call.get("model_role") or "unknown")
+            transport = str(call.get("transport") or "")
+            if transport == "model_serving":
+                key = (endpoint, role)
+                stat = speech_counts.setdefault(
+                    key, {"endpoint": endpoint, "model_role": role, "requests": 0, "errors": 0}
+                )
+                stat["requests"] += 1
+                if call.get("status") != "ok":
+                    stat["errors"] += 1
+            elif transport == "unity_ai_gateway":
+                expected_gateway_calls[endpoint] = expected_gateway_calls.get(endpoint, 0) + 1
     services: list[dict] = []
+    recent_events: list[dict] = []
     for key, configured in gateway.model_services.items():
         bundle_id = manifest.assignments.model_services[key]
         gateway_policy_ids = manifest.bundles[bundle_id].policies
@@ -234,6 +384,8 @@ def gateway_insights() -> dict:
             "rate_limits": [],
             "inference_table": None,
             "traffic_7d": None,
+            "traffic_all_7d": None,
+            "provenance": {"status": "unavailable", "reason": "inference table unavailable"},
         }
         try:
             model_service = client.api_client.do(
@@ -248,6 +400,7 @@ def gateway_insights() -> dict:
                 key, config.get("service_policies") or []
             )
             item["required_policies"] = policies
+            item["attached_policies"] = config.get("service_policies") or []
             item["policy_deployment_state"] = (
                 "configured" if fully_configured else "external_action_required"
             )
@@ -262,27 +415,159 @@ def gateway_insights() -> dict:
                 result = client.statement_execution.execute_statement(
                     warehouse_id=settings.databricks.sql_warehouse_id,
                     statement=f"""
+                        WITH base AS (
+                          SELECT *,
+                            CAST(coalesce(
+                              get_json_object(response, '$.usage.prompt_tokens'),
+                              get_json_object(response, '$.usage.input_tokens'), '0'
+                            ) AS BIGINT) AS input_tokens,
+                            CAST(coalesce(
+                              get_json_object(response, '$.usage.completion_tokens'),
+                              get_json_object(response, '$.usage.output_tokens'), '0'
+                            ) AS BIGINT) AS output_tokens
+                          FROM `{table_name.replace('.', '`.`')}`
+                          WHERE event_time >= current_timestamp() - INTERVAL 7 DAYS
+                        ),
+                        conversation AS (
+                          SELECT * FROM base
+                          WHERE request_tags['app'] = 'genie-voice-agent'
+                            AND request_tags['traffic_class'] = 'conversation'
+                            AND requester IN ({requester_sql})
+                        ),
+                        per_minute AS (
+                          SELECT date_trunc('minute', event_time) AS minute,
+                            count(*) AS rpm,
+                            sum(input_tokens + output_tokens) AS tpm
+                          FROM conversation GROUP BY 1
+                        )
                         SELECT
+                          (SELECT count(*) FROM base) AS all_requests,
+                          (SELECT count_if(status_code >= 400) FROM base) AS all_errors,
+                          (SELECT count_if(request_tags['traffic_class'] IS NULL) FROM base)
+                            AS unclassified_requests,
                           count(*) AS requests,
                           count_if(status_code >= 400) AS errors,
+                          count_if(status_code = 429) AS rate_limited,
+                          sum(input_tokens) AS input_tokens,
+                          sum(output_tokens) AS output_tokens,
+                          sum(input_tokens + output_tokens) AS total_tokens,
+                          round(avg(input_tokens), 1) AS avg_input_tokens,
+                          round(avg(output_tokens), 1) AS avg_output_tokens,
                           round(avg(latency_ms), 1) AS avg_latency_ms,
                           round(percentile_approx(latency_ms, 0.95), 1) AS p95_latency_ms,
+                          round(avg(time_to_first_byte_ms), 1) AS avg_ttft_ms,
+                          round(percentile_approx(time_to_first_byte_ms, 0.95), 1)
+                            AS p95_ttft_ms,
+                          coalesce((SELECT max(rpm) FROM per_minute), 0) AS peak_rpm,
+                          coalesce((SELECT max(tpm) FROM per_minute), 0) AS peak_tpm,
+                          count_if(status_code = 200 AND
+                            get_json_object(response, '$.databricks_service_policy') IS NOT NULL)
+                            AS policy_envelopes,
+                          count_if(
+                            request_tags['trace_id'] IS NULL OR
+                            request_tags['session_id'] IS NULL OR
+                            request_tags['turn_id'] IS NULL OR
+                            request_tags['profile'] IS NULL OR
+                            request_tags['surface'] IS NULL OR
+                            request_tags['model_role'] IS NULL
+                          ) AS incomplete_provenance,
+                          collect_set(request_tags['trace_id']) AS trace_ids,
                           max(event_time) AS last_event_time
-                        FROM `{table_name.replace('.', '`.`')}`
-                        WHERE event_time >= current_timestamp() - INTERVAL 7 DAYS
+                        FROM conversation
                     """,
                     wait_timeout="30s",
                 )
                 rows = _statement_rows(result)
-                item["traffic_7d"] = rows[0] if rows else None
+                metrics = rows[0] if rows else {}
+                trace_ids = set(_string_list(metrics.pop("trace_ids", [])))
+                matched = trace_ids & set(conversation_traces)
+                unmatched = trace_ids - set(conversation_traces)
+                requests = int(metrics.get("requests") or 0)
+                expected = expected_gateway_calls.get(str(configured.service), 0)
+                incomplete = int(metrics.get("incomplete_provenance") or 0)
+                status = (
+                    "verified"
+                    if requests > 0 and not incomplete and not unmatched and requests >= expected
+                    else "partial"
+                    if requests > 0 or expected > 0
+                    else "unavailable"
+                )
+                item["traffic_all_7d"] = {
+                    "requests": metrics.pop("all_requests", 0),
+                    "errors": metrics.pop("all_errors", 0),
+                    "unclassified_requests": metrics.pop("unclassified_requests", 0),
+                }
+                item["traffic_7d"] = metrics
+                item["provenance"] = {
+                    "status": status,
+                    "requesters": requesters,
+                    "expected_trace_calls": expected,
+                    "tagged_requests": requests,
+                    "matched_trace_ids": len(matched),
+                    "unmatched_trace_ids": sorted(unmatched),
+                    "incomplete_requests": incomplete,
+                    "filters": {
+                        "app": "genie-voice-agent",
+                        "traffic_class": "conversation",
+                        "requesters": requesters,
+                    },
+                }
+                recent = client.statement_execution.execute_statement(
+                    warehouse_id=settings.databricks.sql_warehouse_id,
+                    statement=f"""
+                        SELECT event_time, request_id, invocation_id, status_code,
+                          latency_ms, time_to_first_byte_ms, destination_model,
+                          request_tags['trace_id'] AS trace_id,
+                          request_tags['session_id'] AS session_id,
+                          request_tags['turn_id'] AS turn_id,
+                          request_tags['profile'] AS profile,
+                          request_tags['surface'] AS surface,
+                          request_tags['model_role'] AS model_role
+                        FROM `{table_name.replace('.', '`.`')}`
+                        WHERE event_time >= current_timestamp() - INTERVAL 7 DAYS
+                          AND request_tags['app'] = 'genie-voice-agent'
+                          AND request_tags['traffic_class'] = 'conversation'
+                          AND requester IN ({requester_sql})
+                        ORDER BY event_time DESC LIMIT 25
+                    """,
+                    wait_timeout="30s",
+                )
+                for event in _statement_rows(recent):
+                    event["service_key"] = key
+                    event["trace_matched"] = str(event.get("trace_id") or "") in conversation_traces
+                    recent_events.append(event)
             except Exception as exc:  # noqa: BLE001
                 # The table is created only after first traffic and logs can lag.
                 item["traffic_note"] = str(exc)[:300]
         services.append(item)
 
+    statuses = [str(item.get("provenance", {}).get("status")) for item in services]
+    overall_status = (
+        "verified"
+        if statuses and all(status == "verified" for status in statuses)
+        else "unavailable"
+        if statuses and all(status == "unavailable" for status in statuses)
+        else "partial"
+    )
+    speech = sorted(speech_counts.values(), key=lambda item: (item["model_role"], item["endpoint"]))
     return {
         "enabled": True,
         "services": services,
+        "provenance": {
+            "status": overall_status,
+            "window": "7d",
+            "conversation_trace_count": len(conversation_traces),
+            "legacy_unclassified_trace_count": sum(
+                1 for row in trace_rows if not row.get("traffic_class")
+            ),
+            "requesters": requesters,
+        },
+        "recent_events": sorted(
+            recent_events, key=lambda event: str(event.get("event_time") or ""), reverse=True
+        )[:50],
+        "speech_endpoints": speech,
+        "model_inventory": _model_inventory(settings, realtime, services, speech),
+        "page_coverage": _page_coverage(),
         "policy_manifest": {
             "version": manifest.version,
             "catalog": manifest.catalog(),

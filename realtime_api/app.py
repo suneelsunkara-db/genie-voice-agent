@@ -64,7 +64,17 @@ def warm_serving(
             return
         started = time.perf_counter()
         try:
-            results = warmup()
+            from genie_voice.databricks.ai_gateway import inference_context
+
+            with inference_context(
+                {
+                    "traffic_class": "startup_warmup",
+                    "surface": "startup",
+                    "profile": "none",
+                    "capability": "warmup",
+                }
+            ):
+                results = warmup()
         except Exception as exc:  # noqa: BLE001
             logger.warning("realtime warmup failed: %s", exc)
             return

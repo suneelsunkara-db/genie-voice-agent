@@ -24,6 +24,7 @@ from .guardrails.boundaries import (
 )
 from .guardrails import report
 from .tool_registry import ToolContext, run_tool, tools_spec
+from genie_voice.databricks.ai_gateway import inference_context
 
 if TYPE_CHECKING:
     from .tracing import TurnTrace
@@ -182,7 +183,9 @@ class _SdkDeployClient:
         self._w = WorkspaceClient(profile=profile or None)
         self._host = self._w.config.host.rstrip("/")
 
-    def predict(self, *, endpoint: str, inputs: dict) -> dict:
+    def predict(
+        self, *, endpoint: str, inputs: dict, request_tags: dict[str, Any] | None = None
+    ) -> dict:
         from genie_voice.databricks.ai_gateway import invoke
 
         return invoke(
@@ -191,9 +194,12 @@ class _SdkDeployClient:
             endpoint=endpoint,
             inputs=inputs,
             timeout_s=self._predict_timeout_s,
+            request_tags=request_tags,
         )
 
-    def predict_stream(self, *, endpoint: str, inputs: dict):
+    def predict_stream(
+        self, *, endpoint: str, inputs: dict, request_tags: dict[str, Any] | None = None
+    ):
         from genie_voice.databricks.ai_gateway import invoke_stream
 
         yield from invoke_stream(
@@ -202,6 +208,7 @@ class _SdkDeployClient:
             endpoint=endpoint,
             inputs=inputs,
             timeout_s=self._stream_timeout_s,
+            request_tags=request_tags,
         )
 
 
@@ -302,11 +309,19 @@ class DatabricksServing:
         _timed("tts", lambda: self.synthesize("Hello.", language="en"))
         return results
 
-    def _predict(self, endpoint: str, *, text: str, custom_inputs: dict[str, Any]) -> dict[str, Any]:
-        response = self.client.predict(
-            endpoint=endpoint,
-            inputs={"input": [{"role": "user", "content": text}], "custom_inputs": custom_inputs},
-        )
+    def _predict(
+        self,
+        endpoint: str,
+        *,
+        text: str,
+        custom_inputs: dict[str, Any],
+        model_role: str,
+    ) -> dict[str, Any]:
+        with inference_context({"model_role": model_role}):
+            response = self.client.predict(
+                endpoint=endpoint,
+                inputs={"input": [{"role": "user", "content": text}], "custom_inputs": custom_inputs},
+            )
         return response if isinstance(response, dict) else dict(response)
 
     def transcribe(
@@ -317,6 +332,7 @@ class DatabricksServing:
         response = self._predict(
             self.stt_endpoint,
             text="transcribe",
+            model_role="stt",
             custom_inputs={
                 "audio_b64": base64.b64encode(audio).decode("ascii"),
                 "language": language,
@@ -345,6 +361,7 @@ class DatabricksServing:
         message = self._chat(
             [{"role": "system", "content": system}, {"role": "user", "content": intent}],
             tools=None,
+            model_role="phrase",
         )
         return _message_text(message).strip()
 
@@ -443,6 +460,7 @@ class DatabricksServing:
             },
             temperature=0.0,
             max_tokens=180,
+            model_role="navigation",
         )
         calls = message.get("tool_calls") or []
         if not calls:
@@ -740,7 +758,8 @@ class DatabricksServing:
             inputs["temperature"] = temperature
         target_endpoint = endpoint or self.llm_endpoint
         try:
-            response = self.client.predict(endpoint=target_endpoint, inputs=inputs)
+            with inference_context({"model_role": "conversion"}):
+                response = self.client.predict(endpoint=target_endpoint, inputs=inputs)
         except Exception as exc:  # noqa: BLE001
             _record_gateway_failure(
                 exc,
@@ -788,18 +807,19 @@ class DatabricksServing:
             inputs["temperature"] = temperature
         target_endpoint = endpoint or self.llm_endpoint
         try:
-            for chunk in self.client.predict_stream(
-                endpoint=target_endpoint, inputs=inputs
-            ):
-                if not isinstance(chunk, dict):
-                    continue
-                choices = chunk.get("choices") or []
-                if not choices or not isinstance(choices[0], dict):
-                    continue
-                delta = choices[0].get("delta")
-                piece = delta.get("content") if isinstance(delta, dict) else None
-                if piece:
-                    yield str(piece)
+            with inference_context({"model_role": "conversion"}):
+                for chunk in self.client.predict_stream(
+                    endpoint=target_endpoint, inputs=inputs
+                ):
+                    if not isinstance(chunk, dict):
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices or not isinstance(choices[0], dict):
+                        continue
+                    delta = choices[0].get("delta")
+                    piece = delta.get("content") if isinstance(delta, dict) else None
+                    if piece:
+                        yield str(piece)
         except Exception as exc:  # noqa: BLE001
             _record_gateway_failure(
                 exc,
@@ -819,6 +839,7 @@ class DatabricksServing:
         max_tokens: int | None = None,
         endpoint: str | None = None,
         trace: "TurnTrace | None" = None,
+        model_role: str = "realtime_llm",
     ) -> dict[str, Any]:
         inputs: dict[str, Any] = {
             "messages": messages,
@@ -830,7 +851,8 @@ class DatabricksServing:
             inputs["tool_choice"] = tool_choice
         target_endpoint = endpoint or self.llm_endpoint
         try:
-            response = self.client.predict(endpoint=target_endpoint, inputs=inputs)
+            with inference_context({"model_role": model_role}):
+                response = self.client.predict(endpoint=target_endpoint, inputs=inputs)
         except Exception as exc:  # noqa: BLE001
             _record_gateway_failure(
                 exc, target_endpoint=target_endpoint, trace=trace
@@ -890,6 +912,7 @@ class DatabricksServing:
             response = self._predict(
                 self.tts_endpoint,
                 text=text,
+                model_role="tts",
                 custom_inputs=self._tts_inputs(
                     text, language, reference_audio_b64, voice_id, send_reference=send_reference
                 ),
@@ -974,15 +997,23 @@ class DatabricksServing:
         status: dict[str, Any],
     ) -> Iterator[AudioChunk]:
         """One streaming synthesis attempt; reports stream-level flags via ``status``."""
-        stream = self.client.predict_stream(
-            endpoint=self.tts_endpoint,
-            inputs={
+        stream_inputs = {
                 "input": [{"role": "user", "content": text}],
                 "custom_inputs": self._tts_inputs(
                     text, language, reference_audio_b64, voice_id, send_reference=send_reference
                 ),
-            },
-        )
+            }
+        if isinstance(self.client, _SdkDeployClient):
+            stream = self.client.predict_stream(
+                endpoint=self.tts_endpoint,
+                inputs=stream_inputs,
+                request_tags={"model_role": "tts"},
+            )
+        else:
+            stream = self.client.predict_stream(
+                endpoint=self.tts_endpoint,
+                inputs=stream_inputs,
+            )
         # One-chunk lookahead so the server's final timing (gen_ms/ttfb_ms), which
         # arrives in the last SSE event AFTER all audio, can be attached to the
         # last audio chunk we emit.

@@ -22,6 +22,7 @@ from api.app.routers import traces as traces_router  # noqa: E402
 _ROWS = [
     {
         "trace_id": "t1",
+        "traffic_class": "conversation",
         "session_id": "s1",
         "turn_id": 1,
         "language": "en-US",
@@ -36,6 +37,7 @@ _ROWS = [
     },
     {
         "trace_id": "t2",
+        "traffic_class": "conversation",
         "session_id": "s1",
         "turn_id": 2,
         "language": "hi-IN",
@@ -127,7 +129,7 @@ def test_guardrails_route_is_not_swallowed_by_the_trace_id_route(client):
     assert client.get("/traces/guardrails").status_code == 200
 
 
-def test_standalone_gateway_event_is_merged_without_fake_turn(monkeypatch):
+def test_standalone_gateway_event_is_separate_from_conversation_checks(monkeypatch):
     class _Events:
         def list_voice_traces(self, **kwargs):
             return []
@@ -153,6 +155,6 @@ def test_standalone_gateway_event_is_merged_without_fake_turn(monkeypatch):
     assert body["turns"] == 0
     assert body["turns_with_roster"] == 0
     assert body["standalone_events"] == 1
-    assert body["checks"] == 1
-    assert body["recent_fired"][0]["context"] == "conversion"
-    assert body["recent_fired"][0]["trace_id"] is None
+    assert body["checks"] == 0
+    assert body["recent_fired"] == []
+    assert body["standalone_recent"][0]["context"] == "conversion"

@@ -121,6 +121,9 @@ class TurnTrace:
         capability: str,
         call_id: str | None = None,
         customer_id: str | None = None,
+        profile: str | None = None,
+        surface: str | None = None,
+        traffic_class: str = "conversation",
     ) -> None:
         self.trace_id = uuid.uuid4().hex
         self.session_id = session_id
@@ -128,6 +131,9 @@ class TurnTrace:
         self.capability = capability
         self.call_id = call_id
         self.customer_id = customer_id
+        self.profile = profile
+        self.surface = surface
+        self.traffic_class = traffic_class
         self.language: str | None = None
         self.detected_language: str | None = None
         self.input_transcript: str | None = None
@@ -148,6 +154,7 @@ class TurnTrace:
         self.server_ttfb_ms: float | None = None  # the endpoint's own time to chunk 1
         self.server_gen_ms: float | None = None  # full synthesis time on the endpoint
         self._spans: list[Span] = []
+        self._model_calls: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         # Domain-neutral L200 counters/labels. Kept as one map so adding a proof
         # metric never requires another billing-shaped trace column.
@@ -202,6 +209,23 @@ class TurnTrace:
         with self._lock:
             self.metrics[str(key)] = int(self.metrics.get(str(key), 0) or 0) + amount
 
+    def record_model_call(self, event: dict[str, Any]) -> None:
+        """Record content-free model lineage from the shared inference transport."""
+        allowed = {
+            "endpoint",
+            "transport",
+            "model_role",
+            "request_id",
+            "invocation_id",
+            "duration_ms",
+            "status",
+            "status_code",
+            "error_type",
+        }
+        clean = {key: value for key, value in event.items() if key in allowed}
+        with self._lock:
+            self._model_calls.append(clean)
+
     def _end_span(self, span: Span) -> None:
         span.end_ms = self._now_ms()
         span.duration_ms = span.end_ms - span.start_ms
@@ -214,6 +238,7 @@ class TurnTrace:
         with self._lock:
             spans = [s.to_dict() for s in self._spans]
             metrics = dict(self.metrics)
+            model_calls = [dict(call) for call in self._model_calls]
         tool_names = [s.name.split(".", 1)[-1] for s in self._spans if s.kind == "TOOL"]
         llm_iterations = sum(1 for s in self._spans if s.kind == "LLM")
         return {
@@ -221,6 +246,9 @@ class TurnTrace:
             "session_id": self.session_id,
             "turn_id": self.turn_id,
             "capability": self.capability,
+            "profile": self.profile,
+            "surface": self.surface,
+            "traffic_class": self.traffic_class,
             "call_id": self.call_id,
             "customer_id": self.customer_id,
             "language": self.language,
@@ -254,6 +282,7 @@ class TurnTrace:
             "total_ms": round(self._now_ms(), 2),
             "guard_roster": self.guards.to_list(),
             "guard_summary": self.guards.summary(),
+            "model_calls": model_calls,
             "spans": spans,
         }
 

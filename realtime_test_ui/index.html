@@ -333,7 +333,7 @@ function connect() {
   setStatus("Connecting…");
   ws.onopen = () => {
     // Always auto-detect; the detected language is shown in the badge per turn.
-    ws.send(JSON.stringify({ type: "session.start", language: "auto", sample_rate_hz: TARGET_SR, encoding: "pcm_s16le" }));
+    ws.send(JSON.stringify({ type: "session.start", surface: "realtime-test", language: "auto", sample_rate_hz: TARGET_SR, encoding: "pcm_s16le" }));
     log("connected, session.start sent (auto-detect)");
   };
   ws.onmessage = (e) => {

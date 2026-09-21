@@ -352,7 +352,7 @@ export function HomePage() {
         language,
         // Pin STT to the chosen app language so short destination replies are
         // transcribed in that language before typed semantic navigation.
-        { profile: "concierge", startMicPaused: true, sttLanguage: language }
+        { profile: "concierge", surface: "home", startMicPaused: true, sttLanguage: language }
       );
       sessionRef.current = session;
     },
@@ -496,6 +496,7 @@ export function HomePage() {
           />
           <nav className="home-topnav">
             <a href="#/voice-benchmarks">Benchmarks</a>
+            <a href="#/asr-benchmark">ASR Eval</a>
             <a href="#/traces">Traces</a>
             <a href="#/guardrails">Guardrails</a>
             <a href="#/setup" title="Deployment readiness & setup checklist">Setup</a>

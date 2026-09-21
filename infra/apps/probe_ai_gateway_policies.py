@@ -58,6 +58,14 @@ def main() -> None:
                     "max_tokens": 80,
                 },
                 timeout_s=120,
+                request_tags={
+                    "traffic_class": "deploy_probe",
+                    "surface": "deployment",
+                    "profile": "none",
+                    "capability": "gateway_conformance",
+                    "model_role": "policy_probe",
+                    "probe_id": probe.id,
+                },
             )
             output = _text(payload)
         except GatewayPolicyDenied as exc:

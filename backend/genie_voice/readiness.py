@@ -977,6 +977,14 @@ def gateway_conformance_failures(settings: Settings) -> list[str]:
                     "max_tokens": 80,
                 },
                 timeout_s=120,
+                request_tags={
+                    "traffic_class": "readiness_probe",
+                    "surface": "setup",
+                    "profile": "none",
+                    "capability": "gateway_conformance",
+                    "model_role": "policy_probe",
+                    "probe_id": probe.id,
+                },
             )
             choices = payload.get("choices") or []
             if choices and isinstance(choices[0], dict):

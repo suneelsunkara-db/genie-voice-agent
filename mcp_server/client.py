@@ -283,6 +283,7 @@ class RealtimeVoiceAPI:
                     json.dumps(
                         {
                             "type": "session.start",
+                            "surface": "mcp",
                             "language": language,
                             "sample_rate_hz": rate,
                             "encoding": "pcm_s16le",
@@ -310,6 +311,7 @@ class RealtimeVoiceAPI:
                     json.dumps(
                         {
                             "type": "session.start",
+                            "surface": "mcp",
                             "language": language,
                             "sample_rate_hz": sample_rate_hz,
                             "encoding": "pcm_s16le",
@@ -343,6 +345,7 @@ class RealtimeVoiceAPI:
             async with websockets.connect(url, **self._ws_kwargs()) as ws:
                 start: dict[str, Any] = {
                     "type": "session.start",
+                    "surface": "mcp",
                     "language": language,
                     "sample_rate_hz": rate,
                     "encoding": "pcm_s16le",

@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 sys.path.insert(0, str(REPO_ROOT))
 
 from genie_voice.i18n import LANGUAGE_SPECS  # noqa: E402
+from genie_voice.databricks.ai_gateway import inference_context  # noqa: E402
 from realtime_api.config import RealtimeSettings, databricks_profile  # noqa: E402
 from realtime_api.knowledge_tools import KNOWLEDGE_CATEGORIES, WORKSPACE_PROMPTS  # noqa: E402
 from realtime_api.services import _SdkDeployClient  # noqa: E402
@@ -111,16 +112,25 @@ def _strip_fences(text: str) -> str:
 def _translate(client, endpoint: str, name: str, tag: str, values: dict[str, str]) -> dict[str, str]:
     translated: dict[str, str] = {}
     for chunk in _chunks(list(values.items())):
-        response = client.predict(
-            endpoint=endpoint,
-            inputs={
-                "messages": [
-                    {"role": "system", "content": _SYSTEM.format(name=name, tag=tag)},
-                    {"role": "user", "content": json.dumps(chunk, ensure_ascii=False)},
-                ],
-                "max_tokens": 5000,
-            },
-        )
+        with inference_context(
+            {
+                "traffic_class": "i18n_offline",
+                "surface": "offline_i18n",
+                "profile": "none",
+                "capability": "translate_knowledge_topics",
+                "model_role": "i18n",
+            }
+        ):
+            response = client.predict(
+                endpoint=endpoint,
+                inputs={
+                    "messages": [
+                        {"role": "system", "content": _SYSTEM.format(name=name, tag=tag)},
+                        {"role": "user", "content": json.dumps(chunk, ensure_ascii=False)},
+                    ],
+                    "max_tokens": 5000,
+                },
+            )
         choices = response.get("choices") or []
         content = _strip_fences(
             (choices[0].get("message") or {}).get("content") if choices else ""

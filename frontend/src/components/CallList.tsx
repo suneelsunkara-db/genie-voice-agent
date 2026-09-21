@@ -1262,7 +1262,7 @@ function LiveAssist({
             onVoiceUiChange({ phase: "speaking", source: "mic", micLevel: 0.15 });
           }
         },
-      }, callLanguage, { profile: "billing", startMicPaused: true });
+      }, callLanguage, { profile: "billing", surface: "telco", startMicPaused: true });
       rtSessionRef.current = session;
       setInCall(true);
     } catch (e) {

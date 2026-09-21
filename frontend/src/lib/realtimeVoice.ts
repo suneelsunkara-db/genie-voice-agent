@@ -100,6 +100,8 @@ export interface RealtimeVoiceCallbacks {
 export interface StartRealtimeVoiceOptions {
   /** Assistant profile. Omit for the telco cockpit; "card" for the card issuer. */
   profile?: string;
+  /** Product surface used only for model-request provenance and trace filtering. */
+  surface?: "home" | "telco" | "card" | "knowledge" | "realtime-test" | "diagnostic";
   /** Start with mic paused (agent-initiated greeting flows). The caller must
    *  explicitly resumeMic() after the greeting finishes playing. */
   startMicPaused?: boolean;
@@ -295,6 +297,7 @@ export async function startRealtimeVoice(
           ...(expectedLanguage ? { expected_language: expectedLanguage } : {}),
           // Selects the named backend capability catalog and assistant profile.
           ...(options?.profile ? { profile: options.profile } : {}),
+          ...(options?.surface ? { surface: options.surface } : {}),
           // One Home-page choice inherited by every surface. The server accepts
           // only this allowlisted key and maps it to its own committed WAV.
           voice_variant: getAppVoice(),

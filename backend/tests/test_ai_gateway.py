@@ -1,6 +1,8 @@
 """Unity AI Gateway routing and bounded 429 retry."""
 from __future__ import annotations
 
+import json
+
 import requests
 
 from genie_voice.databricks import ai_gateway
@@ -102,3 +104,75 @@ def test_service_policy_post_call_is_output_denial() -> None:
         {"name": "block-hallucination", "phase": "post_call"}
     )
     assert denial.is_input_denial is False
+
+
+def test_inference_context_merges_complete_request_provenance() -> None:
+    with ai_gateway.inference_context(
+        {
+            "traffic_class": "conversation",
+            "surface": "card",
+            "profile": "card",
+            "trace_id": "trace-1",
+            "session_id": "session-1",
+            "turn_id": 4,
+            "capability": "voice",
+            "model_role": "navigation",
+            "empty": "",
+        }
+    ):
+        headers = ai_gateway.request_headers(
+            lambda: {"Authorization": "Bearer test"},
+            gateway=True,
+            request_tags={"model_role": "conversion"},
+        )
+    tags = json.loads(headers["Databricks-Ai-Gateway-Request-Tags"])
+    assert tags == {
+        "app": "genie-voice-agent",
+        "traffic_class": "conversation",
+        "surface": "card",
+        "profile": "card",
+        "trace_id": "trace-1",
+        "session_id": "session-1",
+        "turn_id": "4",
+        "capability": "voice",
+        "model_role": "conversion",
+    }
+    assert "Databricks-Ai-Gateway-Request-Tags" not in ai_gateway.request_headers(
+        lambda: {}, gateway=False
+    )
+
+
+def test_model_serving_call_records_content_free_lineage(monkeypatch) -> None:
+    events = []
+
+    class _Resp:
+        status_code = 200
+        text = "ok"
+
+        def json(self):
+            return {"request_id": "req-1", "custom_outputs": {"transcript": "secret"}}
+
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: _Resp())
+    with ai_gateway.inference_context(
+        {"traffic_class": "conversation", "model_role": "stt"},
+        recorder=events.append,
+    ):
+        ai_gateway.invoke(
+            host="https://example",
+            authenticate=lambda: {},
+            endpoint="custom-stt",
+            inputs={"audio": "secret"},
+            timeout_s=5,
+        )
+    assert events == [
+        {
+            "endpoint": "custom-stt",
+            "transport": "model_serving",
+            "model_role": "stt",
+            "request_id": "req-1",
+            "invocation_id": None,
+            "duration_ms": events[0]["duration_ms"],
+            "status": "ok",
+        }
+    ]
+    assert "secret" not in json.dumps(events)

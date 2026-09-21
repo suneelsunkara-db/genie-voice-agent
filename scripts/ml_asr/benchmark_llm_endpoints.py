@@ -24,6 +24,7 @@ if str(_REPO / "backend") not in sys.path:
     sys.path.insert(0, str(_REPO / "backend"))
 
 from _realtime_config import databricks  # noqa: E402
+from genie_voice.databricks.ai_gateway import inference_context  # noqa: E402
 from realtime_api.services import _SdkDeployClient  # noqa: E402
 
 _CANDIDATES = [
@@ -61,7 +62,16 @@ def _call(client: Any, endpoint: str, language: str, *, temperature: bool) -> tu
     if temperature:
         body["temperature"] = 0.4
     start = time.perf_counter()
-    r = client.predict(endpoint=endpoint, inputs=body)
+    with inference_context(
+        {
+            "traffic_class": "benchmark",
+            "surface": "llm_benchmark",
+            "profile": "none",
+            "capability": "benchmark_llm",
+            "model_role": "benchmark",
+        }
+    ):
+        r = client.predict(endpoint=endpoint, inputs=body)
     elapsed = (time.perf_counter() - start) * 1000
     ch = (r.get("choices") or [{}])[0].get("message", {}).get("content")
     return elapsed, (ch if isinstance(ch, str) else "")

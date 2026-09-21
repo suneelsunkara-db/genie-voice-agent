@@ -86,6 +86,16 @@ class AudioChunk:
 # Upper bound on session-provided textual context, to keep the LLM prompt sane.
 _MAX_CONTEXT_CHARS = 8_000
 _MAX_SPACE_NAME_CHARS = 200
+_SURFACES = {
+    "home",
+    "telco",
+    "card",
+    "knowledge",
+    "realtime-test",
+    "mcp",
+    "benchmark",
+    "diagnostic",
+}
 
 
 @dataclass(frozen=True)
@@ -114,6 +124,9 @@ class SessionStart:
     # Assistant profile name. None resolves to the concierge; product surfaces send
     # their registered profile explicitly (billing, card, knowledge).
     profile: str | None = None
+    # UI/API ingress that opened the session. This is observability metadata,
+    # never an authorization decision.
+    surface: str | None = None
     # Optional Genie space title for Space / Agent Mode. When omitted, those tools
     # use this app's configured demo spaces. Genie One ignores this — it is the
     # signed-in user's governed workspace. The name is resolved under the caller's
@@ -148,6 +161,11 @@ class SessionStart:
             if profile not in known:
                 allowed = ", ".join(sorted(known)) or "(none registered)"
                 raise ValueError(f"unknown profile {profile!r}; registered profiles: {allowed}")
+        surface = _optional_str(payload.get("surface"))
+        if surface is not None and surface not in _SURFACES:
+            raise ValueError(
+                f"unknown surface {surface!r}; allowed: {', '.join(sorted(_SURFACES))}"
+            )
         space_name = _optional_str(payload.get("space_name"))
         if space_name is not None and len(space_name) > _MAX_SPACE_NAME_CHARS:
             raise ValueError(f"space_name must be at most {_MAX_SPACE_NAME_CHARS} characters")
@@ -168,6 +186,7 @@ class SessionStart:
             customer_id=_optional_str(payload.get("customer_id")),
             expected_language=expected_language,
             profile=profile,
+            surface=surface,
             space_name=space_name,
             voice_variant=voice_variant,  # type: ignore[arg-type]
         )

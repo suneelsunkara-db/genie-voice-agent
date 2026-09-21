@@ -1,6 +1,7 @@
 import { CSSProperties, useEffect, useState } from "react";
 import { api, CustomerWithIssue, StatusResponse } from "./api/client";
 import { useAppLanguage } from "./lib/appLanguage";
+import { resolveAppHash } from "./lib/routes";
 import { useUiLocale } from "./i18n";
 import { POLL_INTERVAL_MS } from "./config";
 import { ASRBenchmarkPage } from "./components/ASRBenchmarkPage";
@@ -20,7 +21,7 @@ export default function App() {
   const [customersLoading, setCustomersLoading] = useState(true);
   const [customersErr, setCustomersErr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(() => window.location.hash || "#/");
+  const [page, setPage] = useState(() => resolveAppHash(window.location.hash));
   // The one language chosen on the home page; the cockpit reads it and its picker
   // is locked (see CockpitPage). Changing language happens on #/ only.
   const [interactionLanguage, setInteractionLanguage] = useAppLanguage();
@@ -67,13 +68,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onHashChange = () => setPage(window.location.hash || "#/");
+    const onHashChange = () => setPage(resolveAppHash(window.location.hash));
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
   const showHome = page === "#/" || page === "#/home";
   const showKnowledge = page === "#/knowledge";
+  const showTelco = page === "#/telco";
   const showBenchmark = page === "#/asr-benchmark";
   // The Trace Explorer takes an optional ?trace=<id> so the Guardrails view can
   // deep-link a specific turn.
@@ -120,6 +122,10 @@ export default function App() {
   // with its own chrome (does not reuse the telco cockpit).
   if (showCard) {
     return <CardIssuerPage />;
+  }
+  // Unknown hashes must not silently open a customer billing workspace.
+  if (!showTelco && !showBenchmark) {
+    return <HomePage />;
   }
 
   const navPill: CSSProperties = {

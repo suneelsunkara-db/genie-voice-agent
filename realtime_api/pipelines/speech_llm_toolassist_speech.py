@@ -25,6 +25,10 @@ from ..session import VoiceSession
 from ..tracing import TurnTrace, submit_trace
 from . import ServingBundle
 from ._shared import language_mismatch, resolve_language, stream_tts, transcribe
+from genie_voice.databricks.ai_gateway import (
+    pop_inference_context,
+    push_inference_context,
+)
 
 logger = logging.getLogger("realtime_voice")
 
@@ -410,6 +414,24 @@ async def _switch_prompt(bundle: ServingBundle, expected: str, detected: str) ->
     return text
 
 
+def turn_provenance(config) -> tuple[str, str, str]:
+    """Return the validated profile, ingress surface and traffic class for a turn."""
+    profile_name = config.profile or "concierge"
+    surface = getattr(config, "surface", None) or {
+        "concierge": "home",
+        "billing": "telco",
+        "card": "card",
+        "knowledge": "knowledge",
+    }.get(profile_name, "realtime")
+    traffic_class = {
+        "benchmark": "benchmark",
+        "realtime-test": "diagnostic",
+        "diagnostic": "diagnostic",
+        "mcp": "mcp",
+    }.get(surface, "conversation")
+    return profile_name, surface, traffic_class
+
+
 async def process_turn(
     bundle: ServingBundle,
     session: VoiceSession,
@@ -422,14 +444,30 @@ async def process_turn(
     # trace is submitted to a background writer in the finally block, so it is
     # persisted even on early-return paths (empty/mismatch/superseded) and errors,
     # and NEVER blocks the turn (submit is a non-blocking enqueue).
+    profile_name, surface, traffic_class = turn_provenance(session.config)
     trace = TurnTrace(
         session_id=session.session_id or "",
         turn_id=turn_id,
         capability=SPEECH_LLM_TOOLASSIST_SPEECH,
         call_id=session.config.call_id,
         customer_id=session.config.customer_id,
+        profile=profile_name,
+        surface=surface,
+        traffic_class=traffic_class,
     )
     trace.language = session.config.language
+    provenance_tokens = push_inference_context(
+        {
+            "traffic_class": traffic_class,
+            "surface": surface,
+            "profile": profile_name,
+            "trace_id": trace.trace_id,
+            "session_id": trace.session_id,
+            "turn_id": trace.turn_id,
+            "capability": trace.capability,
+        },
+        recorder=trace.record_model_call,
+    )
     localization_task: asyncio.Task | None = None
     try:
         stt_span = trace.span(
@@ -1597,4 +1635,5 @@ async def process_turn(
         if localization_task is not None and not localization_task.done():
             localization_task.cancel()
             await asyncio.gather(localization_task, return_exceptions=True)
+        pop_inference_context(provenance_tokens)
         submit_trace(trace)

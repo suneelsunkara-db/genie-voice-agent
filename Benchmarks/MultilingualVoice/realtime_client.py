@@ -204,6 +204,7 @@ def detect_capabilities(host, *, prefix="", auth_token=None):
             async with websockets.connect(url, **_ws_connect_kwargs(ws_headers, 15)) as ws:
                 start_msg = json.dumps({
                     "type": "session.start",
+                    "surface": "benchmark",
                     "language": "en",
                     "sample_rate_hz": 16000,
                     "encoding": "pcm_s16le",
@@ -327,6 +328,7 @@ class WebSocketRealtimeClient:
             async with websockets.connect(url, **_ws_connect_kwargs(headers, self.timeout_s)) as ws:
                 start = {
                     "type": "session.start",
+                    "surface": "benchmark",
                     "language": language,
                     "sample_rate_hz": sample_rate_hz,
                     "encoding": "pcm_s16le",
@@ -362,6 +364,7 @@ class WebSocketRealtimeClient:
             async with websockets.connect(url, **_ws_connect_kwargs(headers, self.timeout_s)) as ws:
                 start_msg = json.dumps({
                     "type": "session.start",
+                    "surface": "benchmark",
                     "language": language,
                     "sample_rate_hz": self.sample_rate_hz,
                     "encoding": "pcm_s16le",
@@ -462,7 +465,7 @@ class InProcessRealtimeClient:
         try:
             with self._client.websocket_connect(self._path(cap)) as ws:
                 start = {
-                    "type": "session.start", "language": lang,
+                    "type": "session.start", "surface": "benchmark", "language": lang,
                     "sample_rate_hz": sample_rate_hz, "encoding": "pcm_s16le",
                 }
                 if context:
@@ -490,7 +493,7 @@ class InProcessRealtimeClient:
         try:
             with self._client.websocket_connect(self._path("text-to-speech")) as ws:
                 ws.send_json({
-                    "type": "session.start", "language": lang,
+                    "type": "session.start", "surface": "benchmark", "language": lang,
                     "sample_rate_hz": self.sample_rate_hz, "encoding": "pcm_s16le",
                 })
                 self._await_type(ws, "session.ready")

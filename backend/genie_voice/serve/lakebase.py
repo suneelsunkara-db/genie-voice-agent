@@ -52,6 +52,10 @@ _TRACE_LATENCY_COLUMNS = (
 _TRACE_MIGRATED_COLUMNS: dict[str, str] = {
     **{column: "DOUBLE PRECISION" for column in _TRACE_LATENCY_COLUMNS},
     "guard_roster": "JSONB",
+    "profile": "TEXT",
+    "surface": "TEXT",
+    "traffic_class": "TEXT",
+    "model_calls": "JSONB",
 }
 _ISSUES_CACHE: dict[str, Any] = {"ts": 0.0, "value": None}
 _ISSUES_TTL_S = 60.0
@@ -583,6 +587,9 @@ class LakebaseServing:
                 call_id                     TEXT,
                 customer_id                 TEXT,
                 capability                  TEXT,
+                profile                     TEXT,
+                surface                     TEXT,
+                traffic_class               TEXT,
                 language                    TEXT,
                 detected_language           TEXT,
                 status                      TEXT,
@@ -599,6 +606,7 @@ class LakebaseServing:
                 server_gen_ms               DOUBLE PRECISION,
                 total_ms                    DOUBLE PRECISION,
                 guard_roster                JSONB,
+                model_calls                 JSONB,
                 trace                       JSONB,
                 created_at                  TIMESTAMPTZ DEFAULT now()
             )
@@ -856,6 +864,9 @@ class LakebaseServing:
             "call_id": trace.get("call_id"),
             "customer_id": trace.get("customer_id"),
             "capability": trace.get("capability"),
+            "profile": trace.get("profile"),
+            "surface": trace.get("surface"),
+            "traffic_class": trace.get("traffic_class") or "conversation",
             "language": trace.get("language"),
             "detected_language": trace.get("detected_language"),
             "status": trace.get("status"),
@@ -872,6 +883,7 @@ class LakebaseServing:
             "server_gen_ms": trace.get("server_gen_ms"),
             "total_ms": trace.get("total_ms"),
             "guard_roster": json.dumps(trace.get("guard_roster") or []),
+            "model_calls": json.dumps(trace.get("model_calls") or []),
             "trace": json.dumps(trace),
         }
         with self._conn() as conn, conn.cursor() as cur:
@@ -917,10 +929,12 @@ class LakebaseServing:
         params.append(limit)
         selected = [
             "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
+            "profile", "surface", "traffic_class",
             "language", "detected_language", "status", "input_transcript", "output_text",
             "tool_names", "apply_billing_action_called", "lookup_account_count",
             "llm_iterations", "ttft_ms", "answer_ttft_ms", "tts_first_ms",
-            "server_ttfb_ms", "server_gen_ms", "total_ms", "guard_roster", "created_at",
+            "server_ttfb_ms", "server_gen_ms", "total_ms", "guard_roster",
+            "model_calls", "created_at",
         ]
         with self._conn() as conn, conn.cursor() as cur:
             self._ensure_traces_table(cur)
@@ -930,11 +944,17 @@ class LakebaseServing:
             # document. Only the owner can ALTER, so a developer's own role reads a
             # table without the column — extract it from the JSON there rather than
             # returning nothing and making the Guardrails view look empty.
-            projected = (
-                list(columns)
-                if "guard_roster" in columns
-                else [*columns, "trace -> 'guard_roster' AS guard_roster"]
-            )
+            projected = list(columns)
+            json_fallbacks = {
+                "guard_roster": "trace -> 'guard_roster'",
+                "profile": "trace ->> 'profile'",
+                "surface": "trace ->> 'surface'",
+                "traffic_class": "trace ->> 'traffic_class'",
+                "model_calls": "trace -> 'model_calls'",
+            }
+            for column, expression in json_fallbacks.items():
+                if column not in columns:
+                    projected.append(f"{expression} AS {column}")
             cur.execute(
                 f"""
                 SELECT {", ".join(projected)}
@@ -973,10 +993,12 @@ class LakebaseServing:
     def _trace_summary(trace: dict[str, Any]) -> dict[str, Any]:
         keys = (
             "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
+            "profile", "surface", "traffic_class",
             "language", "detected_language", "status", "input_transcript", "output_text",
             "tool_names", "apply_billing_action_called", "lookup_account_count",
             "llm_iterations", "ttft_ms", "answer_ttft_ms", "tts_first_ms",
-            "server_ttfb_ms", "server_gen_ms", "total_ms", "guard_roster", "started_at",
+            "server_ttfb_ms", "server_gen_ms", "total_ms", "guard_roster",
+            "model_calls", "started_at",
         )
         return {k: trace.get(k) for k in keys}
 

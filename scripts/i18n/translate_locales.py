@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 sys.path.insert(0, str(REPO_ROOT))
 
 from genie_voice.i18n import LANGUAGE_SPECS  # noqa: E402
+from genie_voice.databricks.ai_gateway import inference_context  # noqa: E402
 from realtime_api.config import RealtimeSettings, databricks_profile  # noqa: E402
 from realtime_api.services import _SdkDeployClient  # noqa: E402
 
@@ -125,10 +126,19 @@ def _translate_chunk(client, endpoint: str, language_name: str, tag: str, chunk:
     # any non-default value ("does not support 0 with this model"), and a one-shot
     # offline pass whose output is committed to git doesn't need sampling to be
     # reproducible.
-    resp = client.predict(
-        endpoint=endpoint,
-        inputs={"messages": messages, "max_tokens": 4000},
-    )
+    with inference_context(
+        {
+            "traffic_class": "i18n_offline",
+            "surface": "offline_i18n",
+            "profile": "none",
+            "capability": "translate_locales",
+            "model_role": "i18n",
+        }
+    ):
+        resp = client.predict(
+            endpoint=endpoint,
+            inputs={"messages": messages, "max_tokens": 4000},
+        )
     choices = resp.get("choices") or []
     content = _strip_fences((choices[0].get("message") or {}).get("content") if choices else "")
     try:

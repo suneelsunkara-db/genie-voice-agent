@@ -17,11 +17,61 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from typing import Any
 
 CHAT_COMPLETIONS_PATH = "/ai-gateway/mlflow/v1/chat/completions"
 _RETRY_DELAYS_S = (0.4, 0.8)
 _APP_TAGS = {"app": "genie-voice-agent"}
+_REQUEST_TAGS: ContextVar[dict[str, str]] = ContextVar(
+    "genie_voice_inference_tags", default={}
+)
+_REQUEST_RECORDER: ContextVar[Callable[[dict[str, Any]], None] | None] = ContextVar(
+    "genie_voice_inference_recorder", default=None
+)
+
+
+def _clean_tags(tags: dict[str, Any] | None) -> dict[str, str]:
+    """Normalize request metadata without ever retaining prompt content."""
+    return {
+        str(key): str(value)
+        for key, value in (tags or {}).items()
+        if value is not None and str(value).strip()
+    }
+
+
+def push_inference_context(
+    tags: dict[str, Any],
+    *,
+    recorder: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[Token, Token | None]:
+    """Bind provenance to this async/thread context until the tokens are reset."""
+    merged = {**_REQUEST_TAGS.get(), **_clean_tags(tags)}
+    tag_token = _REQUEST_TAGS.set(merged)
+    recorder_token = _REQUEST_RECORDER.set(recorder) if recorder is not None else None
+    return tag_token, recorder_token
+
+
+def pop_inference_context(tokens: tuple[Token, Token | None]) -> None:
+    tag_token, recorder_token = tokens
+    if recorder_token is not None:
+        _REQUEST_RECORDER.reset(recorder_token)
+    _REQUEST_TAGS.reset(tag_token)
+
+
+@contextmanager
+def inference_context(
+    tags: dict[str, Any],
+    *,
+    recorder: Callable[[dict[str, Any]], None] | None = None,
+):
+    """Temporarily enrich all nested model calls with provenance metadata."""
+    tokens = push_inference_context(tags, recorder=recorder)
+    try:
+        yield
+    finally:
+        pop_inference_context(tokens)
 
 
 class GatewayPolicyDenied(RuntimeError):
@@ -69,11 +119,17 @@ def chat_body(model: str, inputs: dict[str, Any], *, stream: bool = False) -> di
     return body
 
 
-def request_headers(authenticate: Callable[[], dict[str, str] | None], *, gateway: bool) -> dict[str, str]:
+def request_headers(
+    authenticate: Callable[[], dict[str, str] | None],
+    *,
+    gateway: bool,
+    request_tags: dict[str, Any] | None = None,
+) -> dict[str, str]:
     headers = {**dict(authenticate() or {}), "Content-Type": "application/json"}
     if gateway:
+        tags = {**_APP_TAGS, **_REQUEST_TAGS.get(), **_clean_tags(request_tags)}
         headers["Databricks-Ai-Gateway-Request-Tags"] = json.dumps(
-            _APP_TAGS, separators=(",", ":")
+            tags, separators=(",", ":")
         )
     return headers
 
@@ -99,6 +155,7 @@ def invoke(
     endpoint: str,
     inputs: dict[str, Any],
     timeout_s: float,
+    request_tags: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One non-streaming inference call, routed by endpoint name."""
     import requests
@@ -106,11 +163,25 @@ def invoke(
     gateway = is_unity_model_service(endpoint)
     url = chat_completions_url(host) if gateway else serving_invocations_url(host, endpoint)
     body = chat_body(endpoint, inputs) if gateway else inputs
-    headers = request_headers(authenticate, gateway=gateway)
-    payload = _post_json(requests.post, url, headers, body, timeout_s, retry_429=gateway)
-    if gateway:
-        _raise_policy_denial(payload)
-    return payload
+    headers = request_headers(
+        authenticate, gateway=gateway, request_tags=request_tags
+    )
+    started = time.perf_counter()
+    try:
+        payload = _post_json(
+            requests.post, url, headers, body, timeout_s, retry_429=gateway
+        )
+        if gateway:
+            _raise_policy_denial(payload)
+        _record_invocation(
+            endpoint, gateway, started, payload=payload, request_tags=request_tags
+        )
+        return payload
+    except Exception as exc:
+        _record_invocation(
+            endpoint, gateway, started, error=exc, request_tags=request_tags
+        )
+        raise
 
 
 def invoke_stream(
@@ -120,6 +191,7 @@ def invoke_stream(
     endpoint: str,
     inputs: dict[str, Any],
     timeout_s: float,
+    request_tags: dict[str, Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """SSE inference, routed by endpoint name. No 429 retry after the stream opens."""
     import requests
@@ -127,10 +199,63 @@ def invoke_stream(
     gateway = is_unity_model_service(endpoint)
     url = chat_completions_url(host) if gateway else serving_invocations_url(host, endpoint)
     body = chat_body(endpoint, inputs, stream=True) if gateway else {**inputs, "stream": True}
-    headers = request_headers(authenticate, gateway=gateway)
-    with requests.post(url, headers=headers, json=body, stream=True, timeout=timeout_s) as resp:
-        _raise_http(resp)
-        yield from iter_sse_json(resp)
+    headers = request_headers(
+        authenticate, gateway=gateway, request_tags=request_tags
+    )
+    started = time.perf_counter()
+    last_payload: dict[str, Any] | None = None
+    try:
+        with requests.post(
+            url, headers=headers, json=body, stream=True, timeout=timeout_s
+        ) as resp:
+            _raise_http(resp)
+            for payload in iter_sse_json(resp):
+                last_payload = payload
+                yield payload
+        _record_invocation(
+            endpoint, gateway, started, payload=last_payload, request_tags=request_tags
+        )
+    except Exception as exc:
+        _record_invocation(
+            endpoint, gateway, started, error=exc, request_tags=request_tags
+        )
+        raise
+
+
+def _record_invocation(
+    endpoint: str,
+    gateway: bool,
+    started: float,
+    *,
+    payload: dict[str, Any] | None = None,
+    error: Exception | None = None,
+    request_tags: dict[str, Any] | None = None,
+) -> None:
+    recorder = _REQUEST_RECORDER.get()
+    if recorder is None:
+        return
+    response = payload or {}
+    event = {
+        "endpoint": endpoint,
+        "transport": "unity_ai_gateway" if gateway else "model_serving",
+        "model_role": _clean_tags(request_tags).get(
+            "model_role", _REQUEST_TAGS.get().get("model_role", "unknown")
+        ),
+        "request_id": response.get("request_id") or response.get("id"),
+        "invocation_id": response.get("invocation_id"),
+        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        "status": "error" if error is not None else "ok",
+    }
+    if error is not None:
+        event["error_type"] = type(error).__name__
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        if status_code is not None:
+            event["status_code"] = int(status_code)
+    try:
+        recorder(event)
+    except Exception:
+        # Observability must never break inference.
+        pass
 
 
 def _post_json(post, url: str, headers: dict[str, str], body: dict[str, Any], timeout_s: float, *, retry_429: bool) -> dict[str, Any]:

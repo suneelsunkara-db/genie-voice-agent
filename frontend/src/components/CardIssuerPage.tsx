@@ -601,7 +601,7 @@ export function CardIssuerPage() {
         },
       },
       language,
-      { profile: "card", startMicPaused: true }
+      { profile: "card", surface: "card", startMicPaused: true }
     );
     sessionRef.current = session;
   }, [persona, endCall, pushTurn, speakViaTTS, ungateMicAfter, fetchGreeting, handleInterimTranscript, handleResponseAudio, handlePlaybackStop, selectedUseCase]);

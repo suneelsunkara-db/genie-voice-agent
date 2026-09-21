@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from genie_voice.databricks.ai_gateway import inference_context
 from realtime_api.runtime.capabilities import CapabilityId
 from realtime_api.runtime.navigation import classifier_capabilities
 from realtime_api.serving_factory import shared_serving
@@ -32,12 +33,21 @@ def main() -> None:
             if expected == CapabilityId.BILLING_ACTION
             else ""
         )
-        raw = serving.classify_navigation(
-            utterance,
-            language=language,
-            capabilities=[item.classifier_view() for item in catalog],
-            context=context,
-        )
+        with inference_context(
+            {
+                "traffic_class": "diagnostic",
+                "surface": "navigation_validation",
+                "profile": profile,
+                "capability": "validate_navigation",
+                "model_role": "navigation",
+            }
+        ):
+            raw = serving.classify_navigation(
+                utterance,
+                language=language,
+                capabilities=[item.classifier_view() for item in catalog],
+                context=context,
+            )
         actual = raw.get("capability_id")
         confirmation_ok = (
             raw.get("confirmed") is True

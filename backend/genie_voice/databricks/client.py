@@ -48,7 +48,15 @@ def _build_workspace_client(settings: Settings):
         )
 
     # auth == "default": let the SDK resolve credentials.
-    profile = settings.databricks.profile
+    # Shell-driven deployment consistently exports DATABRICKS_CONFIG_PROFILE.
+    # Honor it when the YAML intentionally leaves profile unset; passing only a
+    # host is ambiguous when ~/.databrickscfg contains multiple aliases for the
+    # same workspace.
+    profile = (
+        settings.databricks.profile
+        or os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        or os.environ.get("DATABRICKS_PROFILE")
+    )
     if profile:
         return WorkspaceClient(profile=profile)
     if host:

@@ -402,7 +402,7 @@ export function KnowledgeAgentPage() {
           },
         },
         language,
-        { profile: "knowledge", startMicPaused: true }
+        { profile: "knowledge", surface: "knowledge", startMicPaused: true }
       );
       sessionRef.current = session;
     },

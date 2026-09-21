@@ -384,6 +384,9 @@ export interface TraceSummary {
   call_id?: string | null;
   customer_id?: string | null;
   capability?: string;
+  profile?: string | null;
+  surface?: string | null;
+  traffic_class?: string | null;
   language?: string | null;
   detected_language?: string | null;
   status?: string;
@@ -406,6 +409,16 @@ export interface TraceSummary {
   total_ms?: number | null;
   /** Every guardrail check on the turn, including the ones that found nothing. */
   guard_roster?: GuardEntry[] | null;
+  model_calls?: Array<{
+    endpoint?: string;
+    transport?: string;
+    model_role?: string;
+    request_id?: string | null;
+    invocation_id?: string | null;
+    duration_ms?: number | null;
+    status?: string;
+    status_code?: number | null;
+  }>;
   started_at?: string;
   created_at?: string;
 }
@@ -467,7 +480,9 @@ export interface GuardFiredRow {
 
 export interface GuardRollup {
   turns: number;
+  legacy_unclassified_turns?: number;
   standalone_events?: number;
+  standalone_recent?: Array<Record<string, unknown>>;
   turns_with_roster: number;
   checks: number;
   checks_per_turn: number;
@@ -497,6 +512,14 @@ export interface GatewayServiceInsight {
     deployment_state?: "configured" | "missing_or_drifted" | "unexpected";
     deployed_name?: string | null;
   }>;
+  attached_policies?: Array<{
+    name?: string;
+    policy_type?: string;
+    handler?: string;
+    rank?: number;
+    options?: Record<string, string>;
+    is_deleted?: boolean;
+  }>;
   rate_limits: Array<{
     key?: string;
     renewal_period?: string;
@@ -507,10 +530,38 @@ export interface GatewayServiceInsight {
   traffic_7d?: {
     requests?: string | number | null;
     errors?: string | number | null;
+    rate_limited?: string | number | null;
+    input_tokens?: string | number | null;
+    output_tokens?: string | number | null;
+    total_tokens?: string | number | null;
+    avg_input_tokens?: string | number | null;
+    avg_output_tokens?: string | number | null;
     avg_latency_ms?: string | number | null;
     p95_latency_ms?: string | number | null;
+    avg_ttft_ms?: string | number | null;
+    p95_ttft_ms?: string | number | null;
+    peak_rpm?: string | number | null;
+    peak_tpm?: string | number | null;
+    policy_envelopes?: string | number | null;
+    incomplete_provenance?: string | number | null;
     last_event_time?: string | null;
   } | null;
+  traffic_all_7d?: {
+    requests?: string | number | null;
+    errors?: string | number | null;
+    unclassified_requests?: string | number | null;
+  } | null;
+  provenance?: {
+    status: "verified" | "partial" | "unavailable";
+    requesters?: string[];
+    expected_trace_calls?: number;
+    tagged_requests?: number;
+    matched_trace_ids?: number;
+    unmatched_trace_ids?: string[];
+    incomplete_requests?: number;
+    filters?: Record<string, unknown>;
+    reason?: string;
+  };
   configuration_error?: string;
   traffic_note?: string;
 }
@@ -531,6 +582,51 @@ export interface PolicyCatalogEntry {
 export interface GatewayInsights {
   enabled: boolean;
   services: GatewayServiceInsight[];
+  provenance?: {
+    status: "verified" | "partial" | "unavailable";
+    window?: string;
+    conversation_trace_count?: number;
+    legacy_unclassified_trace_count?: number;
+    requesters?: string[];
+  };
+  recent_events?: Array<{
+    service_key: string;
+    event_time?: string | null;
+    request_id?: string | null;
+    invocation_id?: string | null;
+    status_code?: string | number | null;
+    latency_ms?: string | number | null;
+    time_to_first_byte_ms?: string | number | null;
+    destination_model?: string | null;
+    trace_id?: string | null;
+    session_id?: string | null;
+    turn_id?: string | number | null;
+    profile?: string | null;
+    surface?: string | null;
+    model_role?: string | null;
+    trace_matched?: boolean;
+  }>;
+  speech_endpoints?: Array<{
+    endpoint: string;
+    model_role: string;
+    requests: number;
+    errors: number;
+  }>;
+  model_inventory?: Array<{
+    id: string;
+    name: string;
+    plane: string;
+    roles: string[];
+    resource: string;
+    telemetry: string;
+  }>;
+  page_coverage?: Array<{
+    surface: string;
+    profile?: string | null;
+    traffic_class: string;
+    models: string[];
+    managed_services: string[];
+  }>;
   policy_manifest: {
     version: string;
     catalog: PolicyCatalogEntry[];
