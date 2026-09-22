@@ -667,7 +667,8 @@ fi
 log "syncing source -> $WORKSPACE_DIR (includes built SPA + Story Deck)"
 dbx sync . "$WORKSPACE_DIR" \
   --include "api/app/static/**" \
-  --include "story_deck/**"
+  --include "story_deck/**" \
+  --include "docs/l200-databricks-architecture.png"
 
 # ---- 7. deploy --------------------------------------------------------------
 log "deploying app version"

@@ -1288,6 +1288,863 @@ h3 {
   line-height: 1.35;
 }
 
+/* Market signals (Why now) */
+.signal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(10px, 1.4vw, 22px);
+  margin: auto 0;
+}
+
+.signal-card {
+  position: relative;
+  min-height: clamp(180px, 20vw, 280px);
+  padding: clamp(16px, 1.8vw, 28px);
+  border: 1px solid var(--line);
+  border-top: 5px solid var(--signal);
+  background: var(--white);
+}
+
+.signal-stat {
+  display: block;
+  margin-bottom: clamp(18px, 2vw, 32px);
+  color: var(--signal);
+  font-size: clamp(20px, 2.3vw, 40px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.signal-card p {
+  color: var(--muted);
+  font-size: clamp(9px, 0.82vw, 14px);
+  line-height: 1.42;
+}
+
+.signal-card a {
+  position: absolute;
+  right: clamp(12px, 1.4vw, 22px);
+  bottom: clamp(12px, 1.4vw, 22px);
+  left: clamp(12px, 1.4vw, 22px);
+  color: var(--signal);
+  font-size: clamp(8px, 0.68vw, 11px);
+  font-weight: 750;
+  text-decoration: none;
+}
+
+/* Why the market is building voice agents */
+.voice-market {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1.1vw, 18px);
+  min-height: 0;
+}
+
+.voice-market-group {
+  display: grid;
+  grid-template-columns: clamp(145px, 15vw, 230px) 1fr;
+  gap: clamp(12px, 1.4vw, 24px);
+  align-items: stretch;
+}
+
+.voice-market-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: clamp(8px, 1vw, 16px);
+  border-right: 3px solid var(--amber);
+}
+
+.voice-market-group.compact .voice-market-label {
+  border-right-color: var(--cyan);
+}
+
+.voice-market-label strong {
+  font-size: clamp(13px, 1.25vw, 21px);
+  line-height: 1.15;
+}
+
+.voice-market-label span {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: clamp(9px, 0.76vw, 13px);
+  line-height: 1.35;
+}
+
+.voice-market-cards {
+  display: grid;
+  gap: clamp(8px, 1vw, 16px);
+}
+
+.voice-market-cards.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.voice-market-cards.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.voice-use-card {
+  position: relative;
+  min-height: clamp(145px, 15vw, 205px);
+  padding: clamp(12px, 1.3vw, 21px);
+  border: 1px solid var(--line);
+  border-top: 5px solid var(--voice);
+  background: var(--white);
+}
+
+.voice-use-card h3 {
+  margin: 0 0 0.45rem;
+  color: var(--voice);
+  font-size: clamp(16px, 1.55vw, 27px);
+}
+
+.voice-use-card > strong {
+  display: block;
+  font-size: clamp(10px, 0.88vw, 15px);
+  line-height: 1.25;
+}
+
+.voice-use-card p {
+  margin: 0.5rem 0 1.4rem;
+  color: var(--muted);
+  font-size: clamp(11px, 0.88vw, 15px);
+  line-height: 1.38;
+}
+
+.voice-use-card a {
+  position: absolute;
+  bottom: clamp(10px, 1vw, 16px);
+  color: var(--voice);
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.voice-use-card.platform-card {
+  min-height: clamp(105px, 10vw, 145px);
+  display: grid;
+  grid-template-columns: minmax(110px, 0.55fr) 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 14px;
+  align-content: center;
+}
+
+.voice-use-card.platform-card h3 {
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.voice-use-card.platform-card > strong,
+.voice-use-card.platform-card p {
+  margin: 0;
+}
+
+.voice-use-card.platform-card p {
+  font-size: clamp(10px, 0.82vw, 14px);
+}
+
+.market-conclusion {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  margin-top: auto;
+  padding: clamp(10px, 1vw, 15px);
+  border-left: 5px solid var(--amber);
+  background: #fff7d5;
+  font-size: clamp(9px, 0.8vw, 14px);
+  line-height: 1.35;
+}
+
+.market-conclusion strong {
+  color: #806b10;
+  font-size: clamp(11px, 0.95vw, 16px);
+}
+
+/* Why the selected open STT/TTS models */
+.model-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(14px, 1.8vw, 30px);
+  min-height: 0;
+}
+
+.model-choice-card {
+  position: relative;
+  min-height: clamp(285px, 27vw, 390px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.model-choice-head {
+  padding: clamp(13px, 1.5vw, 24px);
+  border-bottom: 1px solid var(--line);
+}
+
+.asr-choice .model-choice-head {
+  border-top: 6px solid var(--amber);
+  background: #fff9df;
+}
+
+.tts-choice .model-choice-head {
+  border-top: 6px solid var(--coral);
+  background: #fff0ed;
+}
+
+.model-choice-head > span {
+  color: var(--muted);
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.model-choice-head h3 {
+  margin: 0.25rem 0;
+  font-size: clamp(19px, 1.9vw, 33px);
+  letter-spacing: -0.035em;
+}
+
+.model-choice-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(9px, 0.78vw, 13px);
+}
+
+.choice-facts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--line);
+}
+
+.choice-facts div {
+  padding: clamp(10px, 1.1vw, 17px);
+  border-right: 1px solid var(--line);
+}
+
+.choice-facts div:last-child {
+  border-right: 0;
+}
+
+.choice-facts strong,
+.choice-facts span {
+  display: block;
+}
+
+.choice-facts strong {
+  color: var(--ink);
+  font-size: clamp(16px, 1.6vw, 28px);
+  letter-spacing: -0.04em;
+}
+
+.choice-facts span {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: clamp(8px, 0.66vw, 11px);
+}
+
+.model-choice-card ul {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem 1rem;
+  margin: 0;
+  padding: clamp(12px, 1.3vw, 20px) clamp(20px, 2.1vw, 34px) clamp(32px, 3vw, 46px);
+  color: var(--muted);
+  font-size: clamp(11px, 0.86vw, 15px);
+  line-height: 1.3;
+}
+
+.model-choice-card a {
+  position: absolute;
+  right: clamp(12px, 1.4vw, 22px);
+  bottom: clamp(10px, 1vw, 16px);
+  color: var(--blue);
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.selection-fit {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  margin-top: clamp(14px, 1.5vw, 24px);
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.selection-fit div {
+  padding: clamp(10px, 1.1vw, 17px);
+  background: var(--paper);
+}
+
+.selection-fit strong,
+.selection-fit span {
+  display: block;
+}
+
+.selection-fit strong {
+  font-size: clamp(10px, 0.88vw, 15px);
+}
+
+.selection-fit span {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: clamp(9px, 0.76vw, 13px);
+  line-height: 1.3;
+}
+
+/* Problem progression uses the otherwise empty lower half for the actual shift */
+.problem-grid .card {
+  min-height: clamp(145px, 15vw, 210px);
+}
+
+.access-progression {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  gap: clamp(10px, 1.2vw, 20px);
+  align-items: center;
+  margin-top: clamp(14px, 1.8vw, 28px);
+  padding: clamp(12px, 1.4vw, 22px);
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.access-progression div {
+  display: flex;
+  flex-direction: column;
+}
+
+.access-progression span {
+  color: var(--red);
+  font-size: clamp(8px, 0.64vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.access-progression strong {
+  margin-top: 0.25rem;
+  font-size: clamp(11px, 1vw, 17px);
+}
+
+.access-progression small {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: clamp(8px, 0.72vw, 12px);
+}
+
+.access-progression i {
+  color: var(--red);
+  font-size: clamp(18px, 2vw, 34px);
+  font-style: normal;
+}
+
+/* Engineering capabilities fill the canvas as a 2x2 system, not four small tiles */
+.engineering-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(12px, 1.5vw, 24px);
+  margin: auto 0;
+}
+
+.engineering-card {
+  position: relative;
+  min-height: clamp(145px, 16vw, 225px);
+  padding: clamp(15px, 1.7vw, 28px);
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--card-accent);
+  background: var(--white);
+}
+
+.engineering-num {
+  color: var(--card-accent);
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.engineering-card h3 {
+  margin: 0.35rem 0 0.45rem;
+  font-size: clamp(15px, 1.4vw, 24px);
+}
+
+.engineering-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(10px, 0.84vw, 14px);
+  line-height: 1.4;
+}
+
+.engineering-card > strong {
+  position: absolute;
+  right: clamp(14px, 1.5vw, 24px);
+  bottom: clamp(12px, 1.4vw, 22px);
+  left: clamp(14px, 1.5vw, 24px);
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--line);
+  font-size: clamp(9px, 0.76vw, 13px);
+}
+
+/* Experience cards: audience + outcome + concrete product surface */
+.experience-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(10px, 1.4vw, 22px);
+  margin: auto 0;
+}
+
+.experience-card {
+  position: relative;
+  min-height: clamp(155px, 17vw, 235px);
+  padding: clamp(14px, 1.6vw, 26px);
+  border: 1px solid var(--line);
+  border-top: 5px solid var(--card-accent);
+  background: var(--white);
+}
+
+.experience-card > span {
+  color: var(--card-accent);
+  font-size: clamp(8px, 0.64vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.experience-card h3 {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.experience-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(10px, 0.84vw, 14px);
+  line-height: 1.4;
+}
+
+.experience-card > strong {
+  position: absolute;
+  right: clamp(12px, 1.4vw, 22px);
+  bottom: clamp(11px, 1.2vw, 19px);
+  left: clamp(12px, 1.4vw, 22px);
+  color: var(--ink);
+  font-size: clamp(8px, 0.7vw, 12px);
+}
+
+.language-regions .region {
+  padding: clamp(9px, 1vw, 15px);
+}
+
+.language-regions .lang-pill {
+  font-size: clamp(8px, 0.66vw, 11px);
+}
+
+/* Voice market -> Genie intelligence bridge */
+.capability-bridge {
+  display: grid;
+  grid-template-columns: 1fr clamp(100px, 12vw, 180px) 1fr;
+  align-items: stretch;
+  margin: auto 0;
+}
+
+.bridge-plane {
+  min-height: clamp(190px, 21vw, 290px);
+  padding: clamp(16px, 1.9vw, 30px);
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.voice-plane {
+  border-top: 5px solid var(--green);
+}
+
+.genie-plane {
+  border-top: 5px solid var(--violet);
+}
+
+.bridge-kicker {
+  color: var(--muted);
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bridge-plane h3 {
+  margin: 0.45rem 0 1rem;
+}
+
+.bridge-plane > p {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: clamp(8px, 0.75vw, 13px);
+}
+
+.capability-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.capability-pills span {
+  padding: 0.38rem 0.58rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: clamp(8px, 0.7vw, 12px);
+  font-weight: 650;
+}
+
+.bridge-gap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: var(--white);
+  text-align: center;
+  background: var(--ink);
+}
+
+.bridge-gap span {
+  color: var(--coral);
+  font-size: clamp(8px, 0.68vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.bridge-gap strong {
+  margin: 0.5rem 0;
+  font-size: clamp(12px, 1.2vw, 20px);
+  line-height: 1.15;
+}
+
+.bridge-gap i {
+  color: var(--coral);
+  font-size: clamp(20px, 2.4vw, 40px);
+  font-style: normal;
+}
+
+/* Explicit GPU deployment path on the solution slide */
+.gpu-serving-banner {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  align-items: center;
+  gap: clamp(10px, 1.4vw, 22px);
+  margin-top: auto;
+  padding: clamp(12px, 1.4vw, 22px);
+  border: 1px solid #d6c47d;
+  border-left: 6px solid var(--amber);
+  background: #fff8d8;
+}
+
+.gpu-serving-banner div:not(.gpu-arrow) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.gpu-serving-banner span {
+  color: #796719;
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.gpu-serving-banner strong {
+  font-size: clamp(11px, 1vw, 17px);
+}
+
+.gpu-arrow {
+  color: var(--amber);
+  font-size: clamp(18px, 1.8vw, 30px);
+  font-weight: 800;
+}
+
+/* Model taxonomy: two open voice models + two Foundation Model APIs */
+.model-family-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(14px, 1.8vw, 30px);
+  margin: auto 0;
+}
+
+.model-family {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.model-family-head {
+  padding: clamp(13px, 1.5vw, 24px);
+  border-bottom: 1px solid var(--line);
+}
+
+.open-family .model-family-head {
+  border-top: 5px solid var(--amber);
+  background: #fff9df;
+}
+
+.foundation-family .model-family-head {
+  border-top: 5px solid var(--violet);
+  background: #f4eff9;
+}
+
+.model-family-head > span {
+  color: var(--muted);
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.model-family-head h3 {
+  margin: 0.3rem 0;
+  font-size: clamp(15px, 1.45vw, 25px);
+}
+
+.model-family-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(9px, 0.78vw, 13px);
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) 1.2fr;
+  gap: 12px;
+  padding: clamp(11px, 1.15vw, 18px) clamp(13px, 1.5vw, 24px);
+  border-bottom: 1px solid var(--line);
+}
+
+.model-row b {
+  font-size: clamp(10px, 0.92vw, 15px);
+}
+
+.model-row span {
+  color: var(--muted);
+  font-size: clamp(9px, 0.78vw, 13px);
+}
+
+.model-path {
+  padding: clamp(9px, 1vw, 15px) clamp(13px, 1.5vw, 24px);
+  color: var(--muted);
+  background: var(--paper);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(8px, 0.68vw, 11px);
+  line-height: 1.4;
+}
+
+/* Full L200 architecture artifact */
+.architecture-image-slide {
+  background: #0b0f15;
+}
+
+.architecture-image-frame {
+  padding: 10px;
+  align-items: center;
+  justify-content: center;
+}
+
+.architecture-image-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+/* Deployed product screenshots */
+.product-proof-slide {
+  display: grid;
+  grid-template-columns: 0.75fr 2.25fr;
+  grid-template-rows: 1fr auto;
+  gap: clamp(14px, 1.8vw, 30px);
+  padding-top: clamp(24px, 3vw, 48px);
+  padding-bottom: clamp(28px, 3.8vw, 64px);
+}
+
+.product-proof-copy {
+  align-self: center;
+}
+
+.product-proof-copy h2 {
+  max-width: 11ch;
+  font-size: clamp(25px, 3vw, 52px);
+}
+
+.product-proof-copy > p:last-child {
+  color: rgb(255 255 255 / 68%);
+  font-size: clamp(10px, 0.9vw, 15px);
+  line-height: 1.5;
+}
+
+.product-proof-image {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 6px;
+  box-shadow: 0 16px 46px rgb(0 0 0 / 38%);
+}
+
+.product-proof-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+
+.product-proof-slide .source-line {
+  grid-column: 1 / -1;
+}
+
+/* AI Gateway two-tier control plane */
+.gateway-tiers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(12px, 1.7vw, 28px);
+  margin: clamp(12px, 1.5vw, 24px) 0 14px;
+}
+
+.gateway-tier {
+  min-height: clamp(190px, 19vw, 275px);
+  padding: clamp(14px, 1.7vw, 28px);
+  border: 1px solid rgb(255 255 255 / 16%);
+  background: rgb(255 255 255 / 6%);
+}
+
+.full-tier {
+  border-top: 5px solid var(--violet);
+}
+
+.evidence-tier {
+  border-top: 5px solid var(--amber);
+}
+
+.gateway-tier-head > span {
+  color: #ff9b8b;
+  font-size: clamp(8px, 0.66vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gateway-tier-head h3 {
+  margin: 0.35rem 0 0.8rem;
+}
+
+.gateway-models,
+.gateway-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.gateway-models b,
+.gateway-controls span {
+  padding: 0.35rem 0.58rem;
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 7%);
+  font-size: clamp(8px, 0.72vw, 12px);
+}
+
+.gateway-models {
+  margin-bottom: 0.7rem;
+}
+
+.gateway-controls span {
+  color: rgb(255 255 255 / 72%);
+}
+
+.gateway-tier > p {
+  margin: 0.8rem 0 0;
+  color: rgb(255 255 255 / 63%);
+  font-size: clamp(8px, 0.74vw, 12px);
+  line-height: 1.4;
+}
+
+.limitation-banner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: clamp(11px, 1.2vw, 18px);
+  border: 1px solid rgb(255 107 85 / 48%);
+  border-left: 6px solid var(--coral);
+  color: rgb(255 255 255 / 78%);
+  background: rgb(255 54 33 / 13%);
+  font-size: clamp(9px, 0.78vw, 13px);
+  line-height: 1.4;
+}
+
+.limitation-banner strong {
+  color: #ff9b8b;
+  font-size: clamp(9px, 0.76vw, 13px);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* Roadmap uses six explicit proof-oriented cards */
+.roadmap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(10px, 1.4vw, 22px);
+  margin: auto 0;
+}
+
+.roadmap-card {
+  position: relative;
+  min-height: clamp(155px, 17vw, 235px);
+  padding: clamp(14px, 1.6vw, 26px);
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.roadmap-card.planned {
+  border-top: 5px solid var(--green);
+}
+
+.roadmap-card.research {
+  border-top: 5px solid var(--amber);
+}
+
+.roadmap-card > span {
+  color: var(--green);
+  font-size: clamp(8px, 0.64vw, 11px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.roadmap-card.research > span {
+  color: #9b7500;
+}
+
+.roadmap-card h3 {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.roadmap-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(10px, 0.82vw, 14px);
+  line-height: 1.4;
+}
+
+.roadmap-card > strong {
+  position: absolute;
+  right: clamp(12px, 1.4vw, 22px);
+  bottom: clamp(11px, 1.2vw, 19px);
+  left: clamp(12px, 1.4vw, 22px);
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+  font-size: clamp(8px, 0.7vw, 12px);
+}
+
 @media (max-width: 760px) {
   #deck {
     height: calc(100% - 48px);
@@ -1314,12 +2171,40 @@ h3 {
   .pipeline,
   .phase-grid,
   .split,
-  .duo {
+  .duo,
+  .signal-grid,
+  .model-family-grid,
+  .gateway-tiers,
+  .product-proof-slide,
+  .engineering-grid,
+  .experience-grid,
+  .roadmap-grid {
     grid-template-columns: 1fr;
   }
 
   .band {
     grid-template-columns: 1fr;
+  }
+
+  .capability-bridge {
+    grid-template-columns: 1fr;
+  }
+
+  .gpu-serving-banner {
+    grid-template-columns: 1fr;
+  }
+
+  .voice-market-group,
+  .voice-market-cards.three,
+  .voice-market-cards.two,
+  .model-choice-grid,
+  .selection-fit,
+  .access-progression {
+    grid-template-columns: 1fr;
+  }
+
+  .gpu-arrow {
+    transform: rotate(90deg);
   }
 }
 

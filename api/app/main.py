@@ -351,11 +351,18 @@ def _mount_story_deck(app: FastAPI) -> None:
     story_dir = _REPO_ROOT / "story_deck"
     if not story_dir.is_dir():
         return
+    story_assets_dir = _REPO_ROOT / "docs"
 
     @app.get("/story", include_in_schema=False)
     def _story_index() -> RedirectResponse:
         return RedirectResponse(url="/story/")
 
+    if story_assets_dir.is_dir():
+        app.mount(
+            "/story-assets",
+            StaticFiles(directory=story_assets_dir),
+            name="story-assets",
+        )
     app.mount("/story", StaticFiles(directory=story_dir, html=True), name="story-deck")
 
 
