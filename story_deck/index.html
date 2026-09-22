@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="The Genie for Voice story — from a contact-center prototype to a governed multilingual voice runtime."
+    />
+    <title>Genie for Voice — The Story</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="deck" aria-live="polite"></main>
+
+    <nav class="deck-controls" aria-label="Presentation controls">
+      <button id="previous" class="icon-button" type="button" aria-label="Previous slide">
+        <span aria-hidden="true">←</span>
+      </button>
+      <button id="counter" class="counter" type="button" aria-label="Open slide navigator"></button>
+      <button id="next" class="icon-button" type="button" aria-label="Next slide">
+        <span aria-hidden="true">→</span>
+      </button>
+      <label class="slide-picker-label">
+        <span class="sr-only">Jump to slide</span>
+        <select id="slide-picker" aria-label="Jump to slide"></select>
+      </label>
+      <span class="control-spacer"></span>
+      <button id="grid-toggle" class="text-button" type="button">Grid</button>
+      <button id="notes-toggle" class="text-button" type="button">Notes</button>
+      <button id="fullscreen-toggle" class="text-button" type="button">Full screen</button>
+    </nav>
+
+    <dialog id="grid-dialog" class="grid-dialog" aria-label="Slide overview">
+      <header class="dialog-header">
+        <div>
+          <p class="eyebrow">Genie for Voice</p>
+          <h2>Choose a chapter</h2>
+        </div>
+        <button id="grid-close" class="icon-button" type="button" aria-label="Close slide overview">×</button>
+      </header>
+      <div id="grid-list" class="grid-list"></div>
+    </dialog>
+
+    <aside id="notes-panel" class="notes-panel" aria-label="Speaker notes" hidden>
+      <div class="notes-heading">
+        <span>Speaker notes</span>
+        <button id="notes-close" class="icon-button" type="button" aria-label="Close speaker notes">×</button>
+      </div>
+      <div id="notes-content"></div>
+    </aside>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

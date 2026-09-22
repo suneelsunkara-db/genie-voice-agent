@@ -664,8 +664,10 @@ if [[ -n "$APP_EXTERNAL_GROUPS" ]]; then
 fi
 
 # ---- 6. sync source to the workspace ---------------------------------------
-log "syncing source -> $WORKSPACE_DIR (respects .gitignore, includes built SPA)"
-dbx sync . "$WORKSPACE_DIR" --include "api/app/static/**"
+log "syncing source -> $WORKSPACE_DIR (includes built SPA + Story Deck)"
+dbx sync . "$WORKSPACE_DIR" \
+  --include "api/app/static/**" \
+  --include "story_deck/**"
 
 # ---- 7. deploy --------------------------------------------------------------
 log "deploying app version"
@@ -724,6 +726,24 @@ for route, valid in checks.items():
     if not valid(body):
         raise SystemExit(f"deployed smoke test returned an invalid payload for {route}")
     print(f"[app-deploy] smoke ok: {route}")
+
+story_request = urllib.request.Request(base + "/story/", headers=headers)
+try:
+    with urllib.request.urlopen(story_request, timeout=30) as response:
+        content_type = response.headers.get("content-type", "")
+        page = response.read().decode("utf-8")
+        if (
+            response.status != 200
+            or "text/html" not in content_type
+            or "Genie for Voice" not in page
+        ):
+            raise RuntimeError(
+                "story deck: "
+                f"status={response.status}, content-type={content_type!r}"
+            )
+except (urllib.error.URLError, UnicodeDecodeError) as exc:
+    raise SystemExit(f"deployed smoke test failed for /story/: {exc}") from exc
+print("[app-deploy] smoke ok: /story/")
 PY
 
 # Final readiness snapshot from the DEPLOYED app: one source of truth shared with

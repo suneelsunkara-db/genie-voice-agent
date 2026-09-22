@@ -499,6 +499,9 @@ export function HomePage() {
             <a href="#/traces">Traces</a>
             <a href="#/guardrails">Guardrails</a>
             <a href="#/setup" title="Deployment readiness & setup checklist">Setup</a>
+            <a href="/story/" target="_blank" rel="noreferrer">
+              Story Deck
+            </a>
           </nav>
         </div>
       </header>

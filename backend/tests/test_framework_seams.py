@@ -477,6 +477,15 @@ def test_deploy_orders_gateway_before_gpu_and_grants_viewers():
     assert "GRANT EXECUTE ON FUNCTION" in grants
     # The installer prints the readiness checklist from the deployed app.
     assert "/readiness?full=false" in sh
+    # The standalone Story Deck ships with the app and is checked after deploy.
+    assert '--include "story_deck/**"' in sh
+    assert 'base + "/story/"' in sh
+    main = (REPO / "api/app/main.py").read_text(encoding="utf-8")
+    home = (REPO / "frontend/src/components/HomePage.tsx").read_text(encoding="utf-8")
+    assert "_mount_story_deck(app)" in main
+    assert 'app.mount("/story"' in main
+    assert 'href="/story/"' in home
+    assert "Story Deck" in home
     # UI-only gates must not prevent the app/Setup page from being deployed.
     assert 'if ! DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE"' in sh
     assert "Continuing so the app and Setup page are deployed" in sh

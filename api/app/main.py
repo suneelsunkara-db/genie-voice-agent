@@ -170,6 +170,7 @@ def create_app() -> FastAPI:
     _mount_mcp(app)
     _mount_realtime(app)
     _mount_realtime_test_ui(app)
+    _mount_story_deck(app)
     _mount_frontend(app)
     return app
 
@@ -343,6 +344,19 @@ def _mount_realtime_test_ui(app: FastAPI) -> None:
             return RedirectResponse(url="/realtime-test/")
 
         app.mount("/realtime-test", StaticFiles(directory=ui_dir, html=True), name="realtime-test")
+
+
+def _mount_story_deck(app: FastAPI) -> None:
+    """Serve the Genie for Voice milestone story at ``/story`` (optional)."""
+    story_dir = _REPO_ROOT / "story_deck"
+    if not story_dir.is_dir():
+        return
+
+    @app.get("/story", include_in_schema=False)
+    def _story_index() -> RedirectResponse:
+        return RedirectResponse(url="/story/")
+
+    app.mount("/story", StaticFiles(directory=story_dir, html=True), name="story-deck")
 
 
 def _mount_frontend(app: FastAPI) -> None:
