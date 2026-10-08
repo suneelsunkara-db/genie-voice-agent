@@ -290,7 +290,8 @@ greenfield checklist and the UI-only checkpoints.
    pass-through against the live Qwen and GPT-5.5 services.
 7. **Creates/updates the app** with declared **resources** (SQL warehouse and
    Qwen3-ASR/VoxCPM2 serving endpoints) so the app's service
-   principal is auto-granted `CAN_QUERY`. Foundation-model chat uses the app-owned
+   principal is granted `CAN_MANAGE` on only those two endpoints. This includes
+   `CAN_QUERY` and lets Setup explicitly disable scale-to-zero. Foundation-model chat uses the app-owned
    Gateway services (`EXECUTE` granted in `grant_app_sp.py`), not a serving resource.
    ElevenLabs is included only when its key exists.
 8. **Grants the service principal** its runtime access:
@@ -521,7 +522,8 @@ block of `config/config.yaml` (+ `config/config.local.yaml`).
 
    `deploy_app.sh` attaches the realtime STT/TTS serving endpoints (from the
    `realtime_voice:` config block) as app resources so the service principal gets
-   `CAN_QUERY`. Foundation-model chat uses the app-owned Gateway services via Unity
+   `CAN_MANAGE` on those two endpoints (inference plus explicit scale-to-zero repair).
+   Foundation-model chat uses the app-owned Gateway services via Unity
    AI Gateway (`EXECUTE`, not a serving-endpoint resource). See [Guardrails](#guardrails).
 
 How to grant access and call Genie Space, Agent Mode, and Genie One from another

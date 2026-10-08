@@ -124,7 +124,16 @@ def ensure_current_ip_allowed() -> str:
     from databricks.sdk.errors import PermissionDenied
     from databricks.sdk.service.settings import ListType
 
-    client = WorkspaceClient()
+    # A workspace can legitimately have several CLI profiles (personal,
+    # deployment SP, UC owner) with the same host. Unified auth by host is
+    # ambiguous in that case, so carry the deploy script's explicit profile into
+    # the SDK instead of letting it invoke ``databricks auth token --host``.
+    profile = (
+        os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        or os.environ.get("DATABRICKS_PROFILE")
+        or ""
+    ).strip()
+    client = WorkspaceClient(profile=profile or None)
     try:
         me = client.current_user.me()
     except PermissionDenied as exc:

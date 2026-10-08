@@ -5,15 +5,20 @@
  * (config, warehouse, voice model endpoints, Genie spaces, Lakebase CDF/serving,
  * AI Gateway guardrails, Apps User Authorization) and shows one authoritative
  * checklist. Cheap idempotent fixes (e.g. snapshot the Lakebase reference cache)
- * run in-place; UI-only Databricks steps deep-link out and re-check. The banner
- * flips to "Ready to use" only when every check is green.
- *
- * It intentionally never triggers GPU model deployment or owner-only grants —
- * those belong to deploy_app.sh.
+ * run in-place; UI-only Databricks steps deep-link out and re-check. An explicit
+ * billable action can reconcile scale-to-zero on the two App-managed voice
+ * endpoints, with live progress. The banner flips to "Ready to use" only when
+ * every check is green.
  */
-import { CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, ReadinessCheck, ReadinessResponse, ReadinessStatus } from "../api/client";
+import {
+  api,
+  ReadinessCheck,
+  ReadinessResponse,
+  ReadinessStatus,
+  VoiceServingStatus,
+} from "../api/client";
 
 const STATUS_COLOR: Record<ReadinessStatus, string> = {
   ok: "#4ade80",
@@ -193,6 +198,11 @@ export function SetupPage() {
   const [progress, setProgress] = useState(4);
   const [automatedOpen, setAutomatedOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [voiceServing, setVoiceServing] = useState<VoiceServingStatus | null>(null);
+  const [voiceServingError, setVoiceServingError] = useState<string | null>(null);
+  const [voiceActionBusy, setVoiceActionBusy] = useState(false);
+  const [voiceActionTarget, setVoiceActionTarget] = useState<boolean | null>(null);
+  const voiceWasCompliant = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -215,6 +225,64 @@ export function SetupPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadVoiceServing = useCallback(async () => {
+    try {
+      const status = await api.voiceServingStatus();
+      setVoiceServing(status);
+      setVoiceServingError(null);
+    } catch (e) {
+      setVoiceServingError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadVoiceServing();
+    const timer = window.setInterval(() => void loadVoiceServing(), 4_000);
+    return () => window.clearInterval(timer);
+  }, [loadVoiceServing]);
+
+  useEffect(() => {
+    if (voiceServing?.compliant && !voiceWasCompliant.current) {
+      voiceWasCompliant.current = true;
+      void load();
+    } else if (voiceServing && !voiceServing.compliant) {
+      voiceWasCompliant.current = false;
+    }
+  }, [voiceServing?.compliant, load]);
+
+  useEffect(() => {
+    if (!voiceServing || voiceActionTarget === null) return;
+    const matching = voiceActionTarget
+      ? voiceServing.metrics.scale_to_zero_enabled
+      : voiceServing.metrics.scale_to_zero_disabled;
+    if (
+      matching === voiceServing.metrics.total
+      && voiceServing.metrics.ready === voiceServing.metrics.total
+      && !voiceServing.updating
+      && voiceServing.metrics.failed === 0
+    ) {
+      setVoiceActionBusy(false);
+      setVoiceActionTarget(null);
+      void load();
+    }
+  }, [voiceServing, voiceActionTarget, load]);
+
+  const setScaleToZero = useCallback(async (enabled: boolean) => {
+    setVoiceActionBusy(true);
+    setVoiceActionTarget(enabled);
+    setVoiceServingError(null);
+    try {
+      const result = enabled
+        ? await api.enableVoiceScaleToZero()
+        : await api.disableVoiceScaleToZero();
+      setVoiceServing(result.status);
+    } catch (e) {
+      setVoiceActionBusy(false);
+      setVoiceActionTarget(null);
+      setVoiceServingError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
 
   const onFix = useCallback(async (action: string) => {
     setBusyAction(action);
@@ -245,6 +313,13 @@ export function SetupPage() {
   );
   const automatedIssues = automatedChecks.filter((check) => check.status !== "ok").length;
   const manualIssues = manualChecks.filter((check) => check.status !== "ok").length;
+  const voiceProgress = voiceServing && voiceActionTarget !== null && voiceServing.metrics.total > 0
+    ? Math.round(100 * (
+      voiceActionTarget
+        ? voiceServing.metrics.scale_to_zero_enabled
+        : voiceServing.metrics.scale_to_zero_disabled
+    ) / voiceServing.metrics.total)
+    : voiceServing?.progress ?? 0;
 
   useEffect(() => {
     if (!data) return;
@@ -282,6 +357,107 @@ export function SetupPage() {
           <button type="button" style={pill} disabled={!data} onClick={() => void copyDiagnostics()}>
             Copy diagnostics
           </button>
+        </div>
+
+        <div
+          style={{
+            ...card,
+            borderColor: voiceServing?.compliant
+              ? "rgba(74,222,128,0.5)"
+              : "rgba(251,191,36,0.55)",
+            background: voiceServing?.compliant
+              ? "rgba(22,45,32,0.6)"
+              : "rgba(69,43,12,0.62)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <strong style={{ fontSize: 16 }}>Voice model serving</strong>
+            <span style={{ marginLeft: "auto", color: voiceServing?.compliant ? "#4ade80" : "#fbbf24", fontSize: 12, fontWeight: 700 }}>
+              {voiceServing?.compliant
+                ? "WARM CONFIGURATION"
+                : voiceServing?.updating
+                  ? "UPDATING"
+                  : "ACTION REQUIRED"}
+            </span>
+          </div>
+          <p style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.5, margin: "8px 0 12px" }}>
+            Qwen3-ASR and VoxCPM2 must keep a GPU replica available. Disabling scale-to-zero is
+            billable and prevents cold starts from swallowing the first transcription or spoken reply.
+            Enabling it reduces idle cost, but the first call after an idle period may be delayed or silent.
+          </p>
+
+          {voiceServing && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                {[
+                  ["Scale-to-zero disabled", `${voiceServing.metrics.scale_to_zero_disabled}/${voiceServing.metrics.total}`],
+                  ["Endpoints ready", `${voiceServing.metrics.ready}/${voiceServing.metrics.total}`],
+                  ["Update progress", `${voiceProgress}%`],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ padding: "10px 12px", borderRadius: 9, background: "rgba(8,15,30,0.5)" }}>
+                    <div style={{ fontSize: 11, opacity: 0.65 }}>{label}</div>
+                    <div style={{ fontSize: 19, fontWeight: 750, marginTop: 3 }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+              <div
+                role="progressbar"
+                aria-label="Voice endpoint update progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={voiceProgress}
+                style={{ height: 8, borderRadius: 999, overflow: "hidden", background: "rgba(148,163,184,0.18)", marginTop: 12 }}
+              >
+                <div style={{
+                  width: `${voiceProgress}%`,
+                  height: "100%",
+                  transition: "width 600ms ease",
+                  background: voiceServing.compliant
+                    ? "linear-gradient(90deg, #22c55e, #4ade80)"
+                    : "linear-gradient(90deg, #f59e0b, #fbbf24)",
+                }} />
+              </div>
+              <div style={{ marginTop: 12, display: "grid", gap: 7 }}>
+                {voiceServing.endpoints.map((endpoint) => (
+                  <div key={endpoint.name || endpoint.id} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12 }}>
+                    <strong style={{ minWidth: 44 }}>{endpoint.modality.toUpperCase()}</strong>
+                    <span style={{ flex: 1, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", overflowWrap: "anywhere" }}>
+                      {endpoint.name}
+                    </span>
+                    <span>{endpoint.scale_to_zero_enabled === false ? "always on" : endpoint.scale_to_zero_enabled === true ? "scale-to-zero" : "unknown"}</span>
+                    <span>{endpoint.config_update && endpoint.config_update !== "NOT_UPDATING" ? endpoint.config_update : endpoint.ready || "unknown"}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                style={{ ...pill, marginTop: 14, opacity: voiceActionBusy || voiceServing.updating ? 0.6 : 1 }}
+                disabled={
+                  voiceActionBusy
+                  || voiceServing.updating
+                  || (!voiceServing.compliant && !voiceServing.requires_action)
+                }
+                onClick={() => void setScaleToZero(voiceServing.compliant)}
+              >
+                {voiceServing.updating || voiceActionBusy
+                  ? `${voiceActionTarget ? "Enabling" : "Disabling"} scale-to-zero… ${voiceProgress}%`
+                  : voiceServing.compliant
+                    ? "Enable scale-to-zero for both models"
+                    : "Disable scale-to-zero for both models"}
+              </button>
+            </>
+          )}
+          {!voiceServing && !voiceServingError && (
+            <div style={{ fontSize: 12, color: "#fbbf24" }}>Reading serving configuration…</div>
+          )}
+          {voiceServingError && (
+            <div style={{ fontSize: 12, color: "#fca5a5", marginTop: 10 }}>
+              {voiceServingError}
+              <div style={{ opacity: 0.8, marginTop: 4 }}>
+                Redeploy the App if its service principal does not yet have CAN_MANAGE on both voice endpoints.
+              </div>
+            </div>
+          )}
         </div>
 
         <div

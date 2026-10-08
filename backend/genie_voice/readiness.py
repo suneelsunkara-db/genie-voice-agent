@@ -18,10 +18,10 @@ Each check is best-effort and self-contained: one failing probe never masks the
 others. Network calls are fine here — this runs on demand (a Setup page poll or
 the end of a deploy), not on a hot path.
 
-The only *fix* actions exposed are cheap and idempotent AND performable as the
-app's own identity (e.g. re-snapshotting the Lakebase reference cache). Grants
-must run as the object owner (the deployer), and GPU model deployment is long and
-billable, so both stay in ``deploy_app.sh`` — never triggered from a page load.
+Cheap idempotent fixes may run as the app identity (for example re-snapshotting
+the Lakebase reference cache). Billable serving changes require an explicit
+user action and the App's narrowly scoped endpoint-management grant; they are
+never triggered merely by loading the page.
 """
 from __future__ import annotations
 
@@ -131,6 +131,188 @@ def _voice_candidates() -> list[tuple[str, dict[str, Any]]]:
             if isinstance(candidate, dict):
                 out.append((f"{modality}:{candidate_id}", candidate))
     return out
+
+
+def _raw_state(payload: dict[str, Any], key: str) -> str:
+    value = (payload.get("state") or {}).get(key)
+    if isinstance(value, dict):
+        value = value.get("value")
+    return str(value or "")
+
+
+def _scale_to_zero_value(payload: dict[str, Any]) -> bool | None:
+    config = payload.get("config") or {}
+    entities = config.get("served_entities") or config.get("served_models") or []
+    values = [
+        entity.get("scale_to_zero_enabled")
+        for entity in entities
+        if isinstance(entity, dict) and "scale_to_zero_enabled" in entity
+    ]
+    if not values:
+        return None
+    return any(bool(value) for value in values)
+
+
+def voice_serving_status(
+    settings: Settings | None = None,
+    *,
+    client: Any | None = None,
+) -> dict[str, Any]:
+    """Return live warm-serving configuration and update progress for voice models."""
+    settings = settings or get_settings()
+    if client is None:
+        from genie_voice.databricks.client import get_workspace_client
+
+        client = get_workspace_client(settings)
+
+    endpoints: list[dict[str, Any]] = []
+    for candidate_key, candidate in _voice_candidates():
+        modality, candidate_id = candidate_key.split(":", 1)
+        name = str(candidate.get("endpoint") or "").strip()
+        item: dict[str, Any] = {
+            "id": candidate_id,
+            "modality": modality,
+            "name": name,
+            "model": str(candidate.get("base_model") or candidate_id),
+            "ready": "",
+            "config_update": "",
+            "scale_to_zero_enabled": None,
+            "progress": 0,
+        }
+        if not name:
+            item["error"] = "endpoint is not configured"
+            endpoints.append(item)
+            continue
+        try:
+            payload = client.api_client.do(
+                "GET", f"/api/2.0/serving-endpoints/{name}"
+            )
+            ready = _raw_state(payload, "ready")
+            config_update = _raw_state(payload, "config_update")
+            scale_to_zero = _scale_to_zero_value(payload)
+            updating = config_update not in {"", "NOT_UPDATING"}
+            update_failed = config_update == "UPDATE_FAILED"
+            if update_failed:
+                progress = 0
+            elif updating:
+                progress = 60
+            elif scale_to_zero is True:
+                progress = 0
+            elif ready == "READY" and scale_to_zero is False:
+                progress = 100
+            else:
+                progress = 85 if scale_to_zero is False else 20
+            item.update(
+                {
+                    "ready": ready,
+                    "config_update": config_update,
+                    "scale_to_zero_enabled": scale_to_zero,
+                    "progress": progress,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            item["error"] = _error_text(exc)
+        endpoints.append(item)
+
+    total = len(endpoints)
+    enabled = sum(item["scale_to_zero_enabled"] is True for item in endpoints)
+    disabled = sum(item["scale_to_zero_enabled"] is False for item in endpoints)
+    ready = sum(item["ready"] == "READY" for item in endpoints)
+    updating = sum(
+        item["config_update"] not in {"", "NOT_UPDATING", "UPDATE_FAILED"}
+        for item in endpoints
+    )
+    failed = sum(
+        bool(item.get("error")) or item["config_update"] == "UPDATE_FAILED"
+        for item in endpoints
+    )
+    progress = (
+        round(sum(int(item["progress"]) for item in endpoints) / total)
+        if total
+        else 0
+    )
+    return {
+        "desired_scale_to_zero_enabled": False,
+        "requires_action": enabled > 0,
+        "updating": updating > 0,
+        "compliant": (
+            total > 0
+            and disabled == total
+            and ready == total
+            and updating == 0
+            and failed == 0
+        ),
+        "progress": progress,
+        "metrics": {
+            "total": total,
+            "scale_to_zero_enabled": enabled,
+            "scale_to_zero_disabled": disabled,
+            "ready": ready,
+            "updating": updating,
+            "failed": failed,
+        },
+        "endpoints": endpoints,
+    }
+
+
+def set_voice_scale_to_zero(
+    settings: Settings,
+    *,
+    enabled: bool,
+) -> dict[str, Any]:
+    """Set scale-to-zero on all App-managed voice endpoints."""
+    from genie_voice.databricks.client import get_workspace_client
+
+    client = get_workspace_client(settings)
+    accepted: list[str] = []
+    unchanged: list[str] = []
+    for _, candidate in _voice_candidates():
+        name = str(candidate.get("endpoint") or "").strip()
+        if not name:
+            continue
+        path = f"/api/2.0/serving-endpoints/{name}"
+        payload = client.api_client.do("GET", path)
+        config = payload.get("config") or {}
+        entity_key = (
+            "served_entities" if config.get("served_entities") is not None
+            else "served_models"
+        )
+        entities = config.get(entity_key) or []
+        if not entities:
+            raise RuntimeError(f"{name} has no served entities")
+        updated_entities: list[dict[str, Any]] = []
+        # Re-submit the desired config after a failed asynchronous update even
+        # when the visible scale flag already has the target value.
+        changed = _raw_state(payload, "config_update") == "UPDATE_FAILED"
+        for entity in entities:
+            updated = dict(entity)
+            if updated.get("scale_to_zero_enabled") is not enabled:
+                updated["scale_to_zero_enabled"] = enabled
+                changed = True
+            updated_entities.append(updated)
+        if not changed:
+            unchanged.append(name)
+            continue
+        body: dict[str, Any] = {entity_key: updated_entities}
+        if config.get("traffic_config") is not None:
+            body["traffic_config"] = config["traffic_config"]
+        client.api_client.do("PUT", f"{path}/config", body=body)
+        accepted.append(name)
+    return {
+        "accepted": accepted,
+        "unchanged": unchanged,
+        "status": voice_serving_status(settings, client=client),
+    }
+
+
+def disable_voice_scale_to_zero(settings: Settings) -> dict[str, Any]:
+    """Keep voice endpoints warm to avoid first-request cold starts."""
+    return set_voice_scale_to_zero(settings, enabled=False)
+
+
+def enable_voice_scale_to_zero(settings: Settings) -> dict[str, Any]:
+    """Allow idle voice endpoints to scale down to reduce serving cost."""
+    return set_voice_scale_to_zero(settings, enabled=True)
 
 
 def _error_text(exc: Exception) -> str:
@@ -287,7 +469,7 @@ def _readiness_objects(settings: Settings, check_id: str) -> list[str]:
                     ).values()
                 )
             )
-        objects.append(f"App resource grants: {app_sp} → CAN_QUERY")
+        objects.append(f"App resource grants: {app_sp} → CAN_MANAGE")
         return objects
     if check_id in {"genie_spaces", "viewer_genie"}:
         objects = [f"Genie space: {settings.databricks.genie_space_name}"]
@@ -676,11 +858,8 @@ def check_pipeline_job(settings: Settings, obo_token: str | None) -> Check:
 
 
 def check_model_endpoints(settings: Settings, obo_token: str | None) -> Check:
-    rt = _realtime_settings()
-    endpoints: list[str] = []
-    if rt is not None:
-        endpoints = [e for e in (rt.stt_endpoint, rt.tts_endpoint) if e]
-    if not endpoints:
+    candidates = _voice_candidates()
+    if not candidates:
         return Check(
             id="model_endpoints", title="Voice model endpoints", category=CATEGORY_SCRIPTED,
             status=FAIL, detail="No realtime STT/TTS endpoints configured",
@@ -689,21 +868,17 @@ def check_model_endpoints(settings: Settings, obo_token: str | None) -> Check:
         from genie_voice.databricks.client import get_workspace_client
 
         client = get_workspace_client(settings)
+        status = voice_serving_status(settings, client=client)
     except Exception as exc:  # noqa: BLE001
         return Check(
             id="model_endpoints", title="Voice model endpoints", category=CATEGORY_SCRIPTED,
             status=FAIL, detail=f"cannot reach serving API: {exc}",
         )
-    not_ready: list[str] = []
-    for name in endpoints:
-        try:
-            ep = client.serving_endpoints.get(name)
-            state = getattr(getattr(ep, "state", None), "ready", None)
-            ready = str(getattr(state, "value", state) or "")
-            if ready != "READY":
-                not_ready.append(f"{name}={ready or 'MISSING'}")
-        except Exception:  # noqa: BLE001
-            not_ready.append(f"{name}=MISSING")
+    not_ready = [
+        f"{item['name']}={item['ready'] or 'MISSING'}"
+        for item in status["endpoints"]
+        if item["ready"] != "READY" or item.get("error")
+    ]
     if not_ready:
         return Check(
             id="model_endpoints", title="Voice model endpoints", category=CATEGORY_SCRIPTED,
@@ -715,10 +890,33 @@ def check_model_endpoints(settings: Settings, obo_token: str | None) -> Check:
                 "Re-run FORCE_REALTIME_MODELS=1 ./deploy_app.sh if the endpoint model/config drifted.",
             ],
         )
+    enabled = [
+        item["name"]
+        for item in status["endpoints"]
+        if item["scale_to_zero_enabled"] is True
+    ]
+    if enabled:
+        return Check(
+            id="model_endpoints",
+            title="Voice model endpoints",
+            category=CATEGORY_SCRIPTED,
+            status=FAIL,
+            detail=(
+                f"Scale-to-zero is enabled on {len(enabled)} voice endpoint(s); "
+                "the first call can time out before Qwen3-ASR or VoxCPM2 is warm."
+            ),
+            explanation=", ".join(enabled),
+            resolution_steps=[
+                "Use the Voice serving card above this checklist to disable scale-to-zero.",
+                "Keep this page open while Databricks updates and warms both endpoints.",
+            ],
+        )
     return Check(
         id="model_endpoints", title="Voice model endpoints", category=CATEGORY_SCRIPTED,
         status=OK, detail="Qwen3-ASR + VoxCPM2 READY",
-        explanation="Both GPU serving endpoints exist and Databricks reports them ready.",
+        explanation=(
+            "Both GPU serving endpoints exist, report READY, and have scale-to-zero disabled."
+        ),
     )
 
 

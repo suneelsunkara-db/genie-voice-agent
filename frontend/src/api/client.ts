@@ -804,10 +804,68 @@ export interface ReadinessResponse {
   };
 }
 
+export interface VoiceServingEndpointStatus {
+  id: string;
+  modality: "stt" | "tts";
+  name: string;
+  model: string;
+  ready: string;
+  config_update: string;
+  scale_to_zero_enabled: boolean | null;
+  progress: number;
+  error?: string;
+}
+
+export interface VoiceServingStatus {
+  desired_scale_to_zero_enabled: false;
+  requires_action: boolean;
+  updating: boolean;
+  compliant: boolean;
+  progress: number;
+  metrics: {
+    total: number;
+    scale_to_zero_enabled: number;
+    scale_to_zero_disabled: number;
+    ready: number;
+    updating: number;
+    failed: number;
+  };
+  endpoints: VoiceServingEndpointStatus[];
+}
+
 export const api = {
   status: () => getJSON<StatusResponse>("/status"),
   health: () => getJSON<Record<string, unknown>>("/health"),
-  readiness: () => getJSON<ReadinessResponse>("/readiness"),
+  readiness: (full = true) => getJSON<ReadinessResponse>(`/readiness?full=${full}`),
+  voiceServingStatus: () => getJSON<VoiceServingStatus>("/readiness/voice-serving"),
+  disableVoiceScaleToZero: async (): Promise<{
+    accepted: string[];
+    unchanged: string[];
+    status: VoiceServingStatus;
+  }> => {
+    const res = await fetch(`${API_BASE_URL}/readiness/voice-serving/disable-scale-to-zero`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(payload.detail || `${res.status} ${res.statusText}`);
+    }
+    return res.json();
+  },
+  enableVoiceScaleToZero: async (): Promise<{
+    accepted: string[];
+    unchanged: string[];
+    status: VoiceServingStatus;
+  }> => {
+    const res = await fetch(`${API_BASE_URL}/readiness/voice-serving/enable-scale-to-zero`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(payload.detail || `${res.status} ${res.statusText}`);
+    }
+    return res.json();
+  },
   readinessFix: async (action: string): Promise<{ fix: unknown; readiness: ReadinessResponse }> => {
     const res = await fetch(`${API_BASE_URL}/readiness/fix`, {
       method: "POST",

@@ -15,6 +15,7 @@ import { BrandLockup } from "./BrandLockup";
 import { VoiceBackdrop } from "./VoiceBackdrop";
 import { VoiceOrb } from "./VoiceOrb";
 import { API_BASE_URL, WS_BASE_URL } from "../config";
+import { api, VoiceServingStatus } from "../api/client";
 import "../styles/home.css";
 
 /**
@@ -135,6 +136,7 @@ export function HomePage() {
   const [micLevel, setMicLevel] = useState(0);
   const [speakLevel, setSpeakLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [voiceServing, setVoiceServing] = useState<VoiceServingStatus | null>(null);
   // The one app language, chosen here on the home page and inherited (locked) by
   // every use-case page. The concierge greets AND listens in this language.
   const [appLanguage, setAppLanguage] = useAppLanguage();
@@ -200,6 +202,24 @@ export function HomePage() {
     })();
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const status = await api.voiceServingStatus();
+        if (active) setVoiceServing(status);
+      } catch {
+        // A readiness notification must never prevent the home experience from loading.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -465,6 +485,22 @@ export function HomePage() {
   return (
     <div className="home-root">
       <VoiceBackdrop />
+
+      {(voiceServing?.requires_action || voiceServing?.updating) && (
+        <button
+          type="button"
+          className="home-serving-warning"
+          onClick={() => (window.location.hash = "#/setup")}
+        >
+          <span aria-hidden="true">⚠</span>
+          <span>
+            {voiceServing.updating
+              ? `Voice models are being updated · ${voiceServing.progress}%`
+              : `Scale-to-zero is enabled on ${voiceServing.metrics.scale_to_zero_enabled} voice model endpoint${voiceServing.metrics.scale_to_zero_enabled === 1 ? "" : "s"}. First-call audio may fail.`}
+          </span>
+          <strong>Open Setup →</strong>
+        </button>
+      )}
 
       <header className="home-top">
         <BrandLockup product="Assisted Voice" />

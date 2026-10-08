@@ -24,6 +24,32 @@
   font-family: Inter, system-ui, -apple-system, sans-serif;
 }
 
+.home-serving-warning {
+  position: relative;
+  z-index: 5;
+  flex: none;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.38);
+  background: linear-gradient(90deg, rgba(120, 53, 15, 0.97), rgba(146, 64, 14, 0.94));
+  color: #fff7d6;
+  padding: 9px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.home-serving-warning:hover {
+  background: linear-gradient(90deg, rgba(146, 64, 14, 0.98), rgba(180, 83, 9, 0.96));
+}
+.home-serving-warning strong {
+  color: #fde68a;
+  white-space: nowrap;
+}
+
 /* ---- top bar ----------------------------------------------------------- */
 .home-top {
   position: relative;

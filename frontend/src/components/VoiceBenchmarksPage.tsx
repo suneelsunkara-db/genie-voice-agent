@@ -34,7 +34,6 @@ const LANG_NAMES: Record<string, string> = {
 
 // Non-spaced scripts scored with Character Error Rate rather than Word ER.
 const CER_LANGS = new Set(["zh", "ja", "th", "lo", "km", "my", "yue"]);
-const SHOW_CROSS_SYSTEM_COMPARISONS = false;
 
 const DATASET_META: Record<
   string,
@@ -416,12 +415,6 @@ function ComparisonStrip({
   );
 }
 
-function avgScoreForDataset(runs: VoiceBenchmarkRun[], dataset: string, key?: string): number | null {
-  const selected = runs.filter((r) => r.dataset === dataset && !r.errors);
-  if (!selected.length) return null;
-  return avg(selected.map((r) => (key ? sScore(r, key) : asrErr(r))));
-}
-
 // A measured competitor row (our own stack or a vendor), as opposed to a
 // published paper reference. Rendered with a "measured" tag in the charts.
 interface MeasuredRef {
@@ -429,70 +422,135 @@ interface MeasuredRef {
   value: number | null;
 }
 
-// Aggregate error rate for each vendor STT system, computed from the vendor
-// dataset rows the API already returns. Averaged over the SAME languages our
-// measured FLEURS run covered so the headline is like-for-like (vendors may
-// cover a slightly wider/narrower language set).
-function vendorMeasuredStt(
-  allRuns: VoiceBenchmarkRun[] | undefined,
-  ourLangs: Set<string>,
-): MeasuredRef[] {
-  const runs = allRuns || [];
-  return VENDOR_STT_DATASETS.map(({ dataset, label }) => {
-    let rows = runs.filter((r) => r.dataset === dataset && !r.errors);
-    if (ourLangs.size) rows = rows.filter((r) => ourLangs.has(baseLang(r.language)));
-    return { label, value: rows.length ? avg(rows.map(asrErr)) : null };
-  }).filter((r): r is MeasuredRef => r.value != null);
+type ErrorFamily = "wer" | "cer";
+interface MeasuredModelComparison {
+  competitor: string;
+  family: ErrorFamily;
+  languages: string[];
+  ours: number;
+  theirs: number;
 }
 
-type CompareKind = "ours" | "vendor" | "published";
+function metricValue(run: VoiceBenchmarkRun, family: ErrorFamily): number | null {
+  const explicit = sScore(run, family);
+  if (explicit != null) return explicit;
+  const expectedFamily = CER_LANGS.has(baseLang(run.language)) ? "cer" : "wer";
+  return expectedFamily === family ? asrErr(run) : null;
+}
+
+function measuredModelComparisons(
+  ourRuns: VoiceBenchmarkRun[],
+  allRuns: VoiceBenchmarkRun[] | undefined,
+): MeasuredModelComparison[] {
+  const oursByLanguage = new Map(
+    ourRuns
+      .filter((run) => run.dataset === "fleurs" && !run.errors)
+      .map((run) => [baseLang(run.language), run]),
+  );
+  const comparisons: MeasuredModelComparison[] = [];
+  for (const vendor of VENDOR_STT_DATASETS) {
+    const vendorByLanguage = new Map(
+      (allRuns || [])
+        .filter((run) => run.dataset === vendor.dataset && !run.errors)
+        .map((run) => [baseLang(run.language), run]),
+    );
+    for (const family of ["wer", "cer"] as const) {
+      const languages = [...oursByLanguage.keys()].filter((language) => {
+        const isCer = CER_LANGS.has(language);
+        const vendorRun = vendorByLanguage.get(language);
+        return (
+          isCer === (family === "cer")
+          && vendorRun != null
+          && metricValue(oursByLanguage.get(language)!, family) != null
+          && metricValue(vendorRun, family) != null
+        );
+      });
+      if (!languages.length) continue;
+      comparisons.push({
+        competitor: vendor.label,
+        family,
+        languages,
+        ours: avg(languages.map((language) => metricValue(oursByLanguage.get(language)!, family)))!,
+        theirs: avg(languages.map((language) => metricValue(vendorByLanguage.get(language)!, family)))!,
+      });
+    }
+  }
+  return comparisons;
+}
+
 function ModelComparisonSection({
   runs,
+  allRuns,
   refs,
-  measured,
 }: {
   runs: VoiceBenchmarkRun[];
+  allRuns: VoiceBenchmarkRun[] | undefined;
   refs: AggRef[];
-  measured: MeasuredRef[];
 }) {
-  const sttRows: { label: string; value: number | null; kind: CompareKind }[] = [
-    { label: "Genie Voice API", value: avgScoreForDataset(runs, "fleurs"), kind: "ours" as const },
-    ...measured.map((m) => ({ label: m.label, value: m.value, kind: "vendor" as const })),
-    ...refs.map((r) => ({ label: r.label, value: r.value, kind: "published" as const })),
-  ].filter((r) => r.value != null);
+  const measured = measuredModelComparisons(runs, allRuns);
+  const publishedWer = refs.filter((ref) => ref.metric === "wer" && ref.value != null);
+  if (!measured.length && !publishedWer.length) return null;
 
-  if (!sttRows.length) return null;
-
-  const renderRows = (rows: typeof sttRows) =>
-    rows.map((row, i) => {
-      const v = row.value;
-      const pctV = v == null ? null : v <= 1 ? v * 100 : v;
-      const fill = pctV == null ? 0 : Math.max(0, 100 - pctV);
-      return (
-        <div key={`${row.label}-${i}`} className={`vb-compare-row${row.kind === "ours" ? " ours" : ""}`}>
-          <div className="vb-compare-who">
-            <b>{row.label}</b>
-            <span className={`vb-tag2 ${row.kind === "ours" ? "ours" : "ref"}`}>
-              {row.kind === "published" ? "published" : "measured"}
-            </span>
-          </div>
-          <Bar pct={fill} cls={classErr(v)} label={fmtPct(v)} />
+  const comparisonRow = (label: string, value: number, ours: boolean) => {
+    const pct = value <= 1 ? value * 100 : value;
+    return (
+      <div className={`vb-compare-row${ours ? " ours" : ""}`}>
+        <div className="vb-compare-who">
+          <b>{label}</b>
+          <span className={`vb-tag2 ${ours ? "ours" : "ref"}`}>measured</span>
         </div>
-      );
-    });
+        <Bar pct={Math.max(0, 100 - pct)} cls={classErr(value)} label={fmtPct(value)} />
+      </div>
+    );
+  };
 
   return (
     <section className="vb-block">
-      <h2 className="vb-block-title">Model Comparison</h2>
+      <h2 className="vb-block-title">Voice model comparison</h2>
       <div className="vb-grid">
-        <div className="vb-card">
-          <h3>Speech-to-text on FLEURS</h3>
-          <p className="vb-muted">
-            Genie{measured.length ? " and Deepgram are" : " is"} measured on the same FLEURS audio. Whisper, MMS, and
-            SeamlessM4T rows are published FLEURS references.
-          </p>
-          <div className="vb-compare">{renderRows(sttRows)}</div>
-        </div>
+        {measured.map((comparison) => (
+          <div className="vb-card" key={`${comparison.competitor}-${comparison.family}`}>
+            <h3>Measured {comparison.family.toUpperCase()}: Qwen3-ASR vs {comparison.competitor}</h3>
+            <p className="vb-muted">
+              Same staged FLEURS audio and the exact same {comparison.languages.length} shared language
+              {comparison.languages.length === 1 ? "" : "s"}: {comparison.languages.map(langName).join(", ")}.
+              Values are the mean of per-language corpus {comparison.family.toUpperCase()}; lower is better.
+            </p>
+            <div className="vb-compare">
+              {comparisonRow("Genie Voice · Qwen3-ASR 1.7B", comparison.ours, true)}
+              {comparisonRow(comparison.competitor, comparison.theirs, false)}
+            </div>
+          </div>
+        ))}
+        {publishedWer.length > 0 && (
+          <div className="vb-card">
+            <h3>Published FLEURS WER context</h3>
+            <p className="vb-muted">
+              These are cited paper or leaderboard values, not reruns on our samples. Language subsets,
+              normalization and decoding differ, so they are context—not a ranking against the measured rows above.
+            </p>
+            <div className="vb-compare">
+              {publishedWer.map((ref) => {
+                const value = ref.value!;
+                const pct = value <= 1 ? value * 100 : value;
+                return (
+                  <div className="vb-compare-row" key={ref.label}>
+                    <div className="vb-compare-who">
+                      <b>{ref.label}</b>
+                      <span className="vb-tag2 ref">published</span>
+                      {ref.url ? (
+                        <a className="vb-cite" href={ref.url} target="_blank" rel="noopener noreferrer">
+                          source
+                        </a>
+                      ) : null}
+                    </div>
+                    <Bar pct={Math.max(0, 100 - pct)} cls={classErr(value)} label={fmtPct(value)} />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -506,7 +564,6 @@ interface Highlight {
 }
 function buildHighlights(
   runs: VoiceBenchmarkRun[],
-  langByDs: Record<string, Record<string, { value: number | null; label?: string }>>,
   languageCount: number,
 ): Highlight[] {
   const out: Highlight[] = [];
@@ -520,44 +577,7 @@ function buildHighlights(
     });
   }
 
-  // 2. FLEURS: how often we match/beat Whisper large-v3.
-  const fleurs = runs.filter((r) => r.dataset === "fleurs");
-  const fleursRef = langByDs["fleurs"] || {};
-  if (SHOW_CROSS_SYSTEM_COMPARISONS && fleurs.length) {
-    let compared = 0;
-    let beatenOrMatched = 0;
-    fleurs.forEach((r) => {
-      const rv = fleursRef[baseLang(r.language)]?.value;
-      const e = asrErr(r);
-      if (rv != null && e != null) {
-        compared += 1;
-        const ours = e <= 1 ? e * 100 : e;
-        const ref = rv <= 1 ? rv * 100 : rv;
-        if (ours <= ref + 0.5) beatenOrMatched += 1; // within 0.5pt counts as matched
-      }
-    });
-    const best = fleurs
-      .map((r) => ({ lang: langName(r.language), e: asrErr(r) }))
-      .filter((x) => x.e != null)
-      .sort((a, b) => (a.e! - b.e!))[0];
-    if (compared > 0) {
-      out.push({
-        icon: "🎯",
-        title: `Matches or beats Whisper large-v3 on ${beatenOrMatched}/${compared} languages`,
-        body: best
-          ? `Strongest transcription: ${best.lang} at ${fmtPct(best.e)} error. Lower is better.`
-          : "Transcription error rate vs the published Whisper large-v3 FLEURS numbers.",
-      });
-    } else if (best) {
-      out.push({
-        icon: "🎯",
-        title: `Transcription as low as ${fmtPct(best.e)} error`,
-        body: `Strongest language: ${best.lang}. FLEURS word/character error rate — lower is better.`,
-      });
-    }
-  }
-
-  // 3. Reliability across the whole sweep.
+  // 2. Reliability across the whole sweep.
   const totSamples = runs.reduce((a, r) => a + (r.samples || 0), 0);
   const totErrors = runs.reduce((a, r) => a + (r.errors || 0), 0);
   if (totSamples > 0) {
@@ -616,14 +636,7 @@ export function VoiceBenchmarksPage() {
     () => (data?.runs || []).filter((r) => r && r.dataset && !HIDDEN_DATASETS.has(r.dataset)),
     [data],
   );
-  const { aggByDs, langByDs } = useMemo(() => indexBaselines(data?.baselines), [data]);
-  // Languages our own measured FLEURS run covered — used to average vendor STT
-  // over the same set for a like-for-like headline.
-  const ourFleursLangs = useMemo(
-    () => new Set(runs.filter((r) => r.dataset === "fleurs" && !r.errors).map((r) => baseLang(r.language))),
-    [runs],
-  );
-  const vendorStt = useMemo(() => vendorMeasuredStt(data?.runs, ourFleursLangs), [data, ourFleursLangs]);
+  const { aggByDs } = useMemo(() => indexBaselines(data?.baselines), [data]);
   const byDataset = useMemo(() => {
     const m: Record<string, VoiceBenchmarkRun[]> = {};
     runs.forEach((r) => (m[r.dataset] = m[r.dataset] || []).push(r));
@@ -637,8 +650,8 @@ export function VoiceBenchmarksPage() {
     [byDataset],
   );
   const highlights = useMemo(
-    () => buildHighlights(runs, langByDs, (data?.languages || []).length),
-    [runs, langByDs, data],
+    () => buildHighlights(runs, (data?.languages || []).length),
+    [runs, data],
   );
   const scoringVersions = useMemo(
     () =>
@@ -787,9 +800,11 @@ export function VoiceBenchmarksPage() {
               </div>
             </section>
 
-            {SHOW_CROSS_SYSTEM_COMPARISONS && (
-              <ModelComparisonSection runs={runs} refs={aggByDs["fleurs"] || []} measured={vendorStt} />
-            )}
+            <ModelComparisonSection
+              runs={runs}
+              allRuns={data.runs}
+              refs={aggByDs["fleurs"] || []}
+            />
 
             {/* Per-dataset per-language detail */}
             <section className="vb-block">
@@ -799,9 +814,9 @@ export function VoiceBenchmarksPage() {
                   key={d}
                   dataset={d}
                   runs={byDataset[d]}
-                  langRef={SHOW_CROSS_SYSTEM_COMPARISONS ? langByDs[d] || {} : {}}
-                  aggRefs={SHOW_CROSS_SYSTEM_COMPARISONS ? aggByDs[d] || [] : []}
-                  measured={SHOW_CROSS_SYSTEM_COMPARISONS && d === "fleurs" ? vendorStt : []}
+                  langRef={{}}
+                  aggRefs={[]}
+                  measured={[]}
                 />
               ))}
             </section>

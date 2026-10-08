@@ -27,6 +27,9 @@
 #
 # Config: edit config/config.yaml; environment variables only control installer
 # behavior, the CLI profile, optional secrets, and caller ACLs.
+# Usage:
+#   ./deploy_app.sh --app-only   # build/test/sync/deploy the App; reuse infrastructure
+#   ./deploy_app.sh --full       # reconcile data, Gateway, models, grants, and App
 # Auth:   uses your Databricks CLI profile (U2M) to DEPLOY; the running app uses
 #         its own service principal for hosting / serving. Genie workspace Q&A
 #         prefers the viewer's OBO token (x-forwarded-access-token) when Apps
@@ -39,6 +42,30 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 # ---- config (runtime and jobs use this exact committed file) ----------------
+DEPLOY_MODE="${DEPLOY_MODE:-full}"
+if [[ $# -gt 1 ]]; then
+  printf "Usage: %s [--app-only|--full]\n" "$0" >&2
+  exit 2
+fi
+if [[ $# -eq 1 ]]; then
+  case "$1" in
+    --app-only|app-only) DEPLOY_MODE="app-only" ;;
+    --full|full) DEPLOY_MODE="full" ;;
+    -h|--help)
+      printf "Usage: %s [--app-only|--full]\n" "$0"
+      printf "  --app-only  Build, test, sync, and deploy App code only.\n"
+      printf "  --full      Reconcile all infrastructure and deploy the App (default).\n"
+      exit 0
+      ;;
+    *) printf "Unknown deploy mode '%s'. Use --app-only or --full.\n" "$1" >&2; exit 2 ;;
+  esac
+fi
+case "$(printf '%s' "$DEPLOY_MODE" | tr '[:upper:]' '[:lower:]')" in
+  app-only|app) DEPLOY_MODE="app-only"; FULL_DEPLOY=0 ;;
+  full) DEPLOY_MODE="full"; FULL_DEPLOY=1 ;;
+  *) printf "Invalid DEPLOY_MODE '%s'; use app-only or full.\n" "$DEPLOY_MODE" >&2; exit 2 ;;
+esac
+
 APP_NAME="${APP_NAME:-genie-voice-agent}"
 DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-${DATABRICKS_CONFIG_PROFILE:-}}" # ~/.databrickscfg profile
 SECRET_SCOPE="${SECRET_SCOPE:-genie-voice}"           # scope holding vendor keys
@@ -80,10 +107,21 @@ export GENIE_CONFIG="$DEPLOY_CONFIG"
 IFS='|' read -r _CFG_PROFILE _CFG_WAREHOUSE < <(
   "$PYBIN" - <<'PY'
 import yaml
+from pathlib import Path
+
 with open("config/config.yaml", encoding="utf-8") as handle:
     config = yaml.safe_load(handle) or {}
 db = config.get("databricks") or {}
-print(f"{db.get('profile') or ''}|{db.get('sql_warehouse_id') or ''}")
+profile = db.get("profile") or ""
+# config.local.yaml is never deployed or merged into deployment settings, but
+# its CLI profile is local authentication metadata. Use it only as a fallback
+# when neither the environment nor committed deployment config chose a profile.
+local_path = Path("config/config.local.yaml")
+if not profile and local_path.exists():
+    with local_path.open(encoding="utf-8") as handle:
+        local = yaml.safe_load(handle) or {}
+    profile = (local.get("databricks") or {}).get("profile") or ""
+print(f"{profile}|{db.get('sql_warehouse_id') or ''}")
 PY
 )
 DATABRICKS_PROFILE="${DATABRICKS_PROFILE:-$_CFG_PROFILE}"
@@ -157,7 +195,7 @@ PY
 # blocked, the helper fails with the exact admin command to run from VPN/office.
 log "checking workspace reachability and IP access lists"
 PYTHONPATH=backend "$PYBIN" infra/apps/ensure_deploy_ip.py \
-  || die "Workspace is unreachable from this machine's public IP."
+  || die "Workspace authentication/reachability check failed; inspect the error above."
 _CLI_HOST="$(dbx auth env -o json 2>/dev/null | "$PYBIN" -c 'import json,sys; print((json.load(sys.stdin).get("env") or {}).get("DATABRICKS_HOST") or "")' 2>/dev/null || true)"
 _CONFIG_HOST="$("$PYBIN" -c 'import yaml; print((yaml.safe_load(open("config/config.yaml")) or {}).get("databricks", {}).get("host", ""))')"
 if [[ -n "$_CLI_HOST" && "${_CLI_HOST%/}" != "${_CONFIG_HOST%/}" ]]; then
@@ -165,6 +203,7 @@ if [[ -n "$_CLI_HOST" && "${_CLI_HOST%/}" != "${_CONFIG_HOST%/}" ]]; then
 fi
 ME="$(dbx current-user me -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["userName"])')"
 WORKSPACE_DIR="${WORKSPACE_DIR:-/Workspace/Users/$ME/$APP_NAME}"
+log "deploy mode: $DEPLOY_MODE"
 log "deploying as: $ME  ->  app '$APP_NAME'  (source: $WORKSPACE_DIR)"
 
 # ---- 1. build the frontend for same-origin ---------------------------------
@@ -221,6 +260,11 @@ dbx warehouses get "$SQL_WAREHOUSE_ID" >/dev/null 2>&1 \
   || die "SQL warehouse '$SQL_WAREHOUSE_ID' does not exist or is not accessible."
 
 # ---- 2. UC, Lakebase, data, jobs, and Genie spaces -------------------------
+if [[ "$FULL_DEPLOY" -eq 0 ]]; then
+  DEPLOY_DATA=0
+  DEPLOY_REALTIME_MODELS=0
+  FORCE_REALTIME_MODELS=0
+fi
 case "$(printf '%s' "$DEPLOY_DATA" | tr '[:upper:]' '[:lower:]')" in
   1|true|yes)
     log "bootstrapping UC schemas and Volumes"
@@ -263,7 +307,7 @@ case "$(printf '%s' "$DEPLOY_DATA" | tr '[:upper:]' '[:lower:]')" in
     fi
     ;;
   0|false|no)
-    warn "DEPLOY_DATA=0: skipping UC, Lakebase, data, orchestration, and Genie setup."
+    warn "$([[ "$FULL_DEPLOY" -eq 0 ]] && echo "app-only mode" || echo "DEPLOY_DATA=0"): skipping UC, Lakebase, data, orchestration, and Genie setup."
     ;;
   *)
     die "DEPLOY_DATA must be 1 or 0 (received '$DEPLOY_DATA')."
@@ -274,19 +318,23 @@ esac
 # Provisioning + the policy conformance probe run first so a fresh install stops
 # at the UI-only policy-attach checkpoint BEFORE paying for GPU model registration
 # and serving. Model services must also exist before their FQNs are validated.
-log "reconciling app-owned Unity AI Gateway model services"
-DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
-  "$PYBIN" infra/apps/provision_ai_gateway.py \
-    --config config/config.yaml \
-    --guardrails-config config/guardrails.yaml
+if [[ "$FULL_DEPLOY" -eq 1 ]]; then
+  log "reconciling app-owned Unity AI Gateway model services"
+  DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
+    "$PYBIN" infra/apps/provision_ai_gateway.py \
+      --config config/config.yaml \
+      --guardrails-config config/guardrails.yaml
 
-log "running AI Gateway policy conformance matrix"
-if ! DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
-  "$PYBIN" infra/apps/probe_ai_gateway_policies.py \
-    --config config/config.yaml \
-    --guardrails-config config/guardrails.yaml; then
-  warn "Gateway policies are not conformant yet (policy attachment is UI-only)."
-  warn "Continuing with model + app deployment so the Setup page can guide and verify this step."
+  log "running AI Gateway policy conformance matrix"
+  if ! DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
+    "$PYBIN" infra/apps/probe_ai_gateway_policies.py \
+      --config config/config.yaml \
+      --guardrails-config config/guardrails.yaml; then
+    warn "Gateway policies are not conformant yet (policy attachment is UI-only)."
+    warn "Continuing with model + app deployment so the Setup page can guide and verify this step."
+  fi
+else
+  log "app-only mode: reusing existing AI Gateway services"
 fi
 
 # ---- 3. realtime Qwen3-ASR + VoxCPM2 endpoints -----------------------------
@@ -334,7 +382,7 @@ done <<< "$_MODEL_ENDPOINTS"
 # READY is not enough: an existing endpoint may still route an old/wrong UC
 # model version. Verify HF candidate -> UC registered model -> candidate alias ->
 # served entity as one chain. Any drift makes auto mode redeploy it.
-if [[ "$_ALL_MODELS_READY" -eq 1 ]]; then
+if [[ "$FULL_DEPLOY" -eq 1 && "$_ALL_MODELS_READY" -eq 1 ]]; then
   _MODEL_CHAIN_STATUS="$(
     PYTHONPATH="$ROOT/backend:$ROOT" "$PYBIN" - <<'PY' 2>/dev/null || true
 from genie_voice.config import get_settings
@@ -386,37 +434,49 @@ else
   die "Realtime model deployment was disabled but one or more configured endpoints are not READY."
 fi
 
-log "reconciling AI Gateway inference tables for voice agent endpoints"
-DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
-  "$PYBIN" infra/apps/provision_voice_endpoint_gateway.py \
-    --config "$DEPLOY_CONFIG"
+if [[ "$FULL_DEPLOY" -eq 1 ]]; then
+  log "reconciling AI Gateway inference tables for voice agent endpoints"
+  DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE" PYTHONPATH=backend \
+    "$PYBIN" infra/apps/provision_voice_endpoint_gateway.py \
+      --config "$DEPLOY_CONFIG"
 
-log "smoke-testing realtime voice model contracts"
-PYTHONPATH=scripts/ml_asr "$PYBIN" scripts/ml_asr/smoke_realtime_voice_agents.py \
-  --config "$DEPLOY_CONFIG"
+  log "smoke-testing realtime voice model contracts"
+  PYTHONPATH=scripts/ml_asr "$PYBIN" scripts/ml_asr/smoke_realtime_voice_agents.py \
+    --config "$DEPLOY_CONFIG"
+else
+  log "app-only mode: reusing existing voice endpoint configuration"
+fi
 
 # ---- 4. vendor keys -> secret scope (evals/benchmarks; not injected into the app)
-DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.deepgram_api_key)' 2>/dev/null || true)}"
-ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.elevenlabs_api_key)' 2>/dev/null || true)}"
+INCLUDE_EL=0
+if [[ "$FULL_DEPLOY" -eq 1 ]]; then
+  DEEPGRAM_API_KEY="${DEEPGRAM_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.deepgram_api_key)' 2>/dev/null || true)}"
+  ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-$(PYTHONPATH=backend "$PYBIN" -c 'from genie_voice.config import get_settings;print(get_settings().secrets.elevenlabs_api_key)' 2>/dev/null || true)}"
 
-log "ensuring secret scope '$SECRET_SCOPE'"
-dbx secrets create-scope "$SECRET_SCOPE" >/dev/null 2>&1 || true
-if [[ -n "$DEEPGRAM_API_KEY" ]]; then
-  dbx secrets put-secret "$SECRET_SCOPE" deepgram_api_key --string-value "$DEEPGRAM_API_KEY"
-  log "stored deepgram_api_key (evals/benchmarks only; not attached to the app)"
+  log "ensuring secret scope '$SECRET_SCOPE'"
+  dbx secrets create-scope "$SECRET_SCOPE" >/dev/null 2>&1 || true
+  if [[ -n "$DEEPGRAM_API_KEY" ]]; then
+    dbx secrets put-secret "$SECRET_SCOPE" deepgram_api_key --string-value "$DEEPGRAM_API_KEY"
+    log "stored deepgram_api_key (evals/benchmarks only; not attached to the app)"
+  else
+    warn "DEEPGRAM_API_KEY empty - skipping (live app STT is Databricks; evals that need Deepgram will fail)."
+  fi
+  if [[ -n "$ELEVENLABS_API_KEY" ]]; then
+    dbx secrets put-secret "$SECRET_SCOPE" elevenlabs_api_key --string-value "$ELEVENLABS_API_KEY"
+    INCLUDE_EL=1
+    log "stored elevenlabs_api_key"
+  else
+    warn "ELEVENLABS_API_KEY empty - skipping (TTS optional; not in the live flow)."
+  fi
 else
-  warn "DEEPGRAM_API_KEY empty - skipping (live app STT is Databricks; evals that need Deepgram will fail)."
-fi
-if [[ -n "$ELEVENLABS_API_KEY" ]]; then
-  dbx secrets put-secret "$SECRET_SCOPE" elevenlabs_api_key --string-value "$ELEVENLABS_API_KEY"
-  log "stored elevenlabs_api_key"
-else
-  warn "ELEVENLABS_API_KEY empty - skipping (TTS optional; not in the live flow)."
+  log "app-only mode: preserving existing secret configuration"
+  if dbx secrets get-secret "$SECRET_SCOPE" elevenlabs_api_key >/dev/null 2>&1; then
+    INCLUDE_EL=1
+  fi
 fi
 
 # ---- 5. app resource spec (auto-grants the app SP on deploy) ----------------
 APP_JSON="$(mktemp)"
-INCLUDE_EL="$([[ -n "$ELEVENLABS_API_KEY" ]] && echo 1 || echo 0)"
 # Derive the ASR endpoints to attach as app resources from the exact deployed
 # config. Local overrides must never leak into the app's resource grants.
 ASR_ENDPOINTS="$(
@@ -458,7 +518,9 @@ ASR_ENDPOINTS="$_FILTERED"
 log "ASR endpoints to attach: $ASR_ENDPOINTS"
 
 # ---- 3a. realtime voice endpoints (STT/TTS serving + FM model services) ------
-# STT/TTS stay on serving endpoints (CAN_QUERY app resources). Foundation-model
+# STT/TTS stay on serving endpoints (CAN_MANAGE only for these two App resources,
+# so Setup can reconcile scale-to-zero; inference itself uses CAN_QUERY).
+# Foundation-model
 # chat (llm / conversion / enrichment) uses Unity Catalog model services via Unity
 # AI Gateway; those are EXECUTE-granted in grant_app_sp.py, not attached as
 # serving_endpoint resources. Read from the DEPLOYED config (never config.local.yaml).
@@ -550,6 +612,11 @@ if enrichment and not is_unity_model_service(enrichment):
     res.append({"name": "enrichment-model", "serving_endpoint": {"name": enrichment, "permission": "CAN_QUERY"}})
 
 seen = set()
+realtime_endpoints = {
+    endpoint.strip()
+    for endpoint in os.environ.get("REALTIME_ENDPOINTS", "").split(",")
+    if endpoint.strip()
+}
 for idx, endpoint in enumerate(os.environ["ASR_ENDPOINTS"].split(","), start=1):
     endpoint = endpoint.strip()
     if not endpoint or endpoint in seen:
@@ -557,7 +624,12 @@ for idx, endpoint in enumerate(os.environ["ASR_ENDPOINTS"].split(","), start=1):
     seen.add(endpoint)
     res.append({
         "name": f"asr-endpoint-{idx}",
-        "serving_endpoint": {"name": endpoint, "permission": "CAN_QUERY"},
+        # Qwen is both the configured ASR endpoint and an App-managed realtime
+        # endpoint. Keep the stronger permission when the resource sets overlap.
+        "serving_endpoint": {
+            "name": endpoint,
+            "permission": "CAN_MANAGE" if endpoint in realtime_endpoints else "CAN_QUERY",
+        },
     })
 for idx, endpoint in enumerate(os.environ.get("REALTIME_ENDPOINTS", "").split(","), start=1):
     endpoint = endpoint.strip()
@@ -566,7 +638,9 @@ for idx, endpoint in enumerate(os.environ.get("REALTIME_ENDPOINTS", "").split(",
     seen.add(endpoint)
     res.append({
         "name": f"realtime-endpoint-{idx}",
-        "serving_endpoint": {"name": endpoint, "permission": "CAN_QUERY"},
+        # Setup & Readiness can explicitly reconcile scale-to-zero drift without
+        # granting management access to unrelated serving endpoints.
+        "serving_endpoint": {"name": endpoint, "permission": "CAN_MANAGE"},
     })
 if os.environ.get("INCLUDE_EL") == "1":
     res.append({"name": "elevenlabs-api-key", "secret": {"scope": os.environ["SECRET_SCOPE"], "key": "elevenlabs_api_key", "permission": "READ"}})
@@ -584,13 +658,19 @@ if dbx apps get "$APP_NAME" >/dev/null 2>&1; then
   log "app exists - updating resources"
   dbx apps update "$APP_NAME" --json "@$APP_JSON" >/dev/null
 else
-  log "creating app '$APP_NAME' (provisions its service principal + compute)"
-  dbx apps create --json "@$APP_JSON"
+  if [[ "$FULL_DEPLOY" -eq 0 ]]; then
+    rm -f "$APP_JSON"
+    die "App '$APP_NAME' does not exist. Run ./deploy_app.sh --full for the initial deployment."
+  else
+    log "creating app '$APP_NAME' (provisions its service principal + compute)"
+    dbx apps create --json "@$APP_JSON"
+  fi
 fi
 rm -f "$APP_JSON"
 
 # ---- 3b. grant the app's service principal its runtime access ----------------
 # Resolve the app SP (client id + SCIM id), retrying while it provisions.
+if [[ "$FULL_DEPLOY" -eq 1 ]]; then
 SP_CLIENT_ID=""; SP_ID=""
 for _ in 1 2 3 4 5 6; do
   read -r SP_CLIENT_ID SP_ID < <(dbx apps get "$APP_NAME" -o json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("service_principal_client_id") or "", d.get("service_principal_id") or "")' 2>/dev/null || true)
@@ -661,6 +741,9 @@ if [[ -n "$APP_EXTERNAL_GROUPS" ]]; then
     _group="$(printf '%s' "$_group" | xargs)"
     [[ -n "$_group" ]] && grant_app_can_use group_name "$_group"
   done
+fi
+else
+  log "app-only mode: preserving existing App SP grants and external caller ACLs"
 fi
 
 # ---- 6. sync source to the workspace ---------------------------------------

@@ -4,10 +4,11 @@
 endpoints, Genie spaces, Lakebase CDF, Lakebase serving, AI Gateway guardrails,
 Apps User Authorization) and reports whether the install is usable yet.
 
-`POST /readiness/fix` runs only cheap, idempotent remediations that the app can
+`POST /readiness/fix` runs cheap, idempotent remediations that the app can
 perform as its own identity (currently: snapshot the Lakebase reference cache).
-Owner-only grants and the long/billable GPU model deploy stay in `deploy_app.sh`
-and are surfaced here as guidance, never executed from a page.
+The voice-serving endpoints expose a separate, explicit operator action which
+uses the App's narrowly scoped voice-endpoint management grant to disable
+scale-to-zero and can be polled while Databricks applies the billable update.
 
 The endpoint is available to any authenticated app user (read-mostly ops view);
 viewer-scoped checks use the forwarded user token when present.
@@ -56,6 +57,41 @@ def get_readiness(request: Request, full: bool = True) -> dict:
     payload["viewer"] = _viewer(request, obo)
     _add_viewer_objects(payload, payload["viewer"])
     return payload
+
+
+@router.get("/voice-serving")
+def get_voice_serving() -> dict:
+    return _readiness.voice_serving_status(get_settings())
+
+
+@router.post("/voice-serving/disable-scale-to-zero")
+def post_disable_scale_to_zero() -> dict:
+    try:
+        return _readiness.disable_voice_scale_to_zero(get_settings())
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        detail = str(exc)
+        status = 403 if "PERMISSION_DENIED" in detail or "403" in detail else 502
+        raise HTTPException(
+            status_code=status,
+            detail=f"could not disable scale-to-zero: {detail}",
+        ) from exc
+
+
+@router.post("/voice-serving/enable-scale-to-zero")
+def post_enable_scale_to_zero() -> dict:
+    try:
+        return _readiness.enable_voice_scale_to_zero(get_settings())
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        detail = str(exc)
+        status = 403 if "PERMISSION_DENIED" in detail or "403" in detail else 502
+        raise HTTPException(
+            status_code=status,
+            detail=f"could not enable scale-to-zero: {detail}",
+        ) from exc
 
 
 class FixRequest(BaseModel):
