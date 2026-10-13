@@ -52,7 +52,7 @@ def resolve_language(session: VoiceSession, detected: str | None) -> str:
     """
     pref = session.config.language
     selected = None if (not pref or pref == "auto") else pref
-    picked = session.config.expected_language or selected
+    picked = session.config.selected_language or session.config.expected_language or selected
     return canonical_tag(picked or detected or "en-US")
 
 
@@ -67,6 +67,11 @@ def language_mismatch(session: VoiceSession, detected: str | None) -> dict | Non
     turn, which is worse than a missed one). Returns an event payload (without
     ``type``/``turn_id``) or None.
     """
+    # A selected-language session deliberately pins ASR and reply language. Its
+    # per-turn model label is diagnostic metadata, never authority to reject a
+    # turn or interrupt a conversation.
+    if session.config.language_mode == "selected":
+        return None
     expected = session.config.expected_language
     if not expected or not detected:
         return None

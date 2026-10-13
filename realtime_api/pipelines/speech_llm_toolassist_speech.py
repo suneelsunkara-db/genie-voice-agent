@@ -531,7 +531,17 @@ async def process_turn(
         # the picker — the spoken guidance lives here because this is the only route
         # with a TTS stage. The turn is otherwise dropped (no history, no LLM/reply).
         mismatch = language_mismatch(session, detected)
-        if not session.config.expected_language:
+        if session.config.language_mode == "selected":
+            report(
+                trace.guards, "language_gate", "not_evaluated",
+                seam="decision", stage="routing",
+                phase="post_stt", resource="transcript_boundary",
+                reason=(
+                    f"selected language {session.config.selected_language or session.config.language} "
+                    "is authoritative; per-turn detection cannot reject the turn"
+                ),
+            )
+        elif not session.config.expected_language:
             report(
                 trace.guards, "language_gate", "not_evaluated",
                 seam="decision", stage="routing",

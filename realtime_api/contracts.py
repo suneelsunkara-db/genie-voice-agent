@@ -103,6 +103,10 @@ class SessionStart:
     language: str
     sample_rate_hz: int
     encoding: Literal["pcm_s16le"] = "pcm_s16le"
+    # Explicit product contract: a selected language is authoritative for the
+    # whole session; auto mode delegates language choice to speech recognition.
+    language_mode: Literal["selected", "auto"] = "auto"
+    selected_language: str | None = None
     max_turn_seconds: int | None = None
     vad_silence_ms: int | None = None
     # Who owns the end-of-turn boundary. None (default) inherits the server's
@@ -117,9 +121,8 @@ class SessionStart:
     context: str | None = None
     call_id: str | None = None
     customer_id: str | None = None
-    # The language the agent *selected* in the UI. STT still auto-detects per
-    # turn (``language`` stays "auto"); this is only used to warn the caller when
-    # the detected speech doesn't match what they picked. None disables the check.
+    # Legacy compatibility for older clients. New clients use language_mode and
+    # selected_language; this field must not gate selected-language sessions.
     expected_language: str | None = None
     # Assistant profile name. None resolves to the concierge; product surfaces send
     # their registered profile explicitly (billing, card, knowledge).
@@ -138,11 +141,27 @@ class SessionStart:
 
     @classmethod
     def from_event(cls, payload: dict) -> "SessionStart":
-        # "auto" (the default) lets STT detect the spoken language per turn.
-        language = str(payload.get("language") or "auto")
-        if language != "auto" and not LANGUAGE_TAG_RE.fullmatch(language):
-            raise ValueError("language must be 'auto' or a BCP 47 tag, for example en-US or th-TH")
-        expected_language = _optional_language_tag(payload.get("expected_language"))
+        explicit_mode = payload.get("language_mode")
+        if explicit_mode is not None:
+            language_mode = str(explicit_mode).strip().lower()
+            if language_mode not in {"selected", "auto"}:
+                raise ValueError("language_mode must be 'selected' or 'auto'")
+            selected_language = _optional_language_tag(payload.get("selected_language"))
+            if language_mode == "selected" and selected_language is None:
+                raise ValueError("selected_language is required when language_mode is 'selected'")
+            if language_mode == "auto" and selected_language is not None:
+                raise ValueError("selected_language must be omitted when language_mode is 'auto'")
+            language = selected_language or "auto"
+            expected_language = selected_language
+        else:
+            # Backward compatibility for benchmark/MCP clients using the original
+            # language + expected_language fields.
+            language = str(payload.get("language") or "auto")
+            if language != "auto" and not LANGUAGE_TAG_RE.fullmatch(language):
+                raise ValueError("language must be 'auto' or a BCP 47 tag, for example en-US or th-TH")
+            selected_language = None
+            language_mode = "auto"
+            expected_language = _optional_language_tag(payload.get("expected_language"))
         # Accept any plausible capture rate (the browser reports its actual
         # AudioContext rate, which may be 44100/48000 on devices that ignore a
         # 16 kHz request). The server resamples to 16 kHz where a fixed rate is
@@ -178,6 +197,8 @@ class SessionStart:
             language=language,
             sample_rate_hz=sample_rate_hz,
             encoding=encoding,
+            language_mode=language_mode,  # type: ignore[arg-type]
+            selected_language=selected_language,
             max_turn_seconds=_optional_positive_int(payload.get("max_turn_seconds"), "max_turn_seconds"),
             vad_silence_ms=_optional_positive_int(payload.get("vad_silence_ms"), "vad_silence_ms"),
             endpointing=_optional_bool(payload.get("endpointing"), "endpointing"),

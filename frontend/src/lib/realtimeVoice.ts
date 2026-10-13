@@ -110,10 +110,9 @@ export interface StartRealtimeVoiceOptions {
    *  out. Automatically a no-op where the browser lacks Web Speech support. */
   liveCaption?: boolean;
   /**
-   * Pin STT to this BCP-47 language instead of auto-detecting. Use ONLY for
-   * single-language surfaces (e.g. the English-only home concierge whose picker
-   * is disabled): auto-detect mis-tags short words ("Telco" -> Hindi) and the
-   * mismatch gate then drops the turn. Omit to auto-detect (multilingual pages).
+   * Optional override for the selected session language. Normally
+   * `expectedLanguage` is authoritative; this remains for callers whose selected
+   * language differs from their display/caption language.
    */
   sttLanguage?: string;
 }
@@ -281,20 +280,19 @@ export async function startRealtimeVoice(
   // Wait for WS open, then send session.start
   await new Promise<void>((resolve, reject) => {
     ws.onopen = () => {
+      const selectedLanguage = options?.sttLanguage || expectedLanguage;
       ws.send(
         JSON.stringify({
           type: "session.start",
-          // Auto-detect for multilingual surfaces; pin (sttLanguage) for
-          // single-language ones so STT can't mis-tag short words and get the
-          // turn dropped by the mismatch gate.
-          language: options?.sttLanguage || "auto",
+          // A picker selection is authoritative for the complete session. Auto
+          // detection is reserved for clients that intentionally provide no
+          // selected language.
+          language_mode: selectedLanguage ? "selected" : "auto",
+          ...(selectedLanguage ? { selected_language: selectedLanguage } : {}),
           sample_rate_hz: actualSampleRate,
           encoding: "pcm_s16le",
           call_id: callId,
           customer_id: customerId,
-          // STT still auto-detects; this is only used to warn on a mismatch
-          // between what the agent selected and what the caller actually speaks.
-          ...(expectedLanguage ? { expected_language: expectedLanguage } : {}),
           // Selects the named backend capability catalog and assistant profile.
           ...(options?.profile ? { profile: options.profile } : {}),
           ...(options?.surface ? { surface: options.surface } : {}),

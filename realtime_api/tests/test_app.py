@@ -313,6 +313,26 @@ def test_no_language_mismatch_when_selection_matches() -> None:
             pass
 
 
+def test_selected_language_does_not_reject_noisy_model_detection() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-to-text") as ws:
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language_mode": "selected",
+                "selected_language": "th-TH",
+                "sample_rate_hz": 16000,
+            }
+        )
+        assert ws.receive_json()["capability"] == "speech-to-text"
+        _drive_turn(ws)
+
+        # Fake STT reports en-US, but selected mode must preserve the transcript
+        # instead of emitting language.mismatch and dropping the turn.
+        transcript = ws.receive_json()
+        assert transcript["type"] == "transcript.final"
+        assert transcript["text"] == "hello world"
+
+
 def test_language_mismatch_canonicalizes_name_vs_tag() -> None:
     """Regression: STT reports a name ('chinese') while selection is a tag
     ('zh-CN'). These are the same language and must NOT trigger a mismatch."""

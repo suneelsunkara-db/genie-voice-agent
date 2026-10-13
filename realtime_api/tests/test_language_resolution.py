@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from realtime_api.contracts import SessionStart
 from realtime_api.languages import canonical_base
-from realtime_api.pipelines._shared import resolve_language
+from realtime_api.pipelines._shared import language_mismatch, resolve_language
 from realtime_api.session import VoiceSession
 
 
@@ -41,3 +41,32 @@ def test_english_last_resort_when_no_signal():
     """No picker and no detection falls back to English (last resort only)."""
     session = _session(language="auto")
     assert canonical_base(resolve_language(session, None)) == "en"
+
+
+def test_explicit_selected_language_is_authoritative():
+    session = VoiceSession(
+        SessionStart.from_event(
+            {
+                "language_mode": "selected",
+                "selected_language": "th-TH",
+                "sample_rate_hz": 16000,
+            }
+        )
+    )
+
+    assert session.config.language == "th-TH"
+    assert session.config.selected_language == "th-TH"
+    assert resolve_language(session, "en-US") == "th-TH"
+    assert language_mismatch(session, "en-US") is None
+
+
+def test_explicit_auto_mode_has_no_selected_language():
+    session = VoiceSession(
+        SessionStart.from_event(
+            {"language_mode": "auto", "sample_rate_hz": 16000}
+        )
+    )
+
+    assert session.config.language == "auto"
+    assert session.config.selected_language is None
+    assert canonical_base(resolve_language(session, "fr")) == "fr"
