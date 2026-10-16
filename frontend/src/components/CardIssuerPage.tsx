@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   DeepDiveReport,
   RealtimeVoiceSession,
@@ -1472,7 +1474,20 @@ function DeepDiveReportView({ report, copy }: { report: DeepDiveReport; copy: Ui
   return (
     <div className="card-report card-fade-in">
       {report.report ? (
-        <p className="card-report-text">{report.report}</p>
+        <div className="card-report-text card-report-markdown">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              a: ({ href, children }) => (
+                <a href={href} target="_blank" rel="noreferrer">
+                  {children}
+                </a>
+              ),
+            }}
+          >
+            {report.report}
+          </ReactMarkdown>
+        </div>
       ) : (
         // Non-English reports open EMPTY and stream in the caller's language, so an
         // empty body while pending means "translation on its way", not "no summary".

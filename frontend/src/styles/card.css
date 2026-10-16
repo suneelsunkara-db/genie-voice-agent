@@ -836,8 +836,18 @@
   font-size: 14px;
   line-height: 1.55;
   margin: 0 0 12px;
-  white-space: pre-wrap;
 }
+.card-report-markdown h1,
+.card-report-markdown h2,
+.card-report-markdown h3 {
+  font-size: 14px;
+  line-height: 1.4;
+  margin: 10px 0 5px;
+}
+.card-report-markdown p { margin: 0 0 8px; }
+.card-report-markdown ul,
+.card-report-markdown ol { margin: 0 0 8px; padding-left: 20px; }
+.card-report-markdown code { white-space: break-spaces; }
 .card-report-table { overflow-x: auto; margin-bottom: 12px; }
 .card-report-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .card-report-table th,

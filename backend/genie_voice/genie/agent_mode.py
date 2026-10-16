@@ -220,11 +220,19 @@ class GenieAgentModeClient:
 
 
 def _iter_sse(resp) -> Any:
-    """Yield decoded SSE ``data`` JSON objects (buffers multi-line data blocks)."""
+    """Yield UTF-8 SSE ``data`` JSON objects (buffers multi-line data blocks).
+
+    SSE is UTF-8 by specification. ``requests`` otherwise treats a
+    ``text/event-stream`` response without an explicit charset as ISO-8859-1,
+    turning punctuation such as an em dash into ``â`` before JSON parsing.
+    Decode the bytes ourselves so every downstream surface receives the same text.
+    """
     data_lines: list[str] = []
-    for raw in resp.iter_lines(decode_unicode=True):
+    for raw in resp.iter_lines(decode_unicode=False):
         if raw is None:
             continue
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
         line = raw.rstrip("\r")
         if line == "":  # event boundary
             if data_lines:
@@ -305,9 +313,11 @@ def _parse_output(result: AgentModeResult, output: list[dict[str, Any]]) -> None
                         result.sql_calls.append(meta["sql"])
                 else:
                     report_parts.append(chunk.get("text") or "")
-    # Drop [N](url) citation links down to [N] for readable plain text.
+    # Drop linked and LaTeX-escaped citation forms down to one readable marker.
+    # Agent Mode has emitted both ``[1](url)`` and ``\[[1]\]`` for the same cite.
     text = "\n".join(p for p in report_parts if p)
-    result.report_text = re.sub(r"\[(\d+)\]\((https?://[^)]+)\)", r"[\1]", text)
+    text = re.sub(r"\[(\d+)\]\((https?://[^)]+)\)", r"[\1]", text)
+    result.report_text = re.sub(r"\\\[\[(\d+)\]\\\]", r"[\1]", text)
 
 
 # --------------------------------------------------------------------------- #

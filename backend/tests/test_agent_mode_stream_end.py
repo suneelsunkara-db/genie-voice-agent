@@ -9,6 +9,8 @@ not produce.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from genie_voice.genie import agent_mode as am
@@ -80,6 +82,36 @@ def test_completed_stream_still_reports_once_and_does_not_error(monkeypatch):
     kinds = [e["kind"] for e in events]
     assert kinds.count("report") == 1
     assert "error" not in kinds
+
+
+def test_sse_is_utf8_and_escaped_citations_are_normalized(monkeypatch):
+    payload = {
+        "type": "response.completed",
+        "response": {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Expenses — including fees \\[[1]\\].",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    lines = [
+        f"data: {json.dumps(payload, ensure_ascii=False)}".encode("utf-8"),
+        b"",
+    ]
+    events = _events(_client(monkeypatch, _FakeResp(lines)))
+
+    report = next(event for event in events if event["kind"] == "report")
+    assert report["report"] == "Expenses — including fees [1]."
+    assert "â" not in report["report"]
 
 
 def test_failed_response_keeps_its_own_error_and_adds_no_second_one(monkeypatch):

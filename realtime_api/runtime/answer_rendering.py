@@ -173,6 +173,11 @@ _TABLE_RULE_RE = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*
 _MARKDOWN_REMAINS_RE = re.compile(
     r"(?:\*\*|__|~~|```|`|\[[^\]]+\]\([^)]+\)|(?m:^\s{0,3}#{1,6}\s))"
 )
+_CITATION_MARKER_RE = re.compile(
+    r"(?:\\\[\[\s*\d+(?:\s*[,;–-]\s*\d+)*\]\\\]"
+    r"|\[\[\s*\d+(?:\s*[,;–-]\s*\d+)*\]\]"
+    r"|\[\s*\d+(?:\s*[,;–-]\s*\d+)*\])"
+)
 _PLACEHOLDER_RE = re.compile(r"\[\[FACT_(\d+)]]")
 
 # Atomic values that must survive localization byte-for-byte. The broad numeric
@@ -188,7 +193,12 @@ _FACT_ATOM_RE = re.compile(
     re.I,
 )
 _SPEECH_END = frozenset(".!?。！？؟।…;؛")
+_CLAUSE_END = frozenset(",;:—–，；،")
 _MAX_SPEECH_CHARS = 640
+_MAX_SEGMENT_FACTS = 3
+_DENSE_SPEECH_CHARS = 210
+_DENSE_SPEECH_FACTS = 5
+_MAX_SUMMARY_FACTS = 4
 _ABBREVIATION_RE = re.compile(
     r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|a\.m|p\.m|U\.S)\.",
     re.I,
@@ -216,6 +226,7 @@ def _strip_inline_markdown(text: str) -> str:
     value = _LINK_RE.sub(replace_link, value)
     value = _AUTOLINK_RE.sub("", value)
     value = _URL_RE.sub("", value)
+    value = _CITATION_MARKER_RE.sub("", value)
     value = _INLINE_CODE_RE.sub(lambda match: match.group(1), value)
     value = _HTML_TAG_RE.sub("", value)
     value = re.sub(r"(\*\*|__|~~)", "", value)
@@ -229,7 +240,8 @@ def _strip_inline_markdown(text: str) -> str:
             or 0x2600 <= ord(char) <= 0x27BF
         )
     )
-    return re.sub(r"\s+", " ", value).strip()
+    value = re.sub(r"\s+", " ", value).strip()
+    return re.sub(r"\s+([,.;:!?。！？؟।…])", r"\1", value)
 
 
 def _clarify_english_date_ranges(text: str) -> str:
@@ -306,6 +318,19 @@ def _restore_facts(text: str, atoms: list[str]) -> str:
     seen = [int(value) for value in _PLACEHOLDER_RE.findall(text)]
     if sorted(seen) != list(range(len(atoms))):
         raise SpeechRenderError("translated speech did not preserve every factual atom exactly once")
+    restored = _PLACEHOLDER_RE.sub(lambda match: atoms[int(match.group(1))], text)
+    if _PLACEHOLDER_RE.search(restored):
+        raise SpeechRenderError("unresolved factual placeholder")
+    return restored
+
+
+def _restore_selected_facts(text: str, atoms: list[str]) -> str:
+    """Restore a verified subset chosen for a short spoken summary."""
+    seen = [int(value) for value in _PLACEHOLDER_RE.findall(text)]
+    if not seen or len(seen) > _MAX_SUMMARY_FACTS:
+        raise SpeechRenderError("spoken summary selected an invalid number of facts")
+    if len(seen) != len(set(seen)) or any(index >= len(atoms) for index in seen):
+        raise SpeechRenderError("spoken summary duplicated or invented a factual placeholder")
     restored = _PLACEHOLDER_RE.sub(lambda match: atoms[int(match.group(1))], text)
     if _PLACEHOLDER_RE.search(restored):
         raise SpeechRenderError("unresolved factual placeholder")
@@ -408,6 +433,8 @@ def certify_speech_text(text: str) -> str:
         raise SpeechRenderError("speech text exceeds the realtime voice budget")
     if _MARKDOWN_REMAINS_RE.search(value) or _URL_RE.search(value):
         raise SpeechRenderError("speech text still contains Markdown or a URL")
+    if _CITATION_MARKER_RE.search(value):
+        raise SpeechRenderError("speech text contains a citation marker")
     if _PLACEHOLDER_RE.search(value) or "[[FACT_" in value:
         raise SpeechRenderError("speech text contains unresolved factual placeholders")
     if any(unicodedata.category(char) == "Cc" for char in value):
@@ -415,38 +442,54 @@ def certify_speech_text(text: str) -> str:
     return value
 
 
-def split_speech_segments(text: str, *, max_chars: int = 320) -> list[str]:
-    """Split fallback TTS input without breaking decimals, dates or identifiers."""
+def split_speech_segments(
+    text: str,
+    *,
+    max_chars: int = 180,
+    max_fact_atoms: int = _MAX_SEGMENT_FACTS,
+) -> list[str]:
+    """Create model-safe TTS segments without breaking factual atoms.
+
+    VoxCPM becomes unstable on a single accounting sentence containing many
+    amounts even when the sentence is grammatically valid. Sentence punctuation
+    alone is therefore insufficient: dense units are also split at language-
+    neutral clause punctuation after numbers, dates, IDs and model names have
+    been protected.
+    """
     value = certify_speech_text(text)
     units = _sentence_units(value)
-    if units and all(len(unit) <= max_chars for unit in units):
-        return units
-    protected, atoms = _protect_facts(value)
-    protected_segments: list[str] = []
-    start = 0
-    while len(protected) - start > max_chars:
-        window = protected[start : start + max_chars]
-        boundary = max(
-            (
-                index + 1
-                for index, char in enumerate(window)
-                if char in _SPEECH_END and index + 1 >= max_chars // 3
-            ),
-            default=0,
-        )
-        if not boundary:
-            boundary = window.rfind(" ")
-        if boundary <= 0:
-            boundary = max_chars
-        protected_segments.append(protected[start : start + boundary].strip())
-        start += boundary
-    if protected[start:].strip():
-        protected_segments.append(protected[start:].strip())
-
-    restored: list[str] = []
-    for segment in protected_segments:
-        restored.append(_restore_segment(segment, atoms))
-    return restored
+    output: list[str] = []
+    clause_chars = "".join(re.escape(char) for char in _CLAUSE_END)
+    for unit in units:
+        protected, atoms = _protect_facts(unit)
+        fact_count = len(_PLACEHOLDER_RE.findall(protected))
+        if len(unit) <= max_chars and fact_count <= max_fact_atoms:
+            output.append(unit)
+            continue
+        clauses = [
+            match.group(0).strip()
+            for match in re.finditer(
+                rf"[^{clause_chars}]+(?:[{clause_chars}]+|$)",
+                protected,
+            )
+            if match.group(0).strip()
+        ]
+        current = ""
+        protected_segments: list[str] = []
+        for clause in clauses or [protected]:
+            candidate = f"{current} {clause}".strip() if current else clause
+            candidate_facts = len(_PLACEHOLDER_RE.findall(candidate))
+            if current and (
+                len(candidate) > max_chars or candidate_facts > max_fact_atoms
+            ):
+                protected_segments.append(current)
+                current = clause
+            else:
+                current = candidate
+        if current:
+            protected_segments.append(current)
+        output.extend(_restore_segment(segment, atoms) for segment in protected_segments)
+    return output
 
 
 def summarize_for_voice(
@@ -464,23 +507,41 @@ def summarize_for_voice(
     excerpt = _extractive_voice_excerpt(text)
     if is_english(source_language):
         excerpt = _clarify_english_date_ranges(excerpt)
-    if same_language(source_language, language):
+    protected_excerpt, atoms = _protect_facts(excerpt)
+    dense = any(
+        len(unit) > _DENSE_SPEECH_CHARS
+        or len(_protect_facts(unit)[1]) > _DENSE_SPEECH_FACTS
+        for unit in _sentence_units(excerpt)
+    )
+    if same_language(source_language, language) and not dense:
         return certify_speech_text(excerpt)
 
     from ..serving_factory import shared_serving
 
     lang = language or "en-US"
     summary_tokens, _, endpoint = _render_knobs()
-    protected_excerpt, atoms = _protect_facts(excerpt)
-    system = (
-        "You translate an upstream analytical answer for a realtime voice assistant. "
-        "Translate the supplied extract into the language identified by BCP-47 "
-        f"code '{lang}'. Tokens such as [[FACT_0]] are immutable factual placeholders: "
-        "return every placeholder exactly once and do not translate, alter, duplicate, "
-        "or omit one. Do not summarize, round, omit, infer, or add anything. "
-        "Use no markdown, headings, bullets, or citation markers. Output only the "
-        "sentences the agent should speak."
-    )
+    if dense:
+        system = (
+            "Create a short spoken answer in the language identified by BCP-47 "
+            f"code '{lang}' from the governed analytical extract. Tokens such as "
+            "[[FACT_0]] are immutable factual placeholders. Select only the facts "
+            "needed to answer the user's question: use at most four placeholders, "
+            "never use one twice, and do not invent any number, date, ID, amount, "
+            "name, or claim. Write two or three short sentences with at most two "
+            "facts per sentence and no parenthetical asides. Use no markdown, "
+            "headings, bullets, URLs, or citation markers. Output only what the "
+            "assistant should speak."
+        )
+    else:
+        system = (
+            "You translate an upstream analytical answer for a realtime voice assistant. "
+            "Translate the supplied extract into the language identified by BCP-47 "
+            f"code '{lang}'. Tokens such as [[FACT_0]] are immutable factual placeholders: "
+            "return every placeholder exactly once and do not translate, alter, duplicate, "
+            "or omit one. Do not summarize, round, omit, infer, or add anything. "
+            "Use no markdown, headings, bullets, or citation markers. Output only the "
+            "sentences the agent should speak."
+        )
     user = f"User asked: {question}\n\nGoverned answer extract:\n{protected_excerpt}"
     serving = shared_serving()
     # Reasoning-capable conversion endpoints can occasionally spend a small token
@@ -507,7 +568,11 @@ def summarize_for_voice(
         if _FACT_ATOM_RE.search(without_placeholders):
             continue
         try:
-            restored = _restore_facts(summary, atoms)
+            restored = (
+                _restore_selected_facts(summary, atoms)
+                if dense
+                else _restore_facts(summary, atoms)
+            )
             return certify_speech_text(restored)
         except SpeechRenderError:
             continue

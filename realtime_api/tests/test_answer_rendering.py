@@ -318,6 +318,82 @@ def test_fallback_tts_segmentation_never_splits_decimal_or_version():
     assert all(not segment.endswith("$10,525.") for segment in segments)
 
 
+def test_dense_accounting_sentence_splits_at_clauses_by_fact_count():
+    text = (
+        "This cycle (2025-12), CH-0001 posted $3,250.00 in purchases, "
+        "plus $122.00 in fees and $28.00 in interest, bringing the statement "
+        "to a new balance of $4,211.04 (up from $1,061.04 prior balance), "
+        "after $250.00 in payments."
+    )
+
+    segments = answer_rendering.split_speech_segments(text)
+
+    assert len(segments) >= 3
+    assert all(
+        len(answer_rendering._FACT_ATOM_RE.findall(segment)) <= 3
+        for segment in segments
+    )
+    for fact in (
+        "2025-12",
+        "CH-0001",
+        "$3,250.00",
+        "$122.00",
+        "$28.00",
+        "$4,211.04",
+        "$1,061.04",
+        "$250.00",
+    ):
+        assert sum(segment.count(fact) for segment in segments) == 1
+
+
+def test_escaped_agent_mode_citation_never_reaches_spoken_text():
+    spoken = answer_rendering.summarize_for_voice(
+        "How are my expenses?",
+        "Purchases were $3,250.00 after $250.00 in payments \\[[1]\\].",
+        "en-US",
+        source_language="en",
+    )
+
+    assert spoken == "Purchases were $3,250.00 after $250.00 in payments."
+    assert "\\[" not in spoken and "[1]" not in spoken
+
+
+def test_dense_english_report_uses_verified_subset_for_voice(monkeypatch):
+    class _DenseSummarizer(_Serving):
+        def summarize(self, **kwargs):
+            self.calls.append(kwargs)
+            return (
+                "Purchases were [[FACT_2]]. Fees were [[FACT_3]], "
+                "and interest was [[FACT_4]]. The new balance is [[FACT_5]]."
+            )
+
+    serving = _DenseSummarizer()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+    answer = (
+        "This cycle (2025-12), CH-0001 posted $3,250.00 in purchases, "
+        "plus $122.00 in fees and $28.00 in interest, bringing the statement "
+        "to a new balance of $4,211.04 (up from a $1,061.04 prior balance), "
+        "after $250.00 in payments."
+    )
+
+    spoken = answer_rendering.summarize_for_voice(
+        "How are my expenses?",
+        answer,
+        "en-US",
+        source_language="en",
+    )
+
+    assert spoken == (
+        "Purchases were $3,250.00. Fees were $122.00, and interest was $28.00. "
+        "The new balance is $4,211.04."
+    )
+    assert "CH-0001" not in spoken and "2025-12" not in spoken
+    assert "at most four placeholders" in serving.calls[0]["system"]
+
+
 @pytest.mark.parametrize("language", SUPPORTED_LANGUAGES)
 def test_every_supported_language_uses_the_fact_placeholder_contract(
     monkeypatch, language

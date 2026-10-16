@@ -37,6 +37,9 @@ def test_speech_boundary_preserves_normal_multilingual_text() -> None:
         "Use `qwen3-asr-1.7b`.",
         "[Open the result](https://example.com/result)",
         "See https://example.com/result",
+        "The answer is supported by \\[[1]\\].",
+        "The answer is supported by [[1]].",
+        "The answer is supported by [1].",
         "| model | cost |\n| qwen | 10 |",
     ],
 )

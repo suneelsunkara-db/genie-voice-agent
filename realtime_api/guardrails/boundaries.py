@@ -12,6 +12,9 @@ from .ledger import GuardLedger, report
 _TOOL_CALL_TAG_RE = re.compile(r"</?\s*tool_call\s*>", re.IGNORECASE)
 _UNSPOKEN_MARKUP_RE = re.compile(
     r"(?:\*\*|__|~~|```|`|\[[^\]]+\]\([^)]+\)|https?://\S+|"
+    r"\\\[\[\s*\d+(?:\s*[,;–-]\s*\d+)*\]\\\]|"
+    r"\[\[\s*\d+(?:\s*[,;–-]\s*\d+)*\]\]|"
+    r"\[\s*\d+(?:\s*[,;–-]\s*\d+)*\]|"
     r"(?m:^\s{0,3}#{1,6}\s)|(?m:^\s*\|.*\|\s*$))"
 )
 _EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.IGNORECASE)
