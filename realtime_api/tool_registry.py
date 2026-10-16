@@ -16,6 +16,7 @@ dict keyed by anything the profile needs, e.g. ``use_case``, ``facts_cache``).
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -132,8 +133,22 @@ def register(spec: dict[str, Any], fn: ToolExecutor, *, profile: str | None = No
 
 
 def tools_spec(profile: str | None = None) -> list[dict[str, Any]]:
-    """Return OpenAI-format tool definitions for the given profile."""
-    return [spec for (p, _), (spec, _) in _REGISTRY.items() if p == profile]
+    """Return provider-safe OpenAI tool definitions for the given profile.
+
+    Registry entries may carry application-only metadata such as
+    ``x-effect_class``. Unity AI Gateway validates the OpenAI tool schema
+    strictly, so those extensions must remain server-side.
+    """
+    exposed: list[dict[str, Any]] = []
+    for (registered_profile, _), (spec, _) in _REGISTRY.items():
+        if registered_profile != profile:
+            continue
+        public_spec = deepcopy(spec)
+        for key in tuple(public_spec):
+            if key.startswith("x-"):
+                public_spec.pop(key, None)
+        exposed.append(public_spec)
+    return exposed
 
 
 def run_tool(name: str, arguments: dict[str, Any], ctx: ToolContext, *, profile: str | None = None) -> str:

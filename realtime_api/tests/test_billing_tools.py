@@ -77,7 +77,8 @@ def _install_serving(monkeypatch, service) -> None:
 
 
 def test_billing_profile_registers_separate_prepare_and_mutate_tools():
-    names = {item["function"]["name"] for item in tools._billing_tools_spec()}
+    specs = tools._billing_tools_spec()
+    names = {item["function"]["name"] for item in specs}
     assert {
         "lookup_account",
         "prepare_billing_action",
@@ -85,11 +86,27 @@ def test_billing_profile_registers_separate_prepare_and_mutate_tools():
         "ask_genie",
         "get_current_time",
     } <= names
+    assert all(not key.startswith("x-") for spec in specs for key in spec)
 
 
 def test_prepare_reads_known_customer_and_binds_exact_offer(monkeypatch):
     service = _Serving()
     _install_serving(monkeypatch, service)
+    genie_calls = []
+    monkeypatch.setattr(
+        tools,
+        "_run_ask_genie",
+        lambda arguments, _ctx: (
+            genie_calls.append(arguments)
+            or json.dumps(
+                {
+                    "answer": "INV-90114 is overdue with a $40 late fee; no waiver is applied.",
+                    "columns": ["invoice_id", "late_fee", "status"],
+                    "rows": [["INV-90114", 40.0, "overdue"]],
+                }
+            )
+        ),
+    )
     ctx = _ctx()
 
     result = json.loads(
@@ -100,6 +117,10 @@ def test_prepare_reads_known_customer_and_binds_exact_offer(monkeypatch):
         "Omar Patel, I can waive the $40.00 late fee on INV-90114"
     )
     assert result["confirmation_required"] is True
+    assert len(genie_calls) == 1
+    assert "CUST-4028 (Omar Patel)" in genie_calls[0]["question"]
+    assert result["fact_check"]["source"] == "Databricks Genie"
+    assert result["fact_check"]["customer_id"] == "CUST-4028"
     assert ctx.profile_state["pending_billing_offer"] == {
         "action": "waive_late_fee",
         "customer_id": "CUST-4028",
@@ -113,6 +134,24 @@ def test_prepare_reads_known_customer_and_binds_exact_offer(monkeypatch):
     assert evidence.has_attributed_prose
     assert evidence.prose is not None
     assert "Would you like me to proceed?" in evidence.prose.text
+
+
+def test_prepare_fails_closed_when_genie_fact_check_fails(monkeypatch):
+    service = _Serving()
+    _install_serving(monkeypatch, service)
+    monkeypatch.setattr(
+        tools,
+        "_run_ask_genie",
+        lambda _arguments, _ctx: json.dumps({"error": "Genie unavailable"}),
+    )
+    ctx = _ctx()
+
+    result = json.loads(
+        tools._run_prepare_billing_action({"action": "waive_late_fee"}, ctx)
+    )
+
+    assert "Genie billing fact check failed" in result["error"]
+    assert "pending_billing_offer" not in ctx.profile_state
 
 
 def test_apply_fails_closed_without_matching_prepared_offer():

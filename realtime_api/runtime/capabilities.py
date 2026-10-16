@@ -306,14 +306,16 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         id=CapabilityId.BILLING_ACTION_PREPARE,
         purpose=(
             "Prepare a requested billing resolution such as waiving a late fee or "
-            "setting up a payment plan when no exact offer is open yet. Read the "
-            "current caller's account, identify the concrete invoice and amount, "
-            "and ask for confirmation. This capability never changes account state."
+            "setting up a payment plan when no exact offer is open yet. Verify the "
+            "current caller's governed billing facts with Genie, identify the concrete "
+            "invoice and amount, and ask for confirmation. This capability never "
+            "changes account state."
         ),
         scope="pack",
         depth="fact",
         effect="read",
         adapter="pack_facts",
+        requires_obo=True,
         requires_tool=True,
         tools=frozenset({"prepare_billing_action"}),
         prompt=(

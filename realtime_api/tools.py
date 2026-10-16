@@ -106,11 +106,14 @@ _PREPARE_BILLING_SPEC = {
 
 
 def _run_prepare_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> str:
-    """Resolve a mutation request to an exact, read-only offer.
+    """Fact-check and resolve a mutation request to an exact, read-only offer.
 
-    Confirmation is bound to the action, customer and invoice captured here.
-    The subsequent mutation tool re-reads and verifies this snapshot before
-    writing, so a generic "yes" cannot authorize a different or stale action.
+    Current account state supplies the exact customer/invoice identity. A
+    customer-scoped Genie query then verifies the governed billing facts before
+    an offer is created. Confirmation is bound to the action, customer and
+    invoice captured here. The subsequent mutation tool re-reads and verifies
+    this snapshot before writing, so a generic "yes" cannot authorize a
+    different or stale action.
     """
     action = str(arguments.get("action") or "")
     if action not in {"waive_late_fee", "payment_plan"}:
@@ -133,6 +136,30 @@ def _run_prepare_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> 
             return json.dumps({"error": f"No account found for {customer_id}"})
         ctx.store_account(customer_id, account)
 
+        customer = dict(account.get("customer") or {})
+        customer_name = str(customer.get("full_name") or "").strip()
+        identity = f"{customer_id} ({customer_name})" if customer_name else customer_id
+        genie_question = (
+            "Using only governed billing records, verify these facts for customer "
+            f"{identity}: the current overdue invoice, its late-fee amount and status, "
+            "and whether a late-fee waiver has already been applied. "
+            "Return records for this customer only."
+        )
+        genie_raw = _run_ask_genie({"question": genie_question}, ctx)
+        try:
+            genie_facts = json.loads(genie_raw)
+        except json.JSONDecodeError:
+            return json.dumps({"error": "Genie returned an invalid billing fact check."})
+        if not isinstance(genie_facts, dict) or genie_facts.get("error") or genie_facts.get("denied"):
+            detail = (
+                genie_facts.get("error")
+                if isinstance(genie_facts, dict)
+                else "invalid response"
+            )
+            return json.dumps({"error": f"Genie billing fact check failed: {detail}"})
+        if not genie_facts.get("answer") and not genie_facts.get("rows"):
+            return json.dumps({"error": "Genie found no billing evidence for this customer."})
+
         nudge = (
             {"waiver_requested": True, "next_best_action": "offer_fee_waiver"}
             if action == "waive_late_fee"
@@ -144,12 +171,11 @@ def _run_prepare_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> 
         if action == "waive_late_fee" and not (plan.late_fee_usd and plan.late_fee_usd > 0):
             return json.dumps({"error": "The overdue invoice has no late fee to waive."})
 
-        customer = dict(account.get("customer") or {})
         proposal_text = render_deterministic_reply(
             plan,
             language=ctx._detected_language,
             opener="",
-            customer_name=str(customer.get("full_name") or ""),
+            customer_name=customer_name,
         )
         if not proposal_text:
             return json.dumps({"error": "Could not render a billing offer for this language."})
@@ -173,6 +199,14 @@ def _run_prepare_billing_action(arguments: dict[str, Any], ctx: ToolContext) -> 
                 ),
                 **pending,
                 "confirmation_required": True,
+                "fact_check": {
+                    "source": "Databricks Genie",
+                    "customer_id": customer_id,
+                    "question": genie_question,
+                    "answer": genie_facts.get("answer"),
+                    "columns": genie_facts.get("columns"),
+                    "rows": genie_facts.get("rows"),
+                },
             },
             default=str,
         )
