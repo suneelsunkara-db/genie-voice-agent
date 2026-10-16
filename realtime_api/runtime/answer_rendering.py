@@ -11,7 +11,9 @@ promoted into customer-facing ``column: value`` narration.
 """
 from __future__ import annotations
 
+import html
 import re
+import unicodedata
 from functools import lru_cache
 from typing import TYPE_CHECKING, Iterator
 
@@ -156,18 +158,295 @@ def upstream_answer_render(evidence: "Evidence") -> tuple[str, str]:
     return "", ""
 
 
-def _extractive_voice_excerpt(text: str, *, max_sentences: int = 3) -> str:
-    cleaned = re.sub(r"(?m)^\s{0,3}(?:#{1,6}\s*|[-*]\s+)", "", text).strip()
-    sentences = [
+class SpeechRenderError(ValueError):
+    """An upstream answer could not be certified for spoken output."""
+
+
+_FENCE_RE = re.compile(r"(?ms)^\s*```.*?^\s*```\s*$")
+_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_AUTOLINK_RE = re.compile(r"<(?:https?://|mailto:)[^>]+>", re.I)
+_URL_RE = re.compile(r"https?://\S+", re.I)
+_HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_TABLE_RULE_RE = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$")
+_MARKDOWN_REMAINS_RE = re.compile(
+    r"(?:\*\*|__|~~|```|`|\[[^\]]+\]\([^)]+\)|(?m:^\s{0,3}#{1,6}\s))"
+)
+_PLACEHOLDER_RE = re.compile(r"\[\[FACT_(\d+)]]")
+
+# Atomic values that must survive localization byte-for-byte. The broad numeric
+# branch deliberately includes Unicode decimal digits and common separators; the
+# identifier branch protects model/endpoint/version names that contain a digit.
+_FACT_ATOM_RE = re.compile(
+    r"(?<![A-Za-z0-9_])"
+    r"(?:[$€£¥₹₩₽]\s*)?[+-]?\d(?:[\d\s,.'’٬٫:/-]*\d)?"
+    r"(?:\s*(?:%|USD|EUR|GBP|JPY|INR|SGD|DBU(?:s)?|ms|s|min|hours?))?"
+    r"(?![A-Za-z0-9_])"
+    r"|(?<![\w-])(?=[A-Za-z][A-Za-z0-9_.:/-]*\d)"
+    r"[A-Za-z](?:[A-Za-z0-9_.:/-]*[A-Za-z0-9])?(?![\w-])",
+    re.I,
+)
+_SPEECH_END = frozenset(".!?。！？؟।…;؛")
+_MAX_SPEECH_CHARS = 640
+_ABBREVIATION_RE = re.compile(
+    r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|a\.m|p\.m|U\.S)\.",
+    re.I,
+)
+_ENGLISH_DATE_RANGE_RE = re.compile(
+    r"\(?\b("
+    r"January|February|March|April|May|June|July|August|September|October|November|December"
+    r")\s+(\d{4})\s*[–—-]\s*("
+    r"January|February|March|April|May|June|July|August|September|October|November|December"
+    r")\s+(\d{4})\)?",
+    re.I,
+)
+
+
+def _strip_inline_markdown(text: str) -> str:
+    """Convert one Markdown block to plain speech without interpreting its facts."""
+    def replace_link(match: re.Match[str]) -> str:
+        label = match.group(1).strip()
+        if re.match(r"^(?:query result|view\b|source\b|citation\b|details?\b)", label, re.I):
+            return ""
+        return label
+
+    value = html.unescape(text)
+    value = _IMAGE_RE.sub(lambda match: match.group(1), value)
+    value = _LINK_RE.sub(replace_link, value)
+    value = _AUTOLINK_RE.sub("", value)
+    value = _URL_RE.sub("", value)
+    value = _INLINE_CODE_RE.sub(lambda match: match.group(1), value)
+    value = _HTML_TAG_RE.sub("", value)
+    value = re.sub(r"(\*\*|__|~~)", "", value)
+    value = re.sub(r"(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w)", "", value)
+    # Emoji and pictographs are presentation, not words for VoxCPM to pronounce.
+    value = "".join(
+        char
+        for char in value
+        if not (
+            0x1F000 <= ord(char) <= 0x1FAFF
+            or 0x2600 <= ord(char) <= 0x27BF
+        )
+    )
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _clarify_english_date_ranges(text: str) -> str:
+    """Render compact written month ranges as unambiguous spoken English."""
+    return _ENGLISH_DATE_RANGE_RE.sub(
+        lambda match: (
+            f"from {match.group(1)} {match.group(2)} "
+            f"through {match.group(3)} {match.group(4)}"
+        ),
+        text,
+    )
+
+
+def _speech_blocks(markdown: str) -> tuple[list[str], list[str], list[str]]:
+    """Return plain paragraphs, list items and headings from a Markdown answer."""
+    without_fences = _FENCE_RE.sub("", markdown)
+    paragraphs: list[str] = []
+    list_items: list[str] = []
+    headings: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            value = _strip_inline_markdown(" ".join(current))
+            if value:
+                paragraphs.append(value)
+            current.clear()
+
+    for raw_line in without_fences.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush()
+            continue
+        if _TABLE_RULE_RE.match(line) or (
+            line.count("|") >= 2 and line.startswith("|") and line.endswith("|")
+        ):
+            flush()
+            continue
+        if re.fullmatch(r"\[[^\]]+]\([^)]+\)", line):
+            flush()
+            continue
+        heading = re.match(r"^#{1,6}\s+(.+)$", line)
+        if heading:
+            flush()
+            value = _strip_inline_markdown(heading.group(1))
+            if value:
+                headings.append(value)
+            continue
+        item = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", line)
+        if item:
+            flush()
+            value = _strip_inline_markdown(item.group(1))
+            if value:
+                list_items.append(value)
+            continue
+        line = re.sub(r"^>\s?", "", line)
+        current.append(line)
+    flush()
+    return paragraphs, list_items, headings
+
+
+def _protect_facts(text: str) -> tuple[str, list[str]]:
+    atoms: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        value = match.group(0).strip()
+        atoms.append(value)
+        return f"[[FACT_{len(atoms) - 1}]]"
+
+    return _FACT_ATOM_RE.sub(replace, text), atoms
+
+
+def _restore_facts(text: str, atoms: list[str]) -> str:
+    seen = [int(value) for value in _PLACEHOLDER_RE.findall(text)]
+    if sorted(seen) != list(range(len(atoms))):
+        raise SpeechRenderError("translated speech did not preserve every factual atom exactly once")
+    restored = _PLACEHOLDER_RE.sub(lambda match: atoms[int(match.group(1))], text)
+    if _PLACEHOLDER_RE.search(restored):
+        raise SpeechRenderError("unresolved factual placeholder")
+    return restored
+
+
+def _restore_segment(segment: str, atoms: list[str]) -> str:
+    indexes = sorted({int(value) for value in _PLACEHOLDER_RE.findall(segment)})
+    segment_atoms = [atoms[index] for index in indexes]
+    remap = {old: new for new, old in enumerate(indexes)}
+    compact = _PLACEHOLDER_RE.sub(
+        lambda match: f"[[FACT_{remap[int(match.group(1))]}]]",
+        segment,
+    )
+    return _restore_facts(compact, segment_atoms)
+
+
+def _sentence_units(text: str) -> list[str]:
+    """Language-neutral punctuation units with facts and abbreviations protected."""
+    protected, atoms = _protect_facts(text)
+    abbreviations: list[str] = []
+
+    def protect_abbreviation(match: re.Match[str]) -> str:
+        abbreviations.append(match.group(0))
+        return f"[[ABBR_{len(abbreviations) - 1}]]"
+
+    protected = _ABBREVIATION_RE.sub(protect_abbreviation, protected)
+    parts = [
         match.group(0).strip()
-        for match in re.finditer(r"[^.!?。！？\n]+(?:[.!?。！？]+|$)", cleaned)
+        for match in re.finditer(
+            r"[^.!?。！？؟।…;؛\n]+(?:[.!?。！？؟।…;؛]+|\n|$)",
+            protected,
+        )
         if match.group(0).strip()
     ]
-    return " ".join(sentences[:max_sentences]).strip()
+    output: list[str] = []
+    for part in parts or [protected]:
+        part = re.sub(
+            r"\[\[ABBR_(\d+)]]",
+            lambda match: abbreviations[int(match.group(1))],
+            part,
+        )
+        output.append(_restore_segment(part, atoms))
+    return output
 
 
-def _numeric_tokens(text: str) -> set[str]:
-    return set(re.findall(r"(?<!\w)[+-]?\d[\d,.:%/-]*(?!\w)", text))
+def _bounded_speech_text(text: str, *, max_chars: int = _MAX_SPEECH_CHARS) -> str:
+    """Bound plain speech without cutting through a protected factual atom."""
+    protected, atoms = _protect_facts(text)
+    if len(protected) <= max_chars:
+        return _restore_facts(protected, atoms)
+    boundary = max(
+        (index + 1 for index, char in enumerate(protected[:max_chars]) if char in _SPEECH_END),
+        default=0,
+    )
+    if boundary < max_chars // 3:
+        boundary = protected.rfind(" ", 0, max_chars)
+    if boundary <= 0:
+        boundary = max_chars
+        while boundary > 0 and unicodedata.combining(protected[boundary - 1]):
+            boundary -= 1
+    open_placeholder = protected.rfind("[[", 0, boundary)
+    close_placeholder = protected.rfind("]]", 0, boundary)
+    if open_placeholder > close_placeholder:
+        boundary = open_placeholder
+    bounded = protected[:boundary].rstrip(" ,:;-") + "…"
+    used = sorted({int(value) for value in _PLACEHOLDER_RE.findall(bounded)})
+    compact_atoms = [atoms[index] for index in used]
+    remap = {old: new for new, old in enumerate(used)}
+    bounded = _PLACEHOLDER_RE.sub(
+        lambda match: f"[[FACT_{remap[int(match.group(1))]}]]",
+        bounded,
+    )
+    return _restore_facts(bounded, compact_atoms)
+
+
+def _extractive_voice_excerpt(text: str) -> str:
+    """Select answer-bearing Markdown blocks without punctuation tokenization."""
+    paragraphs, list_items, headings = _speech_blocks(text)
+    candidates = paragraphs or list_items or headings
+    if not candidates:
+        raise SpeechRenderError("upstream answer contained no speakable prose")
+    selected: list[str] = []
+    for block in candidates:
+        if selected and len(" ".join((*selected, block))) > _MAX_SPEECH_CHARS:
+            break
+        selected.append(block)
+        if len(selected) >= 2:
+            break
+    units = _sentence_units(" ".join(selected or candidates[:1]))
+    return _bounded_speech_text(" ".join(units[:3]))
+
+
+def certify_speech_text(text: str) -> str:
+    """Fail closed unless text is bounded plain prose suitable for TTS."""
+    value = re.sub(r"\s+", " ", (text or "").strip())
+    if not value:
+        raise SpeechRenderError("speech text is empty")
+    if len(value) > _MAX_SPEECH_CHARS + 1:
+        raise SpeechRenderError("speech text exceeds the realtime voice budget")
+    if _MARKDOWN_REMAINS_RE.search(value) or _URL_RE.search(value):
+        raise SpeechRenderError("speech text still contains Markdown or a URL")
+    if _PLACEHOLDER_RE.search(value) or "[[FACT_" in value:
+        raise SpeechRenderError("speech text contains unresolved factual placeholders")
+    if any(unicodedata.category(char) == "Cc" for char in value):
+        raise SpeechRenderError("speech text contains control characters")
+    return value
+
+
+def split_speech_segments(text: str, *, max_chars: int = 320) -> list[str]:
+    """Split fallback TTS input without breaking decimals, dates or identifiers."""
+    value = certify_speech_text(text)
+    units = _sentence_units(value)
+    if units and all(len(unit) <= max_chars for unit in units):
+        return units
+    protected, atoms = _protect_facts(value)
+    protected_segments: list[str] = []
+    start = 0
+    while len(protected) - start > max_chars:
+        window = protected[start : start + max_chars]
+        boundary = max(
+            (
+                index + 1
+                for index, char in enumerate(window)
+                if char in _SPEECH_END and index + 1 >= max_chars // 3
+            ),
+            default=0,
+        )
+        if not boundary:
+            boundary = window.rfind(" ")
+        if boundary <= 0:
+            boundary = max_chars
+        protected_segments.append(protected[start : start + boundary].strip())
+        start += boundary
+    if protected[start:].strip():
+        protected_segments.append(protected[start:].strip())
+
+    restored: list[str] = []
+    for segment in protected_segments:
+        restored.append(_restore_segment(segment, atoms))
+    return restored
 
 
 def summarize_for_voice(
@@ -183,22 +462,26 @@ def summarize_for_voice(
     if not text:
         return ""
     excerpt = _extractive_voice_excerpt(text)
-    if not excerpt or same_language(source_language, language):
-        return excerpt
+    if is_english(source_language):
+        excerpt = _clarify_english_date_ranges(excerpt)
+    if same_language(source_language, language):
+        return certify_speech_text(excerpt)
 
     from ..serving_factory import shared_serving
 
     lang = language or "en-US"
     summary_tokens, _, endpoint = _render_knobs()
+    protected_excerpt, atoms = _protect_facts(excerpt)
     system = (
         "You translate an upstream analytical answer for a realtime voice assistant. "
         "Translate the supplied extract into the language identified by BCP-47 "
-        f"code '{lang}'. Preserve every fact, limitation, name, date, identifier, "
-        "and number exactly. Do not summarize, round, omit, infer, or add anything. "
+        f"code '{lang}'. Tokens such as [[FACT_0]] are immutable factual placeholders: "
+        "return every placeholder exactly once and do not translate, alter, duplicate, "
+        "or omit one. Do not summarize, round, omit, infer, or add anything. "
         "Use no markdown, headings, bullets, or citation markers. Output only the "
         "sentences the agent should speak."
     )
-    user = f"User asked: {question}\n\nGoverned answer extract:\n{excerpt}"
+    user = f"User asked: {question}\n\nGoverned answer extract:\n{protected_excerpt}"
     serving = shared_serving()
     # Reasoning-capable conversion endpoints can occasionally spend a small token
     # ceiling internally and return an empty visible message. One bounded retry
@@ -218,11 +501,19 @@ def summarize_for_voice(
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             continue
-        if summary and _numeric_tokens(summary) <= _numeric_tokens(excerpt):
-            return summary
+        if not summary:
+            continue
+        without_placeholders = _PLACEHOLDER_RE.sub("", summary)
+        if _FACT_ATOM_RE.search(without_placeholders):
+            continue
+        try:
+            restored = _restore_facts(summary, atoms)
+            return certify_speech_text(restored)
+        except SpeechRenderError:
+            continue
     if last_error is not None:
         raise RuntimeError("voice summary generation failed") from last_error
-    raise ValueError("voice summary generation returned no text")
+    raise SpeechRenderError("voice summary generation returned no certified text")
 
 
 def _translation_system(language: str | None) -> str:

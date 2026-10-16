@@ -10,6 +10,10 @@ from typing import Any
 from .ledger import GuardLedger, report
 
 _TOOL_CALL_TAG_RE = re.compile(r"</?\s*tool_call\s*>", re.IGNORECASE)
+_UNSPOKEN_MARKUP_RE = re.compile(
+    r"(?:\*\*|__|~~|```|`|\[[^\]]+\]\([^)]+\)|https?://\S+|"
+    r"(?m:^\s{0,3}#{1,6}\s)|(?m:^\s*\|.*\|\s*$))"
+)
 _EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.IGNORECASE)
 _SSN_RE = re.compile(r"(?<!\d)\d{3}[- ]\d{2}[- ]\d{4}(?!\d)")
 _SECRET_RE = re.compile(
@@ -239,6 +243,8 @@ def enforce_speech_text(text: str) -> tuple[str, bool]:
     cleaned, changed = sanitize_speech_text(text)
     if not cleaned.strip():
         raise SpeechBoundaryViolation("speech output was empty or contained only tool markup")
+    if _UNSPOKEN_MARKUP_RE.search(cleaned):
+        raise SpeechBoundaryViolation("speech output contained markup or a URL")
     return cleaned, changed
 
 
@@ -251,7 +257,7 @@ def admit_speech_output(
     """Admit exactly the text that may be displayed, committed, and synthesized."""
     try:
         cleaned, changed = enforce_speech_text(text)
-    except SpeechBoundaryViolation:
+    except SpeechBoundaryViolation as exc:
         report(
             ledger,
             "speech_output_boundary",
@@ -259,7 +265,7 @@ def admit_speech_output(
             stage="pre_tts",
             phase="before_synthesis",
             resource=resource,
-            reason="empty or tool-only speech blocked",
+            reason=str(exc),
         )
         raise
     report(

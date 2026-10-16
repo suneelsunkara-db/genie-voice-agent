@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import re
 import time
 import wave
 from typing import AsyncIterator
@@ -21,8 +20,6 @@ from ..tracing import TurnTrace
 from ..voice_identity import voice_id_for
 from . import ServingBundle
 
-_SENTENCE_RE = re.compile(r"[^.!?。！？…\n]+(?:[.!?。！？…]+|\n|$)", re.UNICODE)
-
 # Seconds of the first turn's audio captured as the session's voice reference.
 # 4 s is ample for VoxCPM2 timbre cloning. The clip is uploaded once and then
 # addressed by ``voice_id``, so its size no longer costs latency per turn.
@@ -30,12 +27,9 @@ _VOICE_REFERENCE_SECONDS = 4.0
 
 
 def split_sentences(text: str) -> list[str]:
-    text = (text or "").strip()
-    if not text:
-        return []
-    sentences = [match.group().strip() for match in _SENTENCE_RE.finditer(text)]
-    sentences = [s for s in sentences if s]
-    return sentences or [text]
+    from ..runtime.answer_rendering import split_speech_segments
+
+    return split_speech_segments(text)
 
 
 def resolve_language(session: VoiceSession, detected: str | None) -> str:

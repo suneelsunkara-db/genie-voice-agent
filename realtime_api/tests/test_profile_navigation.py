@@ -421,3 +421,18 @@ def test_empty_answer_uses_the_upstream_refusal():
         language="en-US",
     )
     assert spoken == "Genie could not answer that question."
+
+
+def test_failed_evidence_render_never_falls_back_to_uncertified_model_text():
+    from realtime_api.pipelines.speech_llm_toolassist_speech import _spoken_answer
+
+    spoken = _spoken_answer(
+        response_text="**$10,525. Broken fallback from the conversational model.",
+        rendered_summary="",
+        runtime_error_code=None,
+        refuse_text="I found the result but could not safely read it aloud.",
+        language="en-US",
+        evidence_render_failed=True,
+    )
+
+    assert spoken == "I found the result but could not safely read it aloud."

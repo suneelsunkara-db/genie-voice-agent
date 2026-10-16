@@ -30,6 +30,21 @@ def test_speech_boundary_preserves_normal_multilingual_text() -> None:
     assert enforce_speech_text("สวัสดีค่ะ") == ("สวัสดีค่ะ", False)
 
 
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "The total is **$10,525.77**.",
+        "Use `qwen3-asr-1.7b`.",
+        "[Open the result](https://example.com/result)",
+        "See https://example.com/result",
+        "| model | cost |\n| qwen | 10 |",
+    ],
+)
+def test_speech_boundary_rejects_markup_and_urls(unsafe: str) -> None:
+    with pytest.raises(SpeechBoundaryViolation):
+        enforce_speech_text(unsafe)
+
+
 def test_transcript_admission_records_model_owned_decisions() -> None:
     ledger = GuardLedger()
     admitted = admit_transcript(

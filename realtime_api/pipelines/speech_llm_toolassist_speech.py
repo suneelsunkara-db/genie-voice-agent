@@ -286,12 +286,15 @@ def _spoken_answer(
     runtime_error_code: str | None,
     refuse_text: str | None,
     language: str,
+    evidence_render_failed: bool = False,
 ) -> str:
     """Choose natural customer-facing text; structured claims are citations only."""
     from ..runtime.refuse import ErrorCode, refuse_speech
 
     if runtime_error_code == "timeout":
         return refuse_speech(ErrorCode.TIMEOUT, language=language)
+    if evidence_render_failed:
+        return refuse_text or refuse_speech(ErrorCode.UNSUPPORTED, language=language)
     if rendered_summary:
         return rendered_summary
     if response_text.strip():
@@ -1342,6 +1345,7 @@ async def process_turn(
                 refuse_text = refuse_speech(ev.error.code, language=language)
 
         rendered_summary = ""
+        evidence_render_failed = False
         if render_answer:
             from ..runtime.answer_rendering import summarize_for_voice
 
@@ -1355,6 +1359,8 @@ async def process_turn(
                     trace=trace,
                 )
             except Exception:  # noqa: BLE001
+                evidence_render_failed = True
+                trace.increment_metric("evidence_render_failed")
                 logger.warning("long-answer summary failed for turn %d", turn_id, exc_info=True)
 
         speech_text = _spoken_answer(
@@ -1363,6 +1369,7 @@ async def process_turn(
             runtime_error_code=runtime_error_code,
             refuse_text=refuse_text,
             language=language,
+            evidence_render_failed=evidence_render_failed,
         )
         if navigation_decision.capability_id == CapabilityId.BILLING_ACTION:
             session.profile_state.pop("pending_confirm_mutate", None)
