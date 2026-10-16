@@ -8,6 +8,7 @@ import time
 import wave
 from typing import AsyncIterator
 
+from ..contracts import AudioChunk
 from ..languages import CATALOG, canonical_base, canonical_tag
 from ..guardrails.boundaries import (
     SpeechAdmission,
@@ -165,64 +166,89 @@ async def stream_tts(
 
     if hasattr(bundle.tts, "synthesize_stream"):
         start = time.perf_counter()
-        stream = bundle.tts.synthesize_stream(
-            text, language=language, reference_audio_b64=reference_b64, voice_id=voice_id
+        segments = split_sentences(text)
+        pause_ms = max(
+            0,
+            min(2_000, int(getattr(bundle.tts, "tts_sentence_pause_ms", 350))),
         )
-
-        def _next():
-            try:
-                return next(stream)
-            except StopIteration:
-                return None
-
         index = 0
-        pending = None
         tts_first_ms = None
-        while True:
-            chunk = await asyncio.to_thread(_next)
-            if _superseded():
-                stream.close()
-                return
-            if chunk is None:
-                break
-            if tts_first_ms is None:
-                tts_first_ms = round((time.perf_counter() - start) * 1000)
-            if capture is not None:
-                capture_sr = chunk.sample_rate_hz
-                if len(capture) < int(capture_sr * 2 * _VOICE_REFERENCE_SECONDS):
-                    capture.extend(chunk.pcm)
-            if pending is not None:
-                first_text = text if (emit_text and index == 0) else None
-                event = _stamp(
-                    pending.event(
-                        turn_id,
-                        chunk_index=index,
-                        final=False,
-                        segment_final=False,
-                        turn_final=False,
-                        text=first_text,
+        endpoint_ttfb_ms: float | None = None
+        endpoint_gen_ms = 0.0
+        for segment_index, segment in enumerate(segments):
+            stream = bundle.tts.synthesize_stream(
+                segment,
+                language=language,
+                reference_audio_b64=reference_b64,
+                voice_id=voice_id,
+            )
+
+            def _next():
+                try:
+                    return next(stream)
+                except StopIteration:
+                    return None
+
+            pending: AudioChunk | None = None
+            while True:
+                chunk = await asyncio.to_thread(_next)
+                if _superseded():
+                    stream.close()
+                    return
+                if chunk is None:
+                    break
+                if tts_first_ms is None:
+                    tts_first_ms = (time.perf_counter() - start) * 1000
+                if capture is not None:
+                    capture_sr = chunk.sample_rate_hz
+                    if len(capture) < int(capture_sr * 2 * _VOICE_REFERENCE_SECONDS):
+                        capture.extend(chunk.pcm)
+                if pending is not None:
+                    first_text = text if (emit_text and index == 0) else None
+                    event = _stamp(
+                        pending.event(
+                            turn_id,
+                            chunk_index=index,
+                            final=False,
+                            segment_final=False,
+                            turn_final=False,
+                            text=first_text,
+                        )
                     )
-                )
-                if index == 0:
-                    event["tts_first_ms"] = tts_first_ms
-                if trace is not None:
-                    trace.note_audio(event, primary=primary)
-                yield event
-                index += 1
-            pending = chunk
-        if pending is not None:
+                    if index == 0:
+                        event["tts_first_ms"] = tts_first_ms
+                    if trace is not None:
+                        trace.note_audio(event, primary=primary)
+                    yield event
+                    index += 1
+                pending = chunk
+            if pending is None:
+                continue
             if _superseded():
                 return
+            if endpoint_ttfb_ms is None and pending.server_ttfb_ms is not None:
+                endpoint_ttfb_ms = pending.server_ttfb_ms
+            if pending.server_gen_ms is not None:
+                endpoint_gen_ms += pending.server_gen_ms
+            is_last_segment = segment_index == len(segments) - 1
+            pcm = pending.pcm
+            if not is_last_segment and pause_ms:
+                pcm += b"\x00\x00" * round(pending.sample_rate_hz * pause_ms / 1_000)
+            final_chunk = AudioChunk(
+                pcm=pcm,
+                sample_rate_hz=pending.sample_rate_hz,
+                server_ttfb_ms=endpoint_ttfb_ms if is_last_segment else None,
+                server_gen_ms=endpoint_gen_ms if is_last_segment else None,
+            )
             first_text = text if (emit_text and index == 0) else None
-            # Last chunk of this TTS call: always segment_final; turn_final only
-            # when mark_final (answer complete). final mirrors turn_final.
+            turn_done = is_last_segment and mark_final
             event = _stamp(
-                pending.event(
+                final_chunk.event(
                     turn_id,
                     chunk_index=index,
-                    final=mark_final,
+                    final=turn_done,
                     segment_final=True,
-                    turn_final=mark_final,
+                    turn_final=turn_done,
                     text=first_text,
                 )
             )
@@ -231,6 +257,7 @@ async def stream_tts(
             if trace is not None:
                 trace.note_audio(event, primary=primary)
             yield event
+            index += 1
         _lock_voice_reference(session, bytes(capture) if capture is not None else b"", capture_sr)
         return
 

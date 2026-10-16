@@ -102,6 +102,10 @@ class RealtimeSettings:
     # (incl. Thai) at the lowest safe latency on GPU_MEDIUM.
     tts_inference_timesteps: int = 6
     tts_cfg_value: float = 2.0
+    # Deterministic silence appended between separately synthesized sentences.
+    # VoxCPM does not reliably preserve punctuation pauses when a whole paragraph
+    # is sent as one streaming generation.
+    tts_sentence_pause_ms: int = 350
     # Allowlisted reference clips selected by ``SessionStart.voice_variant``.
     # The chosen key persists in the browser and is sent by every page, while the
     # server owns these paths so a client can never make it read an arbitrary file.
@@ -183,6 +187,13 @@ class RealtimeSettings:
             raise RuntimeError(
                 "realtime_voice.navigation.min_confidence must be between 0 and 1"
             )
+        sentence_pause_ms = int(
+            tts_defaults.get("sentence_pause_ms", d.tts_sentence_pause_ms)
+        )
+        if not 0 <= sentence_pause_ms <= 2_000:
+            raise RuntimeError(
+                "realtime_voice.tts_defaults.sentence_pause_ms must be between 0 and 2000"
+            )
         return cls(
             stt_endpoint=stt,
             llm_endpoint=llm,
@@ -201,6 +212,7 @@ class RealtimeSettings:
             llm_max_tool_iterations=int(llm_defaults.get("max_tool_iterations", d.llm_max_tool_iterations)),
             tts_inference_timesteps=int(tts_defaults.get("inference_timesteps", d.tts_inference_timesteps)),
             tts_cfg_value=float(tts_defaults.get("cfg_value", d.tts_cfg_value)),
+            tts_sentence_pause_ms=sentence_pause_ms,
             predict_timeout_s=float(timeouts.get("predict_s", d.predict_timeout_s)),
             tts_stream_timeout_s=float(timeouts.get("tts_stream_s", d.tts_stream_timeout_s)),
             llm_turn_timeout_s=float(timeouts.get("llm_turn_s", d.llm_turn_timeout_s)),

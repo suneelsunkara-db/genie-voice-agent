@@ -9,6 +9,7 @@ same way, and a new use case gets it for free.
 from __future__ import annotations
 
 import asyncio
+import base64
 
 from realtime_api.contracts import AudioChunk, AudioResponse
 from realtime_api.pipelines import ServingBundle
@@ -20,9 +21,11 @@ from realtime_api.tracing import TurnTrace
 class _StreamingTTS:
     """Streams three chunks; the last carries the endpoint's own timings."""
 
-    def __init__(self, *, delay_s: float = 0.0):
+    def __init__(self, *, delay_s: float = 0.0, sentence_pause_ms: int = 350):
         self._delay_s = delay_s
         self.calls = 0
+        self.texts: list[str] = []
+        self.tts_sentence_pause_ms = sentence_pause_ms
 
     def synthesize_stream(
         self,
@@ -33,6 +36,7 @@ class _StreamingTTS:
         voice_id: str | None = None,
     ):
         self.calls += 1
+        self.texts.append(text)
         import time
 
         if self._delay_s:
@@ -94,6 +98,44 @@ def test_streaming_path_records_ttft_and_server_timings():
     assert trace.ttft_ms >= trace.tts_first_ms
     # With no filler, the silence ended exactly when the answer arrived.
     assert trace.answer_ttft_ms == trace.ttft_ms
+
+
+def test_streaming_path_synthesizes_sentences_separately_with_boundary_pause():
+    tts = _StreamingTTS(sentence_pause_ms=200)
+    text = "First sentence. Second sentence!"
+    events = _drain(
+        ServingBundle(stt=None, llm=None, tts=tts),
+        _session(),
+        _trace(),
+        text,
+    )
+
+    assert tts.texts == ["First sentence.", "Second sentence!"]
+    assert [event["chunk_index"] for event in events] == list(range(6))
+    assert [event["segment_final"] for event in events] == [
+        False,
+        False,
+        True,
+        False,
+        False,
+        True,
+    ]
+    assert [event["turn_final"] for event in events] == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+    ]
+    assert events[0]["text"] == text
+    assert all("text" not in event for event in events[1:])
+    # The final chunk of the first sentence carries 200 ms of deterministic
+    # mono PCM16 silence at 48 kHz after the model-generated audio.
+    first_boundary_pcm = base64.b64decode(events[2]["audio_b64"])
+    assert first_boundary_pcm.endswith(b"\x00\x00" * 9_600)
+    assert events[-1]["server_ttfb_ms"] == 310.0
+    assert events[-1]["server_gen_ms"] == 2_800.0
 
 
 def test_a_filler_ends_the_silence_but_does_not_own_the_answer_latency():

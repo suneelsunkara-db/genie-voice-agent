@@ -226,6 +226,7 @@ class DatabricksServing:
     llm_max_tool_iterations: int = 3
     tts_inference_timesteps: int = 8
     tts_cfg_value: float = 2.0
+    tts_sentence_pause_ms: int = 350
     stt_warmup_passes: int = 3
     # Voice ids whose reference clip this process has already uploaded. A session
     # reference is ~500KB base64, and re-sending it every turn cost ~1.7s of
@@ -248,6 +249,7 @@ class DatabricksServing:
         llm_max_tool_iterations: int = 3,
         tts_inference_timesteps: int = 6,
         tts_cfg_value: float = 2.0,
+        tts_sentence_pause_ms: int = 350,
         predict_timeout_s: float = 45.0,
         tts_stream_timeout_s: float = 180.0,
     ) -> "DatabricksServing":
@@ -267,6 +269,7 @@ class DatabricksServing:
             llm_max_tool_iterations=llm_max_tool_iterations,
             tts_inference_timesteps=tts_inference_timesteps,
             tts_cfg_value=tts_cfg_value,
+            tts_sentence_pause_ms=tts_sentence_pause_ms,
         )
 
     def warmup(self) -> dict[str, Any]:

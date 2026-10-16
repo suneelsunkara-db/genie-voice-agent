@@ -273,6 +273,10 @@ realtime_voice:
     # delivery also destabilizes VoxCPM and garbles the audio, so keep it at 2.0
     # and address voice "tone" via a pinned reference clip instead of this knob.
     cfg_value: 2.0
+    # VoxCPM streaming does not reliably pause at punctuation when given a whole
+    # paragraph. The API synthesizes one sentence at a time and inserts this
+    # deterministic boundary pause; 0 disables added silence.
+    sentence_pause_ms: 350
   # Two pinned, app-wide voice variants. The Home selection persists in the
   # browser and every page sends only the allowlisted key ("female" or "male");
   # the server owns these paths. Both clips are loudness-normalized at install.

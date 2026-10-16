@@ -43,6 +43,7 @@ def build_serving(settings: RealtimeSettings) -> DatabricksServing:
         llm_max_tool_iterations=settings.llm_max_tool_iterations,
         tts_inference_timesteps=settings.tts_inference_timesteps,
         tts_cfg_value=settings.tts_cfg_value,
+        tts_sentence_pause_ms=settings.tts_sentence_pause_ms,
         predict_timeout_s=settings.predict_timeout_s,
         tts_stream_timeout_s=settings.tts_stream_timeout_s,
     )
