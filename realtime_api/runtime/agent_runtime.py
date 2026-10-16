@@ -81,6 +81,7 @@ class RespondWithToolsAdapter:
                 tools_override=context.tools_override,
                 tool_runner=context.tool_runner,
                 tool_choice=context.tool_choice,
+                **dict(context.extra),
             )
 
         text, invocations = await asyncio.to_thread(_run)
@@ -176,6 +177,7 @@ class LiveToolRespondAdapter:
                 "tool_runner": context.tool_runner,
                 "on_tool": on_tool,
                 "tool_choice": context.tool_choice,
+                **dict(context.extra),
             }
             return self._respond(goal.utterance, **kwargs)
 

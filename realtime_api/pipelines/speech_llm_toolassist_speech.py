@@ -1033,6 +1033,11 @@ async def process_turn(
                             tool_runner=respond_extra["tool_runner"],
                             tool_choice=respond_extra["tool_choice"],
                             trace=trace,
+                            extra=(
+                                {"return_after_tool": True}
+                                if capability.terminal_tool_result
+                                else {}
+                            ),
                         ),
                         cancellation,
                     ):
@@ -1286,7 +1291,11 @@ async def process_turn(
             trace.status = "superseded"
             return
 
-        session.history.append({"role": "assistant", "content": response_text})
+        # Terminal evidence tools deliberately skip the redundant final LLM, so
+        # their conversational response is empty. Do not persist an empty assistant
+        # turn; workspace follow-ups are carried by Genie's conversation handle.
+        if response_text:
+            session.history.append({"role": "assistant", "content": response_text})
         # Keep history bounded to last 10 exchanges (20 messages)
         if len(session.history) > 20:
             session.history = session.history[-20:]

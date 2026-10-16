@@ -77,6 +77,9 @@ class CapabilityDescriptor:
     selection: CapabilitySelection | None = None
     prompt: str = ""
     profiles: frozenset[str] = frozenset()
+    # The tool already returns authoritative prose/evidence, so the runtime can
+    # render it directly without a second conversational-model paraphrase.
+    terminal_tool_result: bool = False
 
     def classifier_view(self) -> dict[str, str | bool]:
         """Minimal model-facing contract: no implementation/tool names."""
@@ -192,6 +195,7 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         requires_obo=True,
         requires_tool=True,
         tools=frozenset({"workspace_query"}),
+        terminal_tool_result=True,
         profiles=frozenset({"knowledge"}),
     ),
     CapabilityDescriptor(

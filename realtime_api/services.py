@@ -498,6 +498,7 @@ class DatabricksServing:
         tool_runner: Any | None = None,
         on_tool: Any | None = None,
         tool_choice: str | dict[str, Any] = "auto",
+        return_after_tool: bool = False,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Like respond(), but also returns a list of tool invocations for UI emission.
 
@@ -695,6 +696,12 @@ class DatabricksServing:
                         "tool_call_id", call.get("id")
                     ).end()
                 tool_invocations.append({"name": name, "arguments": arguments, "result": parsed_result})
+            if return_after_tool and tool_invocations:
+                # Some governed tools already return the authoritative prose plus
+                # typed evidence. The shared renderer consumes that result directly;
+                # asking the conversational model to paraphrase it adds latency and
+                # another opportunity to alter facts.
+                return "", tool_invocations
 
         _t = time.perf_counter()
         final_span = None

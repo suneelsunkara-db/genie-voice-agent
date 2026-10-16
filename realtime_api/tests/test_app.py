@@ -1,6 +1,7 @@
 """Unit tests for the standalone realtime voice API (no Databricks calls)."""
 from __future__ import annotations
 
+import json
 import struct
 
 from fastapi.testclient import TestClient
@@ -507,6 +508,62 @@ def test_respond_runs_tool_calling_loop_with_temperature() -> None:
     assert client.calls[0]["temperature"] == 0.4
     assert client.calls[0]["tools"]
     assert any(m.get("role") == "tool" for m in client.calls[1]["messages"])
+
+
+def test_authoritative_tool_result_skips_redundant_final_llm_call() -> None:
+    from realtime_api.services import DatabricksServing
+    from realtime_api.tool_registry import ToolContext
+
+    tool_call = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "workspace_metric",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    client = FakeDeployClient([tool_call])
+    serving = DatabricksServing(
+        client=client,
+        stt_endpoint="s",
+        llm_endpoint="llm",
+        tts_endpoint="t",
+    )
+
+    text, invocations = serving.respond_with_tools(
+        "What did I spend?",
+        language="en-US",
+        tool_ctx=ToolContext(),
+        tools_override=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "workspace_metric",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        tool_runner=lambda _name, _arguments, _ctx: json.dumps(
+            {"answer": "The governed total is $10.00."}
+        ),
+        return_after_tool=True,
+    )
+
+    assert text == ""
+    assert [item["name"] for item in invocations] == ["workspace_metric"]
+    assert len(client.calls) == 1
 
 
 def test_bare_tool_call_json_is_routed_not_spoken() -> None:
