@@ -29,7 +29,8 @@
 # behavior, the CLI profile, optional secrets, and caller ACLs.
 # Usage:
 #   ./deploy_app.sh --app-only   # build/test/sync/deploy the App; reuse infrastructure
-#   ./deploy_app.sh --full       # reconcile data, Gateway, models, grants, and App
+#   ./deploy_app.sh --reset-oauth # recreate only the App/OAuth identity; reuse infrastructure
+#   ./deploy_app.sh --full       # reconcile infrastructure and deploy the App
 # Auth:   uses your Databricks CLI profile (U2M) to DEPLOY; the running app uses
 #         its own service principal for hosting / serving. Genie workspace Q&A
 #         prefers the viewer's OBO token (x-forwarded-access-token) when Apps
@@ -44,26 +45,35 @@ cd "$ROOT"
 # ---- config (runtime and jobs use this exact committed file) ----------------
 DEPLOY_MODE="${DEPLOY_MODE:-full}"
 if [[ $# -gt 1 ]]; then
-  printf "Usage: %s [--app-only|--full]\n" "$0" >&2
+  printf "Usage: %s [--app-only|--reset-oauth|--full]\n" "$0" >&2
   exit 2
 fi
 if [[ $# -eq 1 ]]; then
   case "$1" in
     --app-only|app-only) DEPLOY_MODE="app-only" ;;
+    --reset-oauth|reset-oauth) DEPLOY_MODE="reset-oauth" ;;
     --full|full) DEPLOY_MODE="full" ;;
     -h|--help)
-      printf "Usage: %s [--app-only|--full]\n" "$0"
+      printf "Usage: %s [--app-only|--reset-oauth|--full]\n" "$0"
       printf "  --app-only  Build, test, sync, and deploy App code only.\n"
+      printf "  --reset-oauth  Recreate App/OAuth, restore grants, and deploy; reuse infrastructure.\n"
       printf "  --full      Reconcile all infrastructure and deploy the App (default).\n"
       exit 0
       ;;
-    *) printf "Unknown deploy mode '%s'. Use --app-only or --full.\n" "$1" >&2; exit 2 ;;
+    *) printf "Unknown deploy mode '%s'. Use --app-only, --reset-oauth, or --full.\n" "$1" >&2; exit 2 ;;
   esac
 fi
 case "$(printf '%s' "$DEPLOY_MODE" | tr '[:upper:]' '[:lower:]')" in
-  app-only|app) DEPLOY_MODE="app-only"; FULL_DEPLOY=0 ;;
-  full) DEPLOY_MODE="full"; FULL_DEPLOY=1 ;;
-  *) printf "Invalid DEPLOY_MODE '%s'; use app-only or full.\n" "$DEPLOY_MODE" >&2; exit 2 ;;
+  app-only|app)
+    DEPLOY_MODE="app-only"; FULL_DEPLOY=0; RECREATE_APP=0; RECONCILE_APP_GRANTS=0
+    ;;
+  reset-oauth|oauth-reset)
+    DEPLOY_MODE="reset-oauth"; FULL_DEPLOY=0; RECREATE_APP=1; RECONCILE_APP_GRANTS=1
+    ;;
+  full)
+    DEPLOY_MODE="full"; FULL_DEPLOY=1; RECREATE_APP=0; RECONCILE_APP_GRANTS=1
+    ;;
+  *) printf "Invalid DEPLOY_MODE '%s'; use app-only, reset-oauth, or full.\n" "$DEPLOY_MODE" >&2; exit 2 ;;
 esac
 
 APP_NAME="${APP_NAME:-genie-voice-agent}"
@@ -307,7 +317,7 @@ case "$(printf '%s' "$DEPLOY_DATA" | tr '[:upper:]' '[:lower:]')" in
     fi
     ;;
   0|false|no)
-    warn "$([[ "$FULL_DEPLOY" -eq 0 ]] && echo "app-only mode" || echo "DEPLOY_DATA=0"): skipping UC, Lakebase, data, orchestration, and Genie setup."
+    warn "$([[ "$FULL_DEPLOY" -eq 0 ]] && echo "$DEPLOY_MODE mode" || echo "DEPLOY_DATA=0"): skipping UC, Lakebase, data, orchestration, and Genie setup."
     ;;
   *)
     die "DEPLOY_DATA must be 1 or 0 (received '$DEPLOY_DATA')."
@@ -334,7 +344,7 @@ if [[ "$FULL_DEPLOY" -eq 1 ]]; then
     warn "Continuing with model + app deployment so the Setup page can guide and verify this step."
   fi
 else
-  log "app-only mode: reusing existing AI Gateway services"
+  log "$DEPLOY_MODE mode: reusing existing AI Gateway services"
 fi
 
 # ---- 3. realtime Qwen3-ASR + VoxCPM2 endpoints -----------------------------
@@ -444,7 +454,7 @@ if [[ "$FULL_DEPLOY" -eq 1 ]]; then
   PYTHONPATH=scripts/ml_asr "$PYBIN" scripts/ml_asr/smoke_realtime_voice_agents.py \
     --config "$DEPLOY_CONFIG"
 else
-  log "app-only mode: reusing existing voice endpoint configuration"
+  log "$DEPLOY_MODE mode: reusing existing voice endpoint configuration"
 fi
 
 # ---- 4. vendor keys -> secret scope (evals/benchmarks; not injected into the app)
@@ -469,7 +479,7 @@ if [[ "$FULL_DEPLOY" -eq 1 ]]; then
     warn "ELEVENLABS_API_KEY empty - skipping (TTS optional; not in the live flow)."
   fi
 else
-  log "app-only mode: preserving existing secret configuration"
+  log "$DEPLOY_MODE mode: preserving existing secret configuration"
   if dbx secrets get-secret "$SECRET_SCOPE" elevenlabs_api_key >/dev/null 2>&1; then
     INCLUDE_EL=1
   fi
@@ -655,8 +665,88 @@ print(json.dumps({
 PY
 
 if dbx apps get "$APP_NAME" >/dev/null 2>&1; then
-  log "app exists - updating resources"
-  dbx apps update "$APP_NAME" --json "@$APP_JSON" >/dev/null
+  if [[ "$RECREATE_APP" -eq 1 ]]; then
+    # Databricks does not expose an API to rotate the OAuth integration owned by
+    # an App. Recreating the App is the only immediate way to invalidate stale
+    # forwarded OBO tokens after the requested scope set changes. Preserve the
+    # direct App ACL and mutable compute policy settings across that recreation.
+    OLD_APP_JSON="$(mktemp)"
+    APP_ACL_JSON="$(mktemp)"
+    dbx apps get "$APP_NAME" -o json > "$OLD_APP_JSON"
+    OLD_OAUTH_ID="$("$PYBIN" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("oauth2_app_integration_id") or "")' "$OLD_APP_JSON")"
+    dbx apps get-permissions "$APP_NAME" -o json | "$PYBIN" -c '
+import json, sys
+source = json.load(sys.stdin)
+acl = []
+for entry in source.get("access_control_list") or []:
+    direct = [
+        permission.get("permission_level")
+        for permission in entry.get("all_permissions") or []
+        if not permission.get("inherited") and permission.get("permission_level")
+    ]
+    if not direct:
+        continue
+    principal = next(
+        (
+            (key, entry[key])
+            for key in ("user_name", "group_name", "service_principal_name")
+            if entry.get(key)
+        ),
+        None,
+    )
+    if principal:
+        acl.append({principal[0]: principal[1], "permission_level": direct[-1]})
+json.dump({"access_control_list": acl}, sys.stdout)
+' > "$APP_ACL_JSON"
+    "$PYBIN" - "$OLD_APP_JSON" "$APP_JSON" <<'PY'
+import json
+import sys
+
+old_path, desired_path = sys.argv[1:]
+with open(old_path, encoding="utf-8") as handle:
+    old = json.load(handle)
+with open(desired_path, encoding="utf-8") as handle:
+    desired = json.load(handle)
+for key in (
+    "budget_policy_id",
+    "compute_max_instances",
+    "compute_min_instances",
+    "compute_size",
+    "space",
+    "usage_policy_id",
+):
+    if old.get(key) is not None:
+        desired[key] = old[key]
+with open(desired_path, "w", encoding="utf-8") as handle:
+    json.dump(desired, handle)
+PY
+    log "reset-oauth mode: recreating App to rotate its managed OAuth integration"
+    dbx apps delete "$APP_NAME" --auto-approve
+    # Deletion is asynchronous: the API returns while the old name is still
+    # reserved. Do not attempt creation until the control plane removes it.
+    for _ in {1..120}; do
+      if ! dbx apps get "$APP_NAME" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 5
+    done
+    if dbx apps get "$APP_NAME" >/dev/null 2>&1; then
+      rm -f "$OLD_APP_JSON" "$APP_ACL_JSON" "$APP_JSON"
+      die "Timed out waiting for App deletion; OAuth reset did not recreate the App."
+    fi
+    dbx apps create --json "@$APP_JSON"
+    NEW_OAUTH_ID="$(dbx apps get "$APP_NAME" -o json | "$PYBIN" -c 'import json,sys; print(json.load(sys.stdin).get("oauth2_app_integration_id") or "")')"
+    if [[ -z "$NEW_OAUTH_ID" || "$NEW_OAUTH_ID" == "$OLD_OAUTH_ID" ]]; then
+      rm -f "$OLD_APP_JSON" "$APP_ACL_JSON" "$APP_JSON"
+      die "App recreation did not produce a new OAuth integration."
+    fi
+    dbx apps update-permissions "$APP_NAME" --json "@$APP_ACL_JSON" >/dev/null
+    rm -f "$OLD_APP_JSON" "$APP_ACL_JSON"
+    log "OAuth integration rotated: $OLD_OAUTH_ID -> $NEW_OAUTH_ID"
+  else
+    log "$DEPLOY_MODE mode: updating resources without rotating OAuth"
+    dbx apps update "$APP_NAME" --json "@$APP_JSON" >/dev/null
+  fi
 else
   if [[ "$FULL_DEPLOY" -eq 0 ]]; then
     rm -f "$APP_JSON"
@@ -670,7 +760,7 @@ rm -f "$APP_JSON"
 
 # ---- 3b. grant the app's service principal its runtime access ----------------
 # Resolve the app SP (client id + SCIM id), retrying while it provisions.
-if [[ "$FULL_DEPLOY" -eq 1 ]]; then
+if [[ "$RECONCILE_APP_GRANTS" -eq 1 ]]; then
 SP_CLIENT_ID=""; SP_ID=""
 for _ in 1 2 3 4 5 6; do
   read -r SP_CLIENT_ID SP_ID < <(dbx apps get "$APP_NAME" -o json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("service_principal_client_id") or "", d.get("service_principal_id") or "")' 2>/dev/null || true)

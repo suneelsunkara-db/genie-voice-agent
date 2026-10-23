@@ -288,7 +288,7 @@ greenfield checklist and the UI-only checkpoints.
 6. **Runs the Gateway conformance matrix** (`infra/apps/probe_ai_gateway_policies.py`):
    allow, jailbreak/unsafe/credential deny, contact redaction, and hallucination
    pass-through against the live Qwen and GPT-5.5 services.
-7. **Creates/updates the app** with declared **resources** (SQL warehouse and
+7. **Creates or updates the app** with declared **resources** (SQL warehouse and
    Qwen3-ASR/VoxCPM2 serving endpoints) so the app's service
    principal is granted `CAN_MANAGE` on only those two endpoints. This includes
    `CAN_QUERY` and lets Setup explicitly disable scale-to-zero. Foundation-model chat uses the app-owned
@@ -306,6 +306,12 @@ greenfield checklist and the UI-only checkpoints.
    `.gitignore`) and **deploys** in `SNAPSHOT` mode, printing the app URL.
 11. **Smoke-tests** health, realtime, Knowledge, capabilities, and forwarded user
    identity through the authenticated Databricks Apps URL.
+
+Use `./deploy_app.sh --reset-oauth` only when stale viewer authorization must be
+invalidated immediately. It skips data, Genie, Gateway, and model reconciliation;
+recreates the App-managed OAuth integration; preserves direct App ACLs and
+compute policy settings; reapplies the new service principal's grants; deploys
+the app; and forces viewers to grant fresh OBO consent.
 
 ### Configuration
 

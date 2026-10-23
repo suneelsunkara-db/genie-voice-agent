@@ -470,6 +470,17 @@ def test_deploy_orders_gateway_before_gpu_and_grants_viewers():
     assert "--run-users" in sh
     # Group viewers receive both App CAN_USE and Genie CAN_RUN.
     assert 'grant_app_can_use group_name "$_group"' in sh
+    # OAuth reset is explicit: it recreates only the App identity, preserves
+    # direct viewer ACLs, and does not make ordinary deployments force consent.
+    assert "--reset-oauth|reset-oauth" in sh
+    assert 'DEPLOY_MODE="reset-oauth"; FULL_DEPLOY=0; RECREATE_APP=1' in sh
+    assert 'dbx apps get-permissions "$APP_NAME"' in sh
+    assert 'dbx apps delete "$APP_NAME" --auto-approve' in sh
+    assert 'if ! dbx apps get "$APP_NAME"' in sh
+    assert "Timed out waiting for App deletion" in sh
+    assert 'dbx apps update-permissions "$APP_NAME" --json "@$APP_ACL_JSON"' in sh
+    assert "without rotating OAuth" in sh
+    assert 'NEW_OAUTH_ID" == "$OLD_OAUTH_ID' in sh
     # Setup can prove the endpoint's UC registered-model alias and inspect the job.
     assert "--registered-models" in sh
     grants = (REPO / "infra/apps/grant_app_sp.py").read_text(encoding="utf-8")
