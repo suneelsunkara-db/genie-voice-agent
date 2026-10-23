@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from ..observability import log_event
@@ -21,9 +22,10 @@ FORWARDED_PREFERRED_USERNAME = "x-forwarded-preferred-username"
 class SessionPrincipal:
     """User identity bound at session.start for OBO Genie / SQL calls."""
 
-    access_token: str | None = None
+    access_token: str | None = field(default=None, repr=False)
     email: str | None = None
     username: str | None = None
+    name: str | None = None
     # True when token came from Apps forwarded header (not local U2M stand-in).
     from_forwarded_header: bool = False
 
@@ -33,7 +35,50 @@ class SessionPrincipal:
 
     @property
     def display_name(self) -> str | None:
-        return self.email or self.username
+        return self.name or self.email or self.username
+
+
+# Cache only non-secret identity attributes. Access tokens are deliberately never
+# used as keys or values, so refreshing a browser session cannot retain a bearer
+# credential in process memory beyond the VoiceSession that needs it.
+_IDENTITY_CACHE: dict[str, tuple[str | None, str | None, str | None]] = {}
+_IDENTITY_CACHE_LOCK = threading.Lock()
+
+
+def enrich_principal_identity(principal: SessionPrincipal) -> SessionPrincipal:
+    """Resolve the authoritative workspace display name once for a signed-in user.
+
+    Apps forwards email/username with the WebSocket request. ``current_user.me``
+    supplies the full display name; failures are non-fatal and retain the forwarded
+    identity. The caller runs this function off the event loop.
+    """
+    if not principal.has_token:
+        return principal
+    key = (principal.email or principal.username or "").strip().casefold()
+    if key:
+        with _IDENTITY_CACHE_LOCK:
+            cached = _IDENTITY_CACHE.get(key)
+        if cached is not None:
+            name, email, username = cached
+            return replace(
+                principal,
+                name=name or principal.name,
+                email=email or principal.email,
+                username=username or principal.username,
+            )
+    try:
+        me = workspace_client_for_principal(principal).current_user.me()
+        name = str(getattr(me, "display_name", "") or "").strip() or principal.name
+        user_name = str(getattr(me, "user_name", "") or "").strip() or principal.username
+        email = principal.email or (user_name if "@" in (user_name or "") else None)
+        enriched = replace(principal, name=name, email=email, username=user_name)
+        if key:
+            with _IDENTITY_CACHE_LOCK:
+                _IDENTITY_CACHE[key] = (enriched.name, enriched.email, enriched.username)
+        return enriched
+    except Exception:  # noqa: BLE001 - identity enrichment must not block a call
+        logger.warning("current_user.me identity enrichment failed", exc_info=True)
+        return principal
 
 
 def principal_from_headers(headers: Mapping[str, str] | None) -> SessionPrincipal:

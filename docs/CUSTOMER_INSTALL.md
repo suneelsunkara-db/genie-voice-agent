@@ -106,7 +106,7 @@ redaction probes and remains blocked until they conform.
 
 ### 3. Databricks Apps User Authorization
 
-Enable User Authorization for the App with the `genie` and `sql` scopes. Users
+Enable User Authorization for the App with the `ai-gateway`, `genie`, and `sql` scopes. Users
 must consent when first opening the App (and again if the requested scopes
 change). The installer warns if effective scopes are absent but continues so the
 Setup page can explain the repair. Full readiness verifies the forwarded token

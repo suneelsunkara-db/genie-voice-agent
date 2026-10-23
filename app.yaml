@@ -9,6 +9,7 @@
 # User authorization (OBO): Genie / SQL workspace calls prefer the viewer's
 # `x-forwarded-access-token` (fail-closed without it). Request these scopes in
 # the App → Authorization UI (or via CLI) and restart so users re-consent:
+#   - ai-gateway — managed Genie One MCP through Unity Gateway
 #   - genie  — Genie Space Conversation + Agent Mode as the signed-in user
 #   - sql    — warehouse reads when needed for query results
 # Platform also injects default iam.current-user:read / iam.access-control:read.
@@ -29,6 +30,7 @@
 # them: deploy_app.sh also applies them through the Apps control plane and fails
 # the deploy unless `effective_user_api_scopes` contains both values.
 user_api_scopes:
+  - ai-gateway
   - genie
   - sql
 

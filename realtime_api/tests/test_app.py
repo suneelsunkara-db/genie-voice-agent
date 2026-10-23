@@ -113,6 +113,8 @@ def test_capabilities_endpoint() -> None:
         body = response.json()
         assert body["speech-to-text"]["path"] == "/v1/speech-to-text"
         assert body["speech-llm-toolassist-speech"]["path"] == "/v1/speech-llm-toolassist-speech"
+        assert "input.text" in body["speech-llm-toolassist-speech"]["input"]
+        assert "input.text" not in body["speech-to-text"]["input"]
         assert body["text-to-speech"]["path"] == "/v1/text-to-speech"
 
 
@@ -145,6 +147,50 @@ def test_speech_llm_toolassist_speech_processes_a_finalized_turn() -> None:
         assert audio["audio_b64"]
         assert audio["chunk_index"] == 0
         assert audio["final"] is True
+
+
+def test_text_input_uses_the_same_conversational_pipeline() -> None:
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        ws.send_json({"type": "session.start", "language": "en-US", "sample_rate_hz": 16000})
+        assert ws.receive_json()["type"] == "session.ready"
+        ws.send_json(
+            {
+                "type": "input.text",
+                "text": "forecast our compute usage",
+                "language": "en-US",
+            }
+        )
+        assert ws.receive_json()["type"] == "turn.started"
+        transcript = ws.receive_json()
+        assert transcript["type"] == "transcript.final"
+        assert transcript["text"] == "forecast our compute usage"
+        response = _next(ws, "response.text")
+        assert response["text"] == "you said forecast our compute usage"
+
+
+def test_knowledge_session_continuation_runs_as_the_first_text_turn() -> None:
+    request = "Analyze governed usage for the selected organization."
+    with _app() as client, client.websocket_connect("/v1/speech-llm-toolassist-speech") as ws:
+        ws.send_json(
+            {
+                "type": "session.start",
+                "language_mode": "selected",
+                "selected_language": "en-US",
+                "sample_rate_hz": 16000,
+                "profile": "knowledge",
+                "surface": "knowledge",
+                "continuation": {
+                    "kind": "knowledge_question",
+                    "text": request,
+                    "language": "en-US",
+                },
+            }
+        )
+        assert ws.receive_json()["type"] == "session.ready"
+        assert ws.receive_json()["type"] == "turn.started"
+        transcript = ws.receive_json()
+        assert transcript["type"] == "transcript.final"
+        assert transcript["text"] == request
 
 
 def test_committed_speech_is_published_before_the_audio() -> None:
@@ -690,6 +736,42 @@ def test_session_start_defaults_have_no_overrides() -> None:
     assert start.context is None
     assert start.voice_variant == "female"
     assert start.space_name is None
+    assert start.continuation is None
+
+
+def test_session_start_accepts_typed_knowledge_continuation() -> None:
+    start = SessionStart.from_event(
+        {
+            "language_mode": "selected",
+            "selected_language": "en-US",
+            "profile": "knowledge",
+            "continuation": {
+                "kind": "knowledge_question",
+                "text": "  Explain the governed result.  ",
+                "language": "en-US",
+            },
+        }
+    )
+    assert start.continuation is not None
+    assert start.continuation.text == "Explain the governed result."
+
+
+def test_session_start_rejects_knowledge_continuation_on_another_profile() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="requires profile 'knowledge'"):
+        SessionStart.from_event(
+            {
+                "language_mode": "selected",
+                "selected_language": "en-US",
+                "profile": "billing",
+                "continuation": {
+                    "kind": "knowledge_question",
+                    "text": "Explain the governed result.",
+                    "language": "en-US",
+                },
+            }
+        )
 
 
 def test_session_start_parses_caller_space_name() -> None:

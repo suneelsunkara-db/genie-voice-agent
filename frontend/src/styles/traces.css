@@ -32,6 +32,15 @@
 .tv-title span { color: var(--tv-accent); }
 .tv-header-spacer { flex: 1; }
 .tv-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tv-actor-select {
+  max-width: 250px;
+  background: var(--tv-panel-2);
+  border: 1px solid var(--tv-border);
+  color: var(--tv-text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
 .tv-chip-btn {
   background: var(--tv-panel-2);
   border: 1px solid var(--tv-border);
@@ -93,6 +102,7 @@
 .tv-badge.noapply { color: var(--tv-warn); border-color: #6b551b; }
 
 .tv-kind { border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; }
+.tv-kind.INPUT { background: #17324a; color: #7fc4ff; }
 .tv-kind.STT { background: #17324a; color: #7fc4ff; }
 .tv-kind.LLM { background: #2a2350; color: #b9a7ff; }
 .tv-kind.TOOL { background: #143a2c; color: #7ee6b0; }

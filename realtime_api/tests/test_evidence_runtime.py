@@ -10,6 +10,7 @@ import pytest
 from realtime_api.runtime.agent_runtime import (
     AgentContext,
     AgentGoal,
+    DirectToolAdapter,
     LiveToolRespondAdapter,
     RespondWithToolsAdapter,
 )
@@ -133,6 +134,20 @@ def test_genie_one_typed_query_results_become_table_evidence():
     assert ev.table.rows[0] == ["Shopping", "73998.64"]
     assert ev.table.sql == "select category, spend from monthly_spending"
     assert len(ev.meta["query_results"]) == 1
+    analysis = ev.meta["analysis"]
+    assert analysis["version"] == "1"
+    assert analysis["answer"] == "Shopping leads spending."
+    assert analysis["datasets"][0]["id"] == "q1"
+    assert analysis["datasets"][0]["role"] == "evidence"
+    assert analysis["views"] == [
+        {
+            "dataset_id": "q1",
+            "kind": "bar",
+            "dimension": "category",
+            "measures": ["spend"],
+            "title": None,
+        }
+    ]
 
 
 def test_genie_one_multi_step_answer_is_read_off_the_measure_not_the_first_step():
@@ -291,6 +306,8 @@ def test_agent_mode_tables_to_evidence():
         report_text="Fees rose because of X",
     )
     assert ev.has_tabular
+    assert ev.meta["analysis"]["source"] == "agent_mode"
+    assert ev.meta["analysis"]["datasets"][0]["fields"][0]["name"] == "cat"
     assert ev.display_prose and "Fees rose" in ev.display_prose
     assert ev.table is not None and ev.table.rows == [["fees", 10]]
 
@@ -320,6 +337,46 @@ def test_tool_events_emit_before_final_text():
     assert AgentEventKind.ANSWER_FINAL in kinds
     assert kinds.index(AgentEventKind.ACTION_STARTED) < kinds.index(AgentEventKind.ANSWER_FINAL)
     assert kinds.index(AgentEventKind.ACTION_COMPLETED) < kinds.index(AgentEventKind.ANSWER_FINAL)
+
+
+def test_direct_terminal_adapter_preserves_exact_request_and_evidence():
+    import asyncio
+
+    request = "Opaque caller request ENTITY-123 with governed source SOURCE-456."
+    seen: dict[str, Any] = {}
+
+    def tool_runner(name: str, arguments: dict[str, Any], _ctx: Any) -> str:
+        seen.update({"name": name, "arguments": arguments})
+        return json.dumps(
+            {
+                "status": "completed",
+                "response_id": "r1",
+                "final_answer": "The governed analysis is complete.",
+            }
+        )
+
+    async def _collect():
+        events = []
+        async for event in DirectToolAdapter(
+            "workspace_query",
+            {"question": request},
+        ).run(
+            AgentGoal(utterance=request, language="en"),
+            AgentContext(turn_id=9, tool_runner=tool_runner),
+            CancellationToken(),
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_collect())
+    assert seen == {
+        "name": "workspace_query",
+        "arguments": {"question": request},
+    }
+    kinds = [event.kind for event in events]
+    assert AgentEventKind.EVIDENCE_AVAILABLE in kinds
+    final = next(event for event in events if event.kind == AgentEventKind.ANSWER_FINAL)
+    assert final.payload["text"] == ""
 
 
 def test_live_adapter_emits_evidence_before_display_only_answer():

@@ -80,9 +80,9 @@ def test_legacy_scalar_pack_result_is_promoted_to_typed_evidence():
     assert ev.display_prose == "uncited prose"
 
 
-def test_knowledge_matches_are_structured_evidence():
+def test_governed_search_matches_are_structured_evidence():
     ev = evidence_from_tool_result(
-        "knowledge_search",
+        "governed_search",
         {
             "matches": [
                 {

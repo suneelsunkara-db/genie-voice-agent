@@ -27,11 +27,15 @@ export type AnalysisResult = {
   rows: unknown[][];
   totalRowCount: number;
   truncated: boolean;
+  view?: {
+    kind: "bar" | "line";
+    dimension: string;
+    measures: string[];
+    title?: string;
+  };
 };
 
 const CHART_COLORS = ["#4ea8ff", "#8b7cff", "#31d0aa"];
-const NUMERIC_TYPE = /(tiny|small|big)?int|decimal|double|float|number|numeric|real/i;
-const TIME_NAME = /date|time|month|year|week|day|quarter|cycle/i;
 
 function displayName(name: string): string {
   return name.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -72,61 +76,30 @@ function formatValue(value: unknown, language: string): string {
   return String(value);
 }
 
-/** Largest absolute value a column reaches, for comparing measure scales. */
-function columnMagnitude(result: AnalysisResult, column: AnalysisColumn): number {
-  const index = result.columns.indexOf(column);
-  return result.rows.reduce((peak, row) => {
-    const value = numberValue(row[index]);
-    return value === null ? peak : Math.max(peak, Math.abs(value));
-  }, 0);
-}
-
-/**
- * A shared Y axis only works for measures of comparable size.
- *
- * Genie results routinely mix a total, a count, and an average in one row — 416,659
- * beside 1,645 beside 252. Plotting those together scales the axis to the total and
- * flattens everything else onto the baseline, which reads as a chart that failed to
- * render. So chart the largest measure and only those within this factor of it; the
- * rest stay in the table underneath, where their values are legible.
- */
-const MEASURE_SCALE_RATIO = 20;
-
-function comparableMeasures(
-  result: AnalysisResult,
-  candidates: AnalysisColumn[]
-): AnalysisColumn[] {
-  const ranked = candidates
-    .map((column) => ({ column, magnitude: columnMagnitude(result, column) }))
-    .sort((a, b) => b.magnitude - a.magnitude);
-  const largest = ranked[0]?.magnitude ?? 0;
-  if (largest <= 0) return candidates.slice(0, 3);
-  return ranked
-    .filter(({ magnitude }) => magnitude * MEASURE_SCALE_RATIO >= largest)
-    .map(({ column }) => column)
-    .slice(0, 3);
-}
-
 export function chartModel(result: AnalysisResult): {
   data: Record<string, string | number>[];
   dimension: AnalysisColumn;
   measures: AnalysisColumn[];
   kind: "bar" | "line";
 } | null {
+  // A table's shape is evidence, not visualization intent. Render a chart only
+  // from an upstream validated view; never infer dimensions, measures, units, or
+  // forecast semantics from column names and parseable values.
+  const view = result.view;
+  if (!view) return null;
   if (result.rows.length < 2 || result.rows.length > 40) return null;
-  const numeric = result.columns.filter((column, index) => {
-    if (NUMERIC_TYPE.test(column.typeText)) return true;
-    return result.rows.every((row) => numberValue(row[index]) !== null);
-  });
-  if (!numeric.length) return null;
-  const dimension =
-    result.columns.find((column) => !numeric.includes(column)) ?? result.columns[0];
+  const dimension = result.columns.find((column) => column.name === view.dimension);
+  if (!dimension) return null;
   const dimensionIndex = result.columns.indexOf(dimension);
-  const measures = comparableMeasures(
-    result,
-    numeric.filter((column) => column !== dimension)
-  );
+  const measures = view.measures
+    .map((name) => result.columns.find((column) => column.name === name))
+    .filter((column): column is AnalysisColumn => Boolean(column))
+    .slice(0, 3);
   if (!measures.length) return null;
+  if (measures.some((measure) => {
+    const index = result.columns.indexOf(measure);
+    return !result.rows.every((row) => numberValue(row[index]) !== null);
+  })) return null;
   const data = result.rows.map((row, rowIndex) => {
     const point: Record<string, string | number> = {
       [dimension.name]: String(row[dimensionIndex] ?? rowIndex + 1),
@@ -141,7 +114,7 @@ export function chartModel(result: AnalysisResult): {
     data,
     dimension,
     measures,
-    kind: TIME_NAME.test(dimension.name) ? "line" : "bar",
+    kind: view.kind,
   };
 }
 
@@ -156,12 +129,26 @@ function AnalysisChart({ result, copy }: { result: AnalysisResult; copy: UiCopy 
         tick={{ fill: "#9eabc9", fontSize: 11 }}
         axisLine={false}
         tickLine={false}
+        label={{
+          value: displayName(model.dimension.name),
+          position: "insideBottom",
+          offset: -4,
+          fill: "#9eabc9",
+          fontSize: 10,
+        }}
       />
       <YAxis
         tick={{ fill: "#9eabc9", fontSize: 11 }}
         axisLine={false}
         tickLine={false}
         width={58}
+        label={{
+          value: model.measures.map((measure) => displayName(measure.name)).join(" / "),
+          angle: -90,
+          position: "insideLeft",
+          fill: "#9eabc9",
+          fontSize: 10,
+        }}
       />
       <Tooltip
         contentStyle={{
@@ -175,6 +162,12 @@ function AnalysisChart({ result, copy }: { result: AnalysisResult; copy: UiCopy 
   );
   return (
     <div className="kb-analysis-chart" aria-label={copy.saChartAria}>
+      <div className="kb-analysis-chart-title">
+        {result.view?.title ||
+          `${displayName(model.dimension.name)} · ${model.measures
+            .map((measure) => displayName(measure.name))
+            .join(", ")}`}
+      </div>
       <ResponsiveContainer width="100%" height={280}>
         {model.kind === "line" ? (
           <LineChart data={model.data} margin={{ top: 12, right: 18, left: 4, bottom: 8 }}>
@@ -284,12 +277,31 @@ export function withoutEmbeddedQueryMarkdown(
   hasTypedResults: boolean
 ): string {
   if (!hasTypedResults) return markdown;
-  return markdown
+  const withoutEmbedded = markdown
     .replace(
       /<!--\s*begin-embedded:[\s\S]*?<!--\s*end-embedded:[^>]*-->/gi,
       ""
-    )
-    .trim();
+    );
+  // Genie One may include the same result as both a Markdown table and typed
+  // query rows without embedded markers. Keep prose, but render tabular evidence
+  // only from the typed contract so callers do not see every result twice.
+  const lines = withoutEmbedded.split("\n");
+  const kept: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const header = lines[index];
+    const rule = lines[index + 1] ?? "";
+    const isTable =
+      header.includes("|") &&
+      /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/.test(rule);
+    if (!isTable) {
+      kept.push(header);
+      continue;
+    }
+    index += 2;
+    while (index < lines.length && lines[index].includes("|")) index += 1;
+    index -= 1;
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export function StructuredAnswer({
@@ -323,29 +335,39 @@ export function StructuredAnswer({
           </ReactMarkdown>
         </div>
       )}
-      {shown.map((result, index) => (
-        <section className="kb-analysis" key={result.itemId || index}>
-          <div className="kb-analysis-head">
-            <div>
-              <span className="kb-analysis-eyebrow">{copy.saGovernedAnalysis}</span>
-              <h4>
-                {shown.length > 1
-                  ? copy.saQueryResultNumbered(String(index + 1))
-                  : copy.saQueryResult}
-              </h4>
-            </div>
-            <span>{copy.saRows(String(result.totalRowCount))}</span>
-          </div>
-          <AnalysisChart result={result} copy={copy} />
-          <ResultTable result={result} copy={copy} language={language ?? ""} />
-          {result.sql && (
-            <details className="kb-analysis-sql">
-              <summary>{copy.saViewSql}</summary>
-              <pre>{result.sql}</pre>
-            </details>
-          )}
-        </section>
-      ))}
+      {shown.length > 0 && (
+        <details className="kb-analysis-evidence">
+          <summary>
+            {copy.saGovernedAnalysis} ·{" "}
+            {copy.saRows(
+              String(shown.reduce((count, result) => count + result.totalRowCount, 0))
+            )}
+          </summary>
+          {shown.map((result, index) => (
+            <section className="kb-analysis" key={result.itemId || index}>
+              <div className="kb-analysis-head">
+                <div>
+                  <span className="kb-analysis-eyebrow">{copy.saGovernedAnalysis}</span>
+                  <h4>
+                    {shown.length > 1
+                      ? copy.saQueryResultNumbered(String(index + 1))
+                      : copy.saQueryResult}
+                  </h4>
+                </div>
+                <span>{copy.saRows(String(result.totalRowCount))}</span>
+              </div>
+              <AnalysisChart result={result} copy={copy} />
+              <ResultTable result={result} copy={copy} language={language ?? ""} />
+              {result.sql && (
+                <details className="kb-analysis-sql">
+                  <summary>{copy.saViewSql}</summary>
+                  <pre>{result.sql}</pre>
+                </details>
+              )}
+            </section>
+          ))}
+        </details>
+      )}
     </div>
   );
 }

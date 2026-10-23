@@ -22,7 +22,6 @@ def test_capability_ids_are_unique_and_described():
 def test_knowledge_catalog_exposes_outcomes_not_tool_names():
     catalog = capabilities_for_profile("knowledge")
     ids = {item.id for item in catalog}
-    assert CapabilityId.KNOWLEDGE_DOCS in ids
     assert CapabilityId.WORKSPACE_QUERY in ids
     assert CapabilityId.CLARIFY in ids
     assert CapabilityId.REFUSE in ids
@@ -63,12 +62,12 @@ def test_navigation_decision_is_strict_and_bounded():
 
     with pytest.raises(ValidationError):
         NavigationDecision(
-            capability_id=CapabilityId.KNOWLEDGE_DOCS,
+            capability_id=CapabilityId.WORKSPACE_QUERY,
             confidence=1.1,
         )
     with pytest.raises(ValidationError):
         NavigationDecision(
-            capability_id=CapabilityId.KNOWLEDGE_DOCS,
+            capability_id=CapabilityId.WORKSPACE_QUERY,
             confidence=0.9,
             implementation_tool="knowledge_search",
         )

@@ -77,7 +77,16 @@ def _run_select_industry(arguments: dict[str, Any], ctx: ToolContext) -> str:
             {"error": "industry must be one of: " + ", ".join(router().keys)}
         )
     ctx.profile_state["industry"] = route.key
-    return json.dumps({"ok": True, "industry": route.key, "label": route.label})
+    result: dict[str, Any] = {"ok": True, "industry": route.key, "label": route.label}
+    # A semantic Knowledge handoff carries the caller's exact admitted transcript
+    # and resolved language. It is still untrusted user input and will pass through
+    # the destination session's normal transcript guardrails before execution.
+    handoff_query = str(arguments.get("handoff_query") or "").strip()
+    handoff_language = str(arguments.get("handoff_language") or "").strip()
+    if route.key == "knowledge" and handoff_query:
+        result["handoff_query"] = handoff_query
+        result["handoff_language"] = handoff_language
+    return json.dumps(result)
 
 
 register(_select_industry_spec(), _run_select_industry, profile=_PROFILE)

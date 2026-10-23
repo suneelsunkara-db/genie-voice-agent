@@ -1,5 +1,9 @@
 # Genie Voice Contact Center Architecture
 
+The cross-page realtime routing, backend ownership, handoff, evidence, and
+adaptive-presentation contract is defined in
+[`REALTIME_PAGE_ARCHITECTURE.md`](REALTIME_PAGE_ARCHITECTURE.md).
+
 ## Problem statement: Genie for voice use cases
 
 Contact-center voice is a **real-time** channel: the agent and customer are on the

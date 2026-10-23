@@ -8,16 +8,24 @@ import pytest
 
 from realtime_api.pipelines.speech_llm_toolassist_speech import (
     _finalize_billing_offer,
+    _direct_terminal_call,
+    _has_long_work,
     _navigation_intents,
     _public_agent_event,
     _timeout_for_route,
     _tool_work_timeout_s,
+    _tools_and_prompt,
     _tools_for_capability,
 )
-from realtime_api.runtime.capabilities import CapabilityId
+from realtime_api.runtime.capabilities import (
+    CapabilityId,
+    NavigationDecision,
+    NavigationReason,
+)
 from realtime_api.runtime.navigation import (
     classifier_capabilities,
     navigate_profile,
+    resolve_navigation_continuation,
     route_for_navigation,
 )
 from realtime_api.runtime.navigation_graph import (
@@ -35,6 +43,7 @@ def test_agent_mode_internal_english_report_is_not_sent_to_browser():
                 "status": "completed",
                 "report": "Internal English report",
                 "canonical_question": "Why did expenses increase?",
+                "canonical_request": "Analyze expenses.",
                 "reasoning": ["Writing final response"],
                 "tables": [{"columns": ["amount"], "rows": [[3400]]}],
             },
@@ -57,10 +66,16 @@ class ScriptedClassifier:
         confidence: float = 0.98,
         *,
         confirmed: bool = False,
+        spoken_reply: str | None = None,
+        request_state: str = "complete",
+        clarification_focus: str = "none",
     ) -> None:
         self.capability = capability
         self.confidence = confidence
         self.confirmed = confirmed
+        self.spoken_reply = spoken_reply
+        self.request_state = request_state
+        self.clarification_focus = clarification_focus
         self.calls: list[dict[str, Any]] = []
 
     def classify_navigation(
@@ -79,13 +94,18 @@ class ScriptedClassifier:
                 "context": context,
             }
         )
-        return {
+        decision = {
             "capability_id": self.capability.value,
             "confidence": self.confidence,
             "ambiguous": False,
             "confirmed": self.confirmed,
             "depth": "fact",
+            "request_state": self.request_state,
+            "clarification_focus": self.clarification_focus,
         }
+        if self.spoken_reply is not None:
+            decision["spoken_reply"] = self.spoken_reply
+        return decision
 
 
 @pytest.mark.parametrize(
@@ -119,6 +139,267 @@ def test_concierge_destination_is_a_typed_selection(
     assert intents[0].name == "select_industry"
     assert intents[0].arguments == {"industry": industry}
     assert all("select_industry" not in str(item) for item in classifier.calls[0]["capabilities"])
+
+
+@pytest.mark.parametrize(
+    ("utterance", "language"),
+    [
+        ("We are forecasting CPU and GPU usage for our top customers.", "en-US"),
+        ("Estamos pronosticando el uso de CPU y GPU de nuestros principales clientes.", "es-ES"),
+        ("हम अपने प्रमुख ग्राहकों के CPU और GPU उपयोग का पूर्वानुमान लगा रहे हैं।", "hi-IN"),
+        ("เรากำลังคาดการณ์การใช้ CPU และ GPU ของลูกค้ารายใหญ่", "th-TH"),
+        ("我们正在预测主要客户的 CPU 和 GPU 使用量。", "zh-CN"),
+    ],
+)
+def test_concierge_knowledge_question_preserves_semantic_handoff(
+    utterance: str,
+    language: str,
+):
+    classifier = ScriptedClassifier(CapabilityId.HANDOFF_KNOWLEDGE)
+    decision = navigate_profile(
+        utterance,
+        profile="concierge",
+        language=language,
+        classifier=classifier,
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.8,
+    )
+    intents = _navigation_intents(
+        decision,
+        utterance=utterance,
+        language=language,
+    )
+    assert intents[0].name == "select_industry"
+    assert intents[0].arguments == {
+        "industry": "knowledge",
+        "handoff_query": utterance,
+        "handoff_language": language,
+    }
+
+
+def test_home_transfers_incomplete_databricks_request_without_local_clarification():
+    utterance = "I have a question about forecasting usage for my customer."
+    decision = navigate_profile(
+        utterance,
+        profile="concierge",
+        language="en-US",
+        classifier=ScriptedClassifier(
+            CapabilityId.HANDOFF_KNOWLEDGE,
+            request_state="incomplete",
+            clarification_focus="data_scope",
+        ),
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.8,
+    )
+    assert decision.capability_id == CapabilityId.HANDOFF_KNOWLEDGE
+    intents = _navigation_intents(
+        decision,
+        utterance=utterance,
+        language="en-US",
+    )
+    assert intents[0].arguments["handoff_query"] == utterance
+
+
+def test_concierge_clarification_preserves_original_request_for_knowledge():
+    state: dict[str, object] = {}
+    original = "We have started an effort looking at top customers and forecasting."
+    clarify = NavigationDecision(
+        capability_id=CapabilityId.CLARIFY,
+        confidence=0.7,
+        ambiguous=True,
+        reason=NavigationReason.LOW_CONFIDENCE,
+    )
+    first, handoff = resolve_navigation_continuation(
+        clarify,
+        utterance=original,
+        profile="concierge",
+        profile_state=state,
+    )
+    assert first == clarify
+    assert handoff is None
+
+    selection = NavigationDecision(
+        capability_id=CapabilityId.NAVIGATE_KNOWLEDGE,
+        confidence=0.95,
+    )
+    resolved, handoff = resolve_navigation_continuation(
+        selection,
+        utterance="General knowledge, forecasting insights.",
+        profile="concierge",
+        profile_state=state,
+    )
+    assert resolved.capability_id == CapabilityId.HANDOFF_KNOWLEDGE
+    assert resolved.reason == NavigationReason.CLARIFICATION_RESOLVED
+    assert handoff == (
+        f"{original}\n"
+        "General knowledge, forecasting insights."
+    )
+    intents = _navigation_intents(
+        resolved,
+        utterance=handoff,
+        language="en-US",
+    )
+    assert intents[0].arguments["handoff_query"] == handoff
+    assert not state
+
+
+def test_non_knowledge_selection_clears_pending_clarification():
+    state: dict[str, object] = {}
+    clarify = NavigationDecision(
+        capability_id=CapabilityId.CLARIFY,
+        confidence=0.5,
+        ambiguous=True,
+    )
+    resolve_navigation_continuation(
+        clarify,
+        utterance="I need help with an account.",
+        profile="concierge",
+        profile_state=state,
+    )
+    telco = NavigationDecision(
+        capability_id=CapabilityId.NAVIGATE_TELCO,
+        confidence=0.99,
+    )
+    resolved, handoff = resolve_navigation_continuation(
+        telco,
+        utterance="Telco.",
+        profile="concierge",
+        profile_state=state,
+    )
+    assert resolved == telco
+    assert handoff is None
+    assert not state
+
+
+def test_incomplete_workspace_request_is_delegated_to_genie_one():
+    decision = navigate_profile(
+        "Estimate usage for my customer.",
+        profile="knowledge",
+        language="en-US",
+        classifier=ScriptedClassifier(
+            CapabilityId.WORKSPACE_QUERY,
+            request_state="incomplete",
+            clarification_focus="data_scope",
+        ),
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.8,
+    )
+    assert decision.capability_id == CapabilityId.WORKSPACE_QUERY
+    assert decision.reason == NavigationReason.SEMANTIC_CLASSIFICATION
+    assert decision.request_state == "complete"
+    assert decision.clarification_focus == "none"
+
+
+def test_contradictory_genie_one_readiness_fields_do_not_trigger_local_clarification():
+    decision = navigate_profile(
+        "Estimate usage for my customer.",
+        profile="knowledge",
+        language="en-US",
+        classifier=ScriptedClassifier(
+            CapabilityId.WORKSPACE_QUERY,
+            request_state="complete",
+            clarification_focus="data_scope",
+        ),
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.8,
+    )
+    assert decision.capability_id == CapabilityId.WORKSPACE_QUERY
+    assert decision.reason == NavigationReason.SEMANTIC_CLASSIFICATION
+    assert decision.request_state == "complete"
+    assert decision.clarification_focus == "none"
+
+
+def test_home_clarification_asks_about_intent_not_app_menu():
+    tools, prompt = _tools_and_prompt(
+        SimpleNamespace(name="concierge"),
+        route_adapter="clarify",
+        workspace_selected=False,
+        conversation_joinable=False,
+        clarification_focus="data_scope",
+    )
+    assert tools == []
+    assert "content-aware question" in prompt
+    assert "Do not propose categories, examples" in prompt
+    assert "Do not ask the caller to choose Telco" in prompt
+    assert "missing entity, population, data source" in prompt
+    assert "do not suggest a source" in prompt
+
+
+def test_home_outcome_clarification_forbids_invented_options():
+    _, prompt = _tools_and_prompt(
+        SimpleNamespace(name="concierge"),
+        route_adapter="clarify",
+        workspace_selected=False,
+        conversation_joinable=False,
+        clarification_focus="outcome",
+    )
+    assert "Reuse only subject nouns the caller actually said" in prompt
+    assert "do not introduce a domain, activity, metric" in prompt
+    assert "forecast" not in prompt.lower()
+
+
+def test_policy_keeps_direct_reply_only_for_tool_free_app_conversation():
+    reply = "Of course—go ahead."
+    self_know = navigate_profile(
+        "Can I ask you a question?",
+        profile="concierge",
+        language="en-US",
+        classifier=ScriptedClassifier(
+            CapabilityId.APP_SELF_KNOW,
+            spoken_reply=reply,
+        ),
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.8,
+    )
+    assert self_know.spoken_reply == reply
+
+    knowledge = navigate_profile(
+        "What did we spend?",
+        profile="concierge",
+        language="en-US",
+        classifier=ScriptedClassifier(
+            CapabilityId.HANDOFF_KNOWLEDGE,
+            spoken_reply="An ungrounded answer",
+        ),
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.8,
+    )
+    assert knowledge.spoken_reply is None
+
+
+def test_engagement_is_reserved_for_long_running_routes():
+    assert _has_long_work(adapter="self_know", workspace_selected=False) is False
+    assert _has_long_work(adapter="clarify", workspace_selected=False) is False
+    assert _has_long_work(adapter="billing", workspace_selected=False) is False
+    assert _has_long_work(adapter="agent_mode", workspace_selected=False) is True
+    assert _has_long_work(adapter="anything", workspace_selected=True) is True
+
+
+def test_terminal_tool_receives_exact_request_from_its_schema():
+    request = "Opaque caller request ENTITY-123."
+    selected = _direct_terminal_call(
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "terminal_analysis",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"request": {"type": "string"}},
+                        "required": ["request"],
+                    },
+                },
+            }
+        ],
+        request,
+    )
+    assert selected == ("terminal_analysis", {"request": request})
 
 
 @pytest.mark.parametrize(

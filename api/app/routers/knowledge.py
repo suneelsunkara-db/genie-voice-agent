@@ -1,11 +1,7 @@
-"""Databricks Knowledge Agent endpoints.
+"""Databricks Knowledge Agent page metadata.
 
-TIER 1: the opening greeting (same design as ``/card/greeting``) and a
-``/corpus`` listing shared with the realtime ``knowledge_search`` tool, so the
-spoken answers and the on-screen topic cards use ONE source of truth.
-
-SEAM for Tier 2: back the corpus (and the tool) with Databricks Vector Search
-over real docs; the route + frontend contract stay the same.
+The greeting and ``/corpus`` endpoint publish localized starter questions.
+Answers come from the managed Genie One conversation, not from static metadata.
 """
 from __future__ import annotations
 

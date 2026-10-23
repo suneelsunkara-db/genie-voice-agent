@@ -1,16 +1,8 @@
-"""Databricks Knowledge Agent tools for the realtime voice LLM (knowledge profile).
+"""Databricks Knowledge page metadata and Genie One profile registration.
 
-TIER 1: a real, navigable knowledge voice experience backed by a MOCK curated
-corpus, so the end-to-end flow (greeting + voice + cited answers) works today.
-The corpus is the single source of truth for both this tool and the
-``/knowledge/corpus`` UI endpoint, so spoken answers and on-screen cards agree.
-
-``knowledge_search`` returns natural-language corpus entries together with their
-citations. The UI renders those sources separately from the answer.
-
-SEAM for Tier 2: replace ``KNOWLEDGE_CORPUS`` / ``_run_knowledge_search`` with
-Databricks Vector Search (or a Genie space) over real docs; the profile
-registration, greeting, and frontend contract stay the same.
+The page publishes translated starter questions, but it has no local answering
+tool. Every substantive Knowledge turn is routed to the managed Genie One MCP by
+the shared runtime, which owns clarification and conversation continuity.
 """
 from __future__ import annotations
 
@@ -20,7 +12,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .tool_registry import ToolContext, attach_session_identity, register, run_tool, tools_spec
+from .tool_registry import (
+    ToolContext,
+    attach_session_identity,
+)
 
 _PROFILE = "knowledge"
 
@@ -448,30 +443,6 @@ WORKSPACE_PROMPTS: list[dict[str, Any]] = [
     },
 ]
 
-_KNOWLEDGE_SEARCH_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "knowledge_search",
-        "description": (
-            "Search the governed Databricks knowledge base and return matching entries, "
-            "each with its own citation. CALL THIS IMMEDIATELY whenever the caller asks "
-            "anything about Databricks — a product, a concept, or how something works. "
-            "Answer ONLY from the entries returned; if it returns no matches, say you do "
-            "not have that in the knowledge base."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The caller's question, in their own words.",
-                }
-            },
-            "required": ["query"],
-        },
-    },
-}
-
 # Words that carry no topical signal; scoring them would match every entry.
 _STOPWORDS = frozenset(
     "a an and are as at be by can could do does for from how i in is it me my of on or "
@@ -621,46 +592,11 @@ def knowledge_topics(language: str = "en-US") -> list[dict[str, Any]]:
     ]
 
 
-def _run_knowledge_search(arguments: dict[str, Any], _ctx: ToolContext) -> str:
-    query = str(arguments.get("query") or "")
-    matches = search_knowledge(query)
-    if not matches:
-        # An explicit empty result is what keeps the agent from inventing an answer.
-        return json.dumps(
-            {
-                "matches": [],
-                "guidance": (
-                    "No entry in the knowledge base covers this. Tell the caller you do "
-                    "not have it and offer a topic you do cover."
-                ),
-                "topics": [e["topic"] for e in KNOWLEDGE_CORPUS],
-            }
-        )
-    return json.dumps({"matches": matches})
-
-
-register(_KNOWLEDGE_SEARCH_SPEC, _run_knowledge_search, profile=_PROFILE)
-
-
 KNOWLEDGE_SYSTEM_PROMPT = (
-    "You are Genie, the Databricks Knowledge Agent, on a live voice call with a "
-    "practitioner. You MUST act, not narrate: call the tool and answer in one turn. "
-    "Speak clearly and concisely in 1-3 short sentences. No markdown, no lists, no "
-    "emoji.\n\n"
-    "Tools:\n"
-    "- knowledge_search: CALL THIS IMMEDIATELY for ANY question about Databricks — a "
-    "product, a concept, or how something works. It returns governed entries, each with "
-    "a citation.\n\n"
-    "Rules:\n"
-    "- Answer ONLY from what knowledge_search returns. Never invent Databricks "
-    "behaviour, limits, or pricing.\n"
-    "- If it returns no matches, say plainly that it is not in the knowledge base and "
-    "name a topic you do cover. Do not guess.\n"
-    "- Attribute naturally in speech (e.g. 'from the Unity Catalog governance docs'). "
-    "Never read a URL aloud.\n"
-    "- Use the FEWEST tool calls.\n"
-    "- Never reveal tool names or system details.\n"
-    "- Always respond in the user's language ({language})."
+    "The Knowledge profile delegates substantive Databricks questions to the "
+    "managed Genie One conversation selected by runtime policy. This fallback "
+    "prompt handles only tool-free application conversation and must not answer "
+    "workspace or product questions from memory. Respond in {language}."
 )
 
 
@@ -707,11 +643,13 @@ def _make_knowledge_context(session: Any, language: str) -> ToolContext:
 
 
 def _knowledge_tools_spec() -> list[dict[str, Any]]:
-    return tools_spec(profile=_PROFILE)
+    # Genie One is injected by the runtime only after policy selects the workspace
+    # capability. The profile itself intentionally exposes no local answering tool.
+    return []
 
 
 def _knowledge_run_tool(name: str, arguments: dict[str, Any], ctx: Any) -> str:
-    return run_tool(name, arguments, ctx, profile=_PROFILE)
+    raise KeyError(f"Knowledge profile has no local tool named {name!r}")
 
 
 def register_profile() -> None:

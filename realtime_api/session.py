@@ -44,6 +44,7 @@ class VoiceSession:
     turn_audio_ms: float = 0.0
     voiced_ms: float = 0.0
     last_rms: float = 0.0
+    peak_rms: float = 0.0
     # Running background-noise estimate, adapted across the whole call (NOT reset
     # per turn) so the gate stays calibrated to the caller's room/mic level.
     noise_floor: float = _INITIAL_NOISE_FLOOR
@@ -118,6 +119,7 @@ class VoiceSession:
         """Silero-gated ingest: mirror speech/silence counters from the endpointer."""
         frame_ms = len(frame) / 2 / self.config.sample_rate_hz * 1000
         self.last_rms = _pcm_s16le_rms(frame)
+        self.peak_rms = max(self.peak_rms, self.last_rms)
         began = self.endpointer.feed(frame)
         self.speech_active = self.endpointer.triggered
         self.voiced_ms = self.endpointer.speech_ms
@@ -130,6 +132,7 @@ class VoiceSession:
         frame_ms = len(frame) / 2 / self.config.sample_rate_hz * 1000
         rms = _pcm_s16le_rms(frame)
         self.last_rms = rms
+        self.peak_rms = max(self.peak_rms, rms)
 
         on_threshold = max(_ABS_MIN_RMS, self.noise_floor * _ONSET_MULT)
         off_threshold = on_threshold * _HANGOVER_RATIO
@@ -243,6 +246,8 @@ class VoiceSession:
         self.silence_ms = 0.0
         self.turn_audio_ms = 0.0
         self.voiced_ms = 0.0
+        self.last_rms = 0.0
+        self.peak_rms = 0.0
         if self.endpointer is not None:
             self.endpointer.reset()
 

@@ -4,6 +4,7 @@ import { useHalfDuplexVoice } from "../hooks/useHalfDuplexVoice";
 import { getMe } from "../lib/me";
 import { useAppLanguage } from "../lib/appLanguage";
 import { AppVoice, useAppVoice } from "../lib/appVoice";
+import { storeKnowledgeHandoff } from "../lib/knowledgeHandoff";
 import { emptyConversation, turnReducer } from "../lib/turnState";
 import {
   DEFAULT_LANGUAGE_OPTIONS,
@@ -350,6 +351,18 @@ export function HomePage() {
           onToolCalled: (name, result) => {
             const r = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
             if (name === "select_industry" && typeof r.industry === "string") {
+              if (
+                r.industry === "knowledge" &&
+                typeof r.handoff_query === "string" &&
+                r.handoff_query.trim()
+              ) {
+                storeKnowledgeHandoff(
+                  r.handoff_query,
+                  typeof r.handoff_language === "string"
+                    ? r.handoff_language
+                    : callLanguageRef.current
+                );
+              }
               navigateForIndustry(r.industry as Industry["id"]);
             }
           },

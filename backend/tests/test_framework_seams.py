@@ -364,7 +364,7 @@ def test_readiness_names_exact_objects_and_setup_has_two_sections(monkeypatch):
         encoding="utf-8"
     )
     assert "effective_user_api_scopes" in readiness_source
-    assert 'missing = {"genie", "sql"} - effective' in readiness_source
+    assert 'missing = {"ai-gateway", "genie", "sql"} - effective' in readiness_source
 
     gateway = (REPO / "infra/apps/provision_ai_gateway.py").read_text(encoding="utf-8")
     policy_block = gateway.split("if policy_errors:", 1)[1]
@@ -475,8 +475,10 @@ def test_deploy_orders_gateway_before_gpu_and_grants_viewers():
     grants = (REPO / "infra/apps/grant_app_sp.py").read_text(encoding="utf-8")
     assert "grant_pipeline_job(settings, sp)" in grants
     assert "GRANT EXECUTE ON FUNCTION" in grants
-    # The installer prints the readiness checklist from the deployed app.
-    assert "/readiness?full=false" in sh
+    # The installer gates on the complete deployed contract, including real
+    # viewer-scoped Genie One, Genie Space, and Agent Mode probes.
+    assert "/readiness?full=true" in sh
+    assert 'if not data.get("ready")' in sh
     # The standalone Story Deck ships with the app and is checked after deploy.
     assert '--include "story_deck/**"' in sh
     assert 'base + "/story/"' in sh

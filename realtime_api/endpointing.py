@@ -171,6 +171,7 @@ class TurnEndpointer:
         self.speech_ms = 0.0
         self.silence_ms = 0.0
         self.triggered = False
+        self.max_speech_probability = 0.0
         self._last_eval_silence = 0.0
 
     def feed(self, pcm: bytes) -> bool:
@@ -203,7 +204,11 @@ class TurnEndpointer:
         )
         self._ctx = x[:, -_SILERO_CTX:]
         frame_ms = _SILERO_FRAME / _TARGET_SR * 1000.0
-        if float(prob.item()) >= 0.5:
+        speech_probability = float(prob.item())
+        self.max_speech_probability = max(
+            self.max_speech_probability, speech_probability
+        )
+        if speech_probability >= 0.5:
             self.triggered = True
             self.speech_ms += frame_ms
             self.silence_ms = 0.0

@@ -23,7 +23,7 @@ class CapabilityId(StrEnum):
     NAVIGATE_TELCO = "navigate.telco"
     NAVIGATE_FSI = "navigate.fsi"
     NAVIGATE_KNOWLEDGE = "navigate.knowledge"
-    KNOWLEDGE_DOCS = "knowledge.docs"
+    HANDOFF_KNOWLEDGE = "handoff.knowledge"
     WORKSPACE_QUERY = "workspace.query"
     CARD_STATEMENT = "card.statement"
     CARD_REWARDS = "card.rewards"
@@ -45,11 +45,13 @@ class NavigationReason(StrEnum):
     SEMANTIC_CLASSIFICATION = "semantic_classification"
     LOW_CONFIDENCE = "low_confidence"
     AMBIGUOUS = "ambiguous"
+    INCOMPLETE = "incomplete"
     PERMISSION_REQUIRED = "permission_required"
     UNSUPPORTED = "unsupported"
     POLICY_OVERRIDE = "policy_override"
     ACTION_PREPARATION_REQUIRED = "action_preparation_required"
     CONFIRMATION_REQUIRED = "confirmation_required"
+    CLARIFICATION_RESOLVED = "clarification_resolved"
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class CapabilitySelection:
     tool_name: str
     arguments: dict[str, Any]
     confirm_phrase: str
+    include_utterance: bool = False
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,19 @@ class NavigationDecision(BaseModel):
     confirmed: bool = False
     depth: Depth = "fact"
     reason: NavigationReason = NavigationReason.SEMANTIC_CLASSIFICATION
+    # Conversational completeness is independent of destination/capability. An
+    # incomplete declarative thought can still be relevant and recoverable.
+    request_state: Literal[
+        "complete", "incomplete", "ambiguous", "unsupported"
+    ] = "complete"
+    clarification_focus: Literal[
+        "none", "outcome", "data_scope", "destination", "missing_details"
+    ] = "none"
+    candidate_capability_id: CapabilityId | None = None
+    # The semantic classifier may answer only safe, tool-free app conversation
+    # (for example, "Can I ask a question?") in the same structured call. Policy
+    # ignores this field for every other capability.
+    spoken_reply: str | None = Field(default=None, max_length=500)
 
 
 CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
@@ -164,29 +180,32 @@ CAPABILITIES: tuple[CapabilityDescriptor, ...] = (
         profiles=frozenset({"concierge"}),
     ),
     CapabilityDescriptor(
-        id=CapabilityId.KNOWLEDGE_DOCS,
+        id=CapabilityId.HANDOFF_KNOWLEDGE,
         purpose=(
-            "Explain a Databricks product, feature, concept, documented behavior, "
-            "or general how-to using governed documentation."
+            "Hand a Databricks platform or caller-workspace question, request, or "
+            "incomplete but relevant thought from Home to the Databricks Knowledge "
+            "Agent. Use this for the question itself, not merely a destination choice. "
+            "The Knowledge Agent will answer it or ask for the missing detail."
         ),
-        scope="pack",
+        scope="app",
         depth="fact",
         effect="read",
-        adapter="pack_facts",
-        requires_tool=True,
-        tools=frozenset({"knowledge_search"}),
-        prompt=(
-            "Call the provided documentation capability exactly once with the caller's "
-            "question, then answer only from its result in {language}."
+        adapter="self_know",
+        selection=CapabilitySelection(
+            tool_name="select_industry",
+            arguments={"industry": "knowledge"},
+            confirm_phrase="confirm.navigate_knowledge",
+            include_utterance=True,
         ),
-        profiles=frozenset({"knowledge"}),
+        profiles=frozenset({"concierge"}),
     ),
     CapabilityDescriptor(
         id=CapabilityId.WORKSPACE_QUERY,
         purpose=(
-            "Answer from the caller's own governed workspace: usage, spend, counts, "
-            "trends, jobs, tables, dashboards, permissions, freshness, or other "
-            "organization-specific data and analysis."
+            "Answer a Databricks product, platform, business, or governed workspace "
+            "question. This includes explanations, usage, spend, counts, trends, "
+            "forecasting, classification, comparisons, and multi-step analysis. The "
+            "upstream conversation may ask the caller for any missing detail."
         ),
         scope="workspace",
         depth="fact",

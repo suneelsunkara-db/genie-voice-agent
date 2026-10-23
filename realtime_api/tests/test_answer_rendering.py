@@ -318,6 +318,18 @@ def test_fallback_tts_segmentation_never_splits_decimal_or_version():
     assert all(not segment.endswith("$10,525.") for segment in segments)
 
 
+def test_fallback_tts_segmentation_never_splits_compact_decimal_units():
+    text = (
+        "CPU usage is likely to total about 0.5B–0.85B DBUs over the next "
+        "12 months, while GPU usage remains lower."
+    )
+    segments = answer_rendering.split_speech_segments(text, max_chars=80)
+    joined = " ".join(segments)
+
+    assert "0.5B–0.85B DBUs" in joined
+    assert "0. 5B" not in joined
+
+
 def test_dense_accounting_sentence_splits_at_clauses_by_fact_count():
     text = (
         "This cycle (2025-12), CH-0001 posted $3,250.00 in purchases, "

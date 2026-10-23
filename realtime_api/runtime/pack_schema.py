@@ -121,6 +121,7 @@ def evidence_from_tool_result(
             return evidence_from_agent_mode(
                 tables,
                 report_text=str(result.get("report") or ""),
+                question=str(result.get("question") or ""),
             )
         first = tables[0] if isinstance(tables[0], dict) else {}
         cols = list(first.get("columns") or [])

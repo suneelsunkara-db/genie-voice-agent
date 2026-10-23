@@ -105,6 +105,82 @@ class RespondWithToolsAdapter:
         yield seq.emit(AgentEventKind.TURN_COMPLETED, {"text": text})
 
 
+class DirectToolAdapter:
+    """Execute one policy-selected terminal tool without another model round-trip.
+
+    The semantic navigator has already selected and policy-validated the capability.
+    Asking a conversational model to rediscover the same tool can only add latency
+    or rewrite the caller's request. This adapter preserves the normal AgentEvent
+    contract while passing the exact governed arguments to the tool.
+    """
+
+    def __init__(self, name: str, arguments: dict[str, Any]) -> None:
+        self._name = name
+        self._arguments = dict(arguments)
+
+    async def run(
+        self,
+        goal: AgentGoal,
+        context: AgentContext,
+        cancellation: CancellationToken,
+    ) -> AsyncIterator[AgentEvent]:
+        import asyncio
+        import json
+
+        seq = EventSequencer(context.turn_id)
+        yield seq.emit(
+            AgentEventKind.TURN_ACCEPTED,
+            {"utterance": goal.utterance, **dict(goal.meta)},
+        )
+        cancellation.raise_if_cancelled()
+        yield seq.emit(
+            AgentEventKind.ACTION_STARTED,
+            {"name": self._name, "arguments": self._arguments},
+        )
+        span = (
+            context.trace.span(f"tool.{self._name}", "TOOL", input=self._arguments)
+            if context.trace is not None
+            else None
+        )
+        try:
+            raw = await asyncio.to_thread(
+                context.tool_runner,
+                self._name,
+                self._arguments,
+                context.tool_ctx,
+            )
+        except Exception as exc:
+            if span is not None:
+                span.set_status("error").set_attribute("error", repr(exc)).end()
+            raise
+        cancellation.raise_if_cancelled()
+        result: Any = raw
+        if isinstance(raw, str):
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                result = {"answer": raw}
+        if span is not None:
+            span.set_output(result).end()
+        yield seq.emit(
+            AgentEventKind.ACTION_COMPLETED,
+            {
+                "name": self._name,
+                "arguments": self._arguments,
+                "result": result,
+            },
+        )
+        from .pack_schema import evidence_from_tool_result
+
+        evidence = evidence_from_tool_result(self._name, result)
+        yield seq.emit(
+            AgentEventKind.EVIDENCE_AVAILABLE,
+            {"name": self._name, "evidence": evidence.as_dict()},
+        )
+        yield seq.emit(AgentEventKind.ANSWER_FINAL, {"text": "", "display_only": True})
+        yield seq.emit(AgentEventKind.TURN_COMPLETED, {"text": ""})
+
+
 class LiveToolRespondAdapter:
     """Like RespondWithToolsAdapter but emits tool events during the tool loop.
 

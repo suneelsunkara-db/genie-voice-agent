@@ -143,6 +143,22 @@ def _principal() -> SessionPrincipal:
     return SessionPrincipal(username="u", access_token="tok")
 
 
+def test_genie_one_uses_managed_unity_gateway_mcp():
+    assert genie_one.GENIE_ONE_MCP_PATH == (
+        "/ai-gateway/mcp-services/system.ai.genie_one_mcp"
+    )
+
+
+def test_genie_one_source_integrity_policy_preserves_opaque_request():
+    request = "Analyze ENTITY-123 from SOURCE-456; do not alter A&B."
+    governed = genie_one.governed_question(request)
+    assert "Never silently substitute another customer" in governed
+    assert "Use proxy data only" in governed
+    assert "ENTITY-123" in governed
+    assert "SOURCE-456" in governed
+    assert "A&amp;B" in governed
+
+
 def test_the_handle_is_forwarded_to_genie_and_echoed_back(monkeypatch):
     seen: dict = {}
 
@@ -228,4 +244,25 @@ def test_a_failed_call_still_reports_the_conversation_so_the_thread_survives(mon
         )
     )
     assert payload["conversation_id"] == "conv-7"
-    assert "transport died" in payload["error"]
+    assert payload["error"] == "Genie One is temporarily unavailable."
+    assert payload["error_code"] == "genie_one_transport_failed"
+    assert "transport died" in payload["technical_error"]
+
+
+def test_nested_transport_failure_is_flattened_without_leaking_bearer_token():
+    nested = ExceptionGroup(
+        "unhandled errors in a TaskGroup",
+        [
+            RuntimeError(
+                "HTTP 403 Authorization: Bearer secret-token cannot invoke MCP"
+            )
+        ],
+    )
+
+    detail = genie_one.technical_exception_detail(nested)
+
+    assert "RuntimeError" in detail
+    assert "403" in detail
+    assert "cannot invoke MCP" in detail
+    assert "secret-token" not in detail
+    assert "[REDACTED]" in detail

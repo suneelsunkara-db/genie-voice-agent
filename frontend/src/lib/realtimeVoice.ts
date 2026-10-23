@@ -115,6 +115,12 @@ export interface StartRealtimeVoiceOptions {
    * language differs from their display/caption language.
    */
   sttLanguage?: string;
+  /** Typed first turn transferred from Home to Knowledge at session ingress. */
+  continuation?: {
+    kind: "knowledge_question";
+    text: string;
+    language: string;
+  };
 }
 
 export interface RealtimeVoiceSession {
@@ -131,6 +137,8 @@ export interface RealtimeVoiceSession {
     language?: string,
     options?: { purpose?: "opening_greeting" }
   ) => void;
+  /** Submit a user-authored text turn through the conversational pipeline. */
+  submitText: (text: string, language?: string) => void;
   /**
    * Cancel the in-flight server turn and mark its turn_id stale so late events
    * are dropped. Always pair with local playback.flush().
@@ -296,6 +304,7 @@ export async function startRealtimeVoice(
           // Selects the named backend capability catalog and assistant profile.
           ...(options?.profile ? { profile: options.profile } : {}),
           ...(options?.surface ? { surface: options.surface } : {}),
+          ...(options?.continuation ? { continuation: options.continuation } : {}),
           // One Home-page choice inherited by every surface. The server accepts
           // only this allowlisted key and maps it to its own committed WAV.
           voice_variant: getAppVoice(),
@@ -474,6 +483,17 @@ export async function startRealtimeVoice(
             text,
             language: language || undefined,
             purpose: options?.purpose,
+          })
+        );
+      }
+    },
+    submitText: (text: string, language?: string) => {
+      if (!closed && ws.readyState === WebSocket.OPEN && text.trim()) {
+        ws.send(
+          JSON.stringify({
+            type: "input.text",
+            text,
+            language: language || undefined,
           })
         );
       }

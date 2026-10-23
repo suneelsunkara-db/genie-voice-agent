@@ -56,6 +56,9 @@ _TRACE_MIGRATED_COLUMNS: dict[str, str] = {
     "surface": "TEXT",
     "traffic_class": "TEXT",
     "model_calls": "JSONB",
+    "actor_email": "TEXT",
+    "actor_username": "TEXT",
+    "actor_display_name": "TEXT",
 }
 _ISSUES_CACHE: dict[str, Any] = {"ts": 0.0, "value": None}
 _ISSUES_TTL_S = 60.0
@@ -586,6 +589,9 @@ class LakebaseServing:
                 turn_id                     INTEGER,
                 call_id                     TEXT,
                 customer_id                 TEXT,
+                actor_email                 TEXT,
+                actor_username              TEXT,
+                actor_display_name          TEXT,
                 capability                  TEXT,
                 profile                     TEXT,
                 surface                     TEXT,
@@ -863,6 +869,9 @@ class LakebaseServing:
             "turn_id": trace.get("turn_id"),
             "call_id": trace.get("call_id"),
             "customer_id": trace.get("customer_id"),
+            "actor_email": trace.get("actor_email"),
+            "actor_username": trace.get("actor_username"),
+            "actor_display_name": trace.get("actor_display_name"),
             "capability": trace.get("capability"),
             "profile": trace.get("profile"),
             "surface": trace.get("surface"),
@@ -907,6 +916,7 @@ class LakebaseServing:
         limit: int = 100,
         session_id: str | None = None,
         call_id: str | None = None,
+        actor_email: str | None = None,
     ) -> list[dict[str, Any]]:
         """Compact trace rows (no span bodies) for the observability list view."""
         if not self.enabled:
@@ -915,6 +925,8 @@ class LakebaseServing:
                 rows = [r for r in rows if r.get("session_id") == session_id]
             if call_id:
                 rows = [r for r in rows if r.get("call_id") == call_id]
+            if actor_email:
+                rows = [r for r in rows if r.get("actor_email") == actor_email]
             return [self._trace_summary(r) for r in rows[:limit]]
         tbl = self._table("voice_traces")
         clauses: list[str] = []
@@ -925,10 +937,19 @@ class LakebaseServing:
         if call_id:
             clauses.append("call_id = %s")
             params.append(call_id)
+        if actor_email:
+            actor_expression = (
+                "actor_email"
+                if "actor_email" in self._trace_columns()
+                else "(trace ->> 'actor_email')"
+            )
+            clauses.append(f"{actor_expression} = %s")
+            params.append(actor_email)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
         selected = [
-            "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
+            "trace_id", "session_id", "turn_id", "call_id", "customer_id",
+            "actor_email", "actor_username", "actor_display_name", "capability",
             "profile", "surface", "traffic_class",
             "language", "detected_language", "status", "input_transcript", "output_text",
             "tool_names", "apply_billing_action_called", "lookup_account_count",
@@ -951,6 +972,9 @@ class LakebaseServing:
                 "surface": "trace ->> 'surface'",
                 "traffic_class": "trace ->> 'traffic_class'",
                 "model_calls": "trace -> 'model_calls'",
+                "actor_email": "trace ->> 'actor_email'",
+                "actor_username": "trace ->> 'actor_username'",
+                "actor_display_name": "trace ->> 'actor_display_name'",
             }
             for column, expression in json_fallbacks.items():
                 if column not in columns:
@@ -992,7 +1016,8 @@ class LakebaseServing:
     @staticmethod
     def _trace_summary(trace: dict[str, Any]) -> dict[str, Any]:
         keys = (
-            "trace_id", "session_id", "turn_id", "call_id", "customer_id", "capability",
+            "trace_id", "session_id", "turn_id", "call_id", "customer_id",
+            "actor_email", "actor_username", "actor_display_name", "capability",
             "profile", "surface", "traffic_class",
             "language", "detected_language", "status", "input_transcript", "output_text",
             "tool_names", "apply_billing_action_called", "lookup_account_count",

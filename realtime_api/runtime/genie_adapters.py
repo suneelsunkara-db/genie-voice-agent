@@ -276,6 +276,14 @@ def evidence_from_genie_one(result: dict[str, Any] | None) -> Evidence:
         )
 
     prose_text = _prose_from_genie_one(result)
+    from .analytical_response import analytical_response
+
+    meta["analysis"] = analytical_response(
+        source="genie_one",
+        answer=prose_text,
+        query_results=meta["query_results"],
+        question=str(result.get("request") or ""),
+    )
     columns, rows, table_sql = _genie_one_table(result)
     sql = table_sql or result.get("sql") or result.get("query")
     prose = (
@@ -317,15 +325,51 @@ def evidence_from_agent_mode(
     tables: list[dict[str, Any]] | None,
     *,
     report_text: str | None = None,
+    question: str | None = None,
 ) -> Evidence:
     """Agent Mode structured tables → Evidence. Report text is display-only."""
     prose = (report_text or "").strip() or None
+    query_results: list[dict[str, Any]] = []
+    for index, item in enumerate(tables or []):
+        columns = [str(c) for c in (item.get("columns") or []) if c is not None]
+        raw_rows = (
+            item.get("preview_rows")
+            if item.get("preview_rows") is not None
+            else item.get("rows")
+        )
+        rows = _normalize_rows(raw_rows, columns)
+        if columns and rows:
+            query_results.append(
+                {
+                    "item_id": f"agent_mode_table_{index}",
+                    "sql": item.get("sql"),
+                    "columns": [
+                        {"name": column, "type_text": ""}
+                        for column in columns
+                    ],
+                    "rows": rows,
+                    "total_row_count": len(rows),
+                    "truncated": False,
+                }
+            )
+    from .analytical_response import analytical_response
+
+    analysis = analytical_response(
+        source="agent_mode",
+        answer=prose,
+        query_results=query_results,
+        question=(question or "").strip(),
+    )
     if not tables:
         return Evidence(
             source="agent_mode",
             display_prose=prose,
             error=no_evidence_refuse(detail="Agent Mode returned no tables"),
-            meta={"source_language": "en"},
+            meta={
+                "source_language": "en",
+                "query_results": query_results,
+                "analysis": analysis,
+            },
         )
 
     # Prefer the first table with both columns and rows.
@@ -348,6 +392,8 @@ def evidence_from_agent_mode(
                     "table_index": idx,
                     "table_count": len(tables),
                     "source_language": "en",
+                    "query_results": query_results,
+                    "analysis": analysis,
                 },
             )
 
@@ -359,5 +405,9 @@ def evidence_from_agent_mode(
             message="Agent Mode tables lacked columns/rows",
             retryable=True,
         ),
-        meta={"source_language": "en"},
+        meta={
+            "source_language": "en",
+            "query_results": query_results,
+            "analysis": analysis,
+        },
     )

@@ -34,6 +34,96 @@ class NavigationClassifier(Protocol):
     ) -> dict[str, Any]: ...
 
 
+_PENDING_CLARIFICATION_KEY = "_pending_navigation_clarification"
+_MAX_CONTINUATION_CHARS = 8_000
+_MAX_CONTINUATION_TURNS = 4
+
+
+def navigation_request_for_classification(
+    utterance: str,
+    *,
+    profile_state: dict[str, object],
+) -> str:
+    """Return the complete pending request for semantic classification.
+
+    A clarification answer is not an independent request.  The navigator must
+    classify it together with the turns that prompted it; reconstruction after
+    classification is too late and can trigger repeated or irrelevant follow-ups.
+    """
+    clean = utterance.strip()
+    existing = profile_state.get(_PENDING_CLARIFICATION_KEY)
+    turns = [
+        str(item).strip()
+        for item in existing
+        if str(item).strip()
+    ] if isinstance(existing, list) else []
+    if clean and (not turns or turns[-1] != clean):
+        turns.append(clean)
+    if not turns:
+        return clean
+    turns = turns[-_MAX_CONTINUATION_TURNS:]
+    while len("\n".join(turns)) > _MAX_CONTINUATION_CHARS and len(turns) > 1:
+        turns.pop(0)
+    return "\n".join(turns)
+
+
+def resolve_navigation_continuation(
+    decision: NavigationDecision,
+    *,
+    utterance: str,
+    profile: str,
+    profile_state: dict[str, object],
+) -> tuple[NavigationDecision, str | None]:
+    """Carry an incomplete request through its clarification turns.
+
+    A clarification answer augments the request; it never replaces it. Home keeps
+    its special destination-to-Knowledge handoff, while an already selected profile
+    receives the same exact multi-turn request back for governed execution.
+    """
+    clean = utterance.strip()
+    if decision.capability_id == CapabilityId.CLARIFY:
+        existing = profile_state.get(_PENDING_CLARIFICATION_KEY)
+        turns = [
+            str(item).strip()
+            for item in existing
+            if str(item).strip()
+        ] if isinstance(existing, list) else []
+        if clean and (not turns or turns[-1] != clean):
+            turns.append(clean)
+        turns = turns[-_MAX_CONTINUATION_TURNS:]
+        while len("\n".join(turns)) > _MAX_CONTINUATION_CHARS and len(turns) > 1:
+            turns.pop(0)
+        profile_state[_PENDING_CLARIFICATION_KEY] = turns
+        return decision, None
+
+    existing = profile_state.pop(_PENDING_CLARIFICATION_KEY, None)
+    turns = [
+        str(item).strip()
+        for item in existing
+        if str(item).strip()
+    ] if isinstance(existing, list) else []
+    if not turns:
+        return decision, None
+
+    if profile == "concierge" and decision.capability_id == CapabilityId.NAVIGATE_KNOWLEDGE:
+        decision = decision.model_copy(
+            update={
+                "capability_id": CapabilityId.HANDOFF_KNOWLEDGE,
+                "ambiguous": False,
+                "reason": NavigationReason.CLARIFICATION_RESOLVED,
+            }
+        )
+    if profile == "concierge" and decision.capability_id != CapabilityId.HANDOFF_KNOWLEDGE:
+        return decision, None
+
+    if clean and (not turns or turns[-1] != clean):
+        turns.append(clean)
+    handoff = "\n".join(turns)
+    if len(handoff) > _MAX_CONTINUATION_CHARS:
+        handoff = handoff[-_MAX_CONTINUATION_CHARS:]
+    return decision, handoff
+
+
 def classifier_capabilities(profile: str) -> tuple[CapabilityDescriptor, ...]:
     """Model-visible catalog for one profile; implementation names stay hidden."""
     return capabilities_for_profile(profile)
@@ -87,11 +177,28 @@ def navigate_profile(
     try:
         proposed = NavigationDecision.model_validate(raw)
     except ValidationError:
+        if profile == "knowledge":
+            return NavigationDecision(
+                capability_id=(
+                    CapabilityId.WORKSPACE_QUERY
+                    if has_obo
+                    else CapabilityId.REFUSE
+                ),
+                confidence=0.0,
+                depth="fact",
+                reason=(
+                    NavigationReason.POLICY_OVERRIDE
+                    if has_obo
+                    else NavigationReason.PERMISSION_REQUIRED
+                ),
+            )
         return NavigationDecision(
             capability_id=CapabilityId.CLARIFY,
             confidence=0.0,
             ambiguous=True,
             reason=NavigationReason.AMBIGUOUS,
+            request_state="ambiguous",
+            clarification_focus="missing_details",
         )
 
     allowed = {item.id for item in catalog}
@@ -101,13 +208,108 @@ def navigate_profile(
             confidence=1.0,
             reason=NavigationReason.POLICY_OVERRIDE,
         )
+    # Home owns only the destination decision. Once it recognises a substantive
+    # Databricks request, transfer the exact utterance to Knowledge even when the
+    # request itself is incomplete; Genie One owns that downstream conversation.
+    if profile == "concierge" and (
+        proposed.capability_id == CapabilityId.HANDOFF_KNOWLEDGE
+        or proposed.candidate_capability_id == CapabilityId.HANDOFF_KNOWLEDGE
+    ):
+        descriptor = capability_descriptor(CapabilityId.HANDOFF_KNOWLEDGE)
+        return NavigationDecision(
+            capability_id=CapabilityId.HANDOFF_KNOWLEDGE,
+            confidence=proposed.confidence,
+            depth=descriptor.depth,
+            reason=NavigationReason.SEMANTIC_CLASSIFICATION,
+        )
+    # The Knowledge surface delegates both answering and clarification to the
+    # same Genie One conversation. Do not interpose a local completeness gate:
+    # a short or ambiguous workspace request is still useful upstream context,
+    # and its next turn is joined with the returned conversation_id.
+    if profile == "knowledge" and proposed.capability_id not in {
+        CapabilityId.APP_SELF_KNOW,
+        CapabilityId.REFUSE,
+    }:
+        if not has_obo:
+            return NavigationDecision(
+                capability_id=CapabilityId.REFUSE,
+                confidence=proposed.confidence,
+                depth="fact",
+                reason=NavigationReason.PERMISSION_REQUIRED,
+            )
+        return NavigationDecision(
+            capability_id=CapabilityId.WORKSPACE_QUERY,
+            confidence=proposed.confidence,
+            depth="fact",
+            reason=NavigationReason.SEMANTIC_CLASSIFICATION,
+        )
+    # ``request_state`` and ``clarification_focus`` are one semantic contract.
+    # A model can occasionally emit the internally contradictory combination
+    # "complete" + a concrete missing-information focus.  Do not execute a
+    # governed tool from that output: the focus is positive evidence that a
+    # follow-up is required, while "none" is the only valid focus for a
+    # complete request.
+    if (
+        proposed.request_state == "complete"
+        and proposed.clarification_focus != "none"
+        and proposed.capability_id
+        not in {CapabilityId.APP_SELF_KNOW, CapabilityId.REFUSE}
+    ):
+        proposed = proposed.model_copy(
+            update={
+                "request_state": "incomplete",
+                "ambiguous": True,
+            }
+        )
+    if (
+        proposed.capability_id not in {CapabilityId.APP_SELF_KNOW, CapabilityId.REFUSE}
+        and proposed.request_state in {"incomplete", "ambiguous"}
+    ):
+        candidate = proposed.candidate_capability_id
+        if candidate is None and proposed.capability_id != CapabilityId.CLARIFY:
+            candidate = proposed.capability_id
+        return NavigationDecision(
+            capability_id=CapabilityId.CLARIFY,
+            confidence=proposed.confidence,
+            ambiguous=True,
+            depth=proposed.depth,
+            reason=(
+                NavigationReason.INCOMPLETE
+                if proposed.request_state == "incomplete"
+                else NavigationReason.AMBIGUOUS
+            ),
+            request_state=proposed.request_state,
+            clarification_focus=(
+                proposed.clarification_focus
+                if proposed.clarification_focus != "none"
+                else "missing_details"
+            ),
+            candidate_capability_id=candidate,
+        )
     if proposed.ambiguous or proposed.confidence < min_confidence:
+        candidate = proposed.candidate_capability_id
+        if candidate is None and proposed.capability_id not in {
+            CapabilityId.CLARIFY,
+            CapabilityId.REFUSE,
+        }:
+            candidate = proposed.capability_id
         return NavigationDecision(
             capability_id=CapabilityId.CLARIFY,
             confidence=proposed.confidence,
             ambiguous=True,
             depth=proposed.depth,
             reason=NavigationReason.LOW_CONFIDENCE,
+            request_state=(
+                proposed.request_state
+                if proposed.request_state != "complete"
+                else "ambiguous"
+            ),
+            clarification_focus=(
+                proposed.clarification_focus
+                if proposed.clarification_focus != "none"
+                else "missing_details"
+            ),
+            candidate_capability_id=candidate,
         )
     descriptor = capability_descriptor(proposed.capability_id)
     if descriptor.requires_obo and not has_obo:
@@ -141,8 +343,18 @@ def navigate_profile(
                 reason=NavigationReason.CONFIRMATION_REQUIRED,
             )
     # Depth belongs to the selected capability contract, not to a second free
-    # choice by the model.
-    return proposed.model_copy(update={"depth": descriptor.depth})
+    # choice by the model. A model-authored spoken reply is executable output, so
+    # retain it only on the explicitly tool-free app-conversation capability.
+    return proposed.model_copy(
+        update={
+            "depth": descriptor.depth,
+            "spoken_reply": (
+                proposed.spoken_reply
+                if proposed.capability_id == CapabilityId.APP_SELF_KNOW
+                else None
+            ),
+        }
+    )
 
 
 def navigate_knowledge(
@@ -184,7 +396,7 @@ def route_for_navigation(
     descriptor = capability_descriptor(decision.capability_id)
     reason = f"capability={decision.capability_id.value};reason={decision.reason.value}"
 
-    if decision.capability_id == CapabilityId.WORKSPACE_QUERY:
+    if descriptor.scope == "workspace":
         frame = GoalFrame(
             scope="workspace",
             depth=decision.depth,
@@ -194,7 +406,6 @@ def route_for_navigation(
         )
         return RouteDecision(RoutePath.WORKSPACE, frame, descriptor.adapter, reason)
     if decision.capability_id in {
-        CapabilityId.KNOWLEDGE_DOCS,
         CapabilityId.PACK_FACTS,
         CapabilityId.CARD_QUERY,
         CapabilityId.CARD_STATEMENT,

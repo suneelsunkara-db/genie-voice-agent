@@ -19,6 +19,10 @@ import {
 import { API_BASE_URL, WS_BASE_URL } from "../config";
 import { getAppLanguage } from "../lib/appLanguage";
 import {
+  consumeKnowledgeHandoff,
+  peekKnowledgeHandoff,
+} from "../lib/knowledgeHandoff";
+import {
   ProgressStep,
   activeStep,
   formatElapsed,
@@ -29,22 +33,11 @@ import { uiCopy, useUiLocale } from "../i18n";
 import "../styles/knowledge.css";
 
 /**
- * Databricks Knowledge Agent — cited platform Q&A by voice (Tier 1).
+ * Databricks Knowledge Agent — managed Genie One conversation by voice.
  *
- * The "knowledge" realtime profile greets the signed-in user and answers
- * questions about the Databricks platform from a governed corpus, backed by the
- * `knowledge_search` tool. `/knowledge/corpus` lists the same entries the tool
- * searches, so the topic tiles on screen and the spoken answers can never
- * disagree about what the agent knows.
- *
- * Every `knowledge_search` result carries its own citation, and this page renders
- * those citations beside the natural-language answer. When the search comes back
- * empty, the sources panel stays empty.
- *
- * Uses the FRAMEWORK primitives like every other voice surface: the shared voice
- * stack (startRealtimeVoice + useHalfDuplexVoice), the shared config-driven
- * language bar, and the shared greeting mechanism. SEAM: back the corpus with
- * Databricks Vector Search over real docs without touching this component.
+ * Starter cards are localized question metadata only. Every answer, clarification,
+ * governed query, citation, and conversation handle comes from Genie One through
+ * the shared realtime runtime.
  */
 
 /**
@@ -92,34 +85,67 @@ function readEvidence(payload: Record<string, unknown>): AnswerEvidence | null {
   const prose = asRecord(evidence.prose);
   const error = asRecord(evidence.error);
   const meta = asRecord(evidence.meta);
+  const analysis = asRecord(meta?.analysis);
   const list = (value: unknown): string[] =>
     Array.isArray(value) ? value.map((v) => String(v)) : [];
-  const queryResults: AnalysisResult[] = Array.isArray(meta?.query_results)
-    ? meta.query_results.flatMap((value) => {
+  const rawDatasets = Array.isArray(analysis?.datasets)
+    ? analysis.datasets
+    : Array.isArray(meta?.query_results)
+      ? meta.query_results
+      : [];
+  const rawViews = Array.isArray(analysis?.views) ? analysis.views : [];
+  const queryResults: AnalysisResult[] = rawDatasets.flatMap((value) => {
         const result = asRecord(value);
-        if (!result || !Array.isArray(result.columns) || !Array.isArray(result.rows)) {
+        const rawColumns = Array.isArray(result?.fields)
+          ? result.fields
+          : result?.columns;
+        if (!result || !Array.isArray(rawColumns) || !Array.isArray(result.rows)) {
           return [];
         }
-        const columns = result.columns.flatMap((value) => {
+        const columns = rawColumns.flatMap((value) => {
           const column = asRecord(value);
           return column && typeof column.name === "string"
-            ? [{ name: column.name, typeText: String(column.type_text ?? "") }]
+            ? [{
+                name: column.name,
+                typeText: String(column.type ?? column.type_text ?? ""),
+              }]
             : [];
         });
         if (!columns.length) return [];
+        const datasetId = String(result.id ?? result.item_id ?? "");
+        const matchingView = rawViews
+          .map(asRecord)
+          .find((view) => String(view?.dataset_id ?? "") === datasetId);
+        const kind = matchingView?.kind;
+        const dimension = matchingView?.dimension;
+        const measures = matchingView?.measures;
+        const view: AnalysisResult["view"] =
+          (kind === "bar" || kind === "line") &&
+          typeof dimension === "string" &&
+          Array.isArray(measures) &&
+          measures.every((measure) => typeof measure === "string")
+            ? {
+                kind,
+                dimension,
+                measures: measures as string[],
+                title: typeof matchingView?.title === "string"
+                  ? matchingView.title
+                  : undefined,
+              }
+            : undefined;
         return [{
-          itemId: String(result.item_id ?? ""),
+          itemId: datasetId,
           sql: typeof result.sql === "string" ? result.sql : null,
           columns,
           rows: result.rows.filter(Array.isArray),
           totalRowCount:
-            typeof result.total_row_count === "number"
-              ? result.total_row_count
+            typeof (result.row_count ?? result.total_row_count) === "number"
+              ? Number(result.row_count ?? result.total_row_count)
               : result.rows.length,
           truncated: result.truncated === true,
+          view,
         }];
-      })
-    : [];
+      });
   return {
     tool: typeof payload.name === "string" ? payload.name : "",
     source: typeof evidence.source === "string" ? evidence.source : "",
@@ -173,6 +199,7 @@ export function KnowledgeAgentPage() {
   const callIdRef = useRef<string>("");
   const callLanguageRef = useRef<string>(getAppLanguage());
   const greetingRef = useRef<Map<string, string>>(new Map());
+  const handoffRef = useRef(peekKnowledgeHandoff());
 
   const {
     playbackRef,
@@ -288,6 +315,10 @@ export function KnowledgeAgentPage() {
 
   const openSession = useCallback(
     async (language: string) => {
+      const pendingHandoff = handoffRef.current
+        ? consumeKnowledgeHandoff()
+        : null;
+      handoffRef.current = null;
       const session = await startRealtimeVoice(
         WS_BASE_URL,
         callIdRef.current,
@@ -295,6 +326,10 @@ export function KnowledgeAgentPage() {
         {
           onSessionReady: () => {
             setPhase("live");
+            if (pendingHandoff) {
+              setAgentState("thinking");
+              return;
+            }
             setAgentState("greeting");
             void (async () => {
               const greeting = await fetchGreeting(callLanguageRef.current);
@@ -402,7 +437,20 @@ export function KnowledgeAgentPage() {
           },
         },
         language,
-        { profile: "knowledge", surface: "knowledge", startMicPaused: true }
+        {
+          profile: "knowledge",
+          surface: "knowledge",
+          startMicPaused: true,
+          ...(pendingHandoff
+            ? {
+                continuation: {
+                  kind: "knowledge_question" as const,
+                  text: pendingHandoff.query,
+                  language: pendingHandoff.language || language,
+                },
+              }
+            : {}),
+        }
       );
       sessionRef.current = session;
     },
@@ -684,10 +732,10 @@ export function KnowledgeAgentPage() {
                       the narrative existed made a chart that was already in hand
                       look slow, and hid it entirely when Genie wrote no prose. */}
                   {!answerFailure && (hasAnswerDetail || localizationPending) && (
-                    <div className="kb-full-answer">
-                      <div className="kb-evidence-title">
+                    <details className="kb-full-answer">
+                      <summary className="kb-evidence-title">
                         {fullAnswer ? copy.kbFullAnswer : copy.kbResult}
-                      </div>
+                      </summary>
                       {hasAnswerDetail && (
                         <StructuredAnswer
                           markdown={fullAnswer}
@@ -698,7 +746,7 @@ export function KnowledgeAgentPage() {
                       {localizationPending && (
                         <p className="kb-answer-pending">{copy.kbTranslating}</p>
                       )}
-                    </div>
+                    </details>
                   )}
                   {answerEvidence.length > 0 && (
                     <div className="kb-evidence">

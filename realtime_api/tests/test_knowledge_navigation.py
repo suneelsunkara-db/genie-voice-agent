@@ -86,10 +86,10 @@ def test_multilingual_owned_measurements_map_to_workspace_capability():
     )
 
 
-def test_documentation_explanation_maps_to_docs_pack():
+def test_documentation_explanation_maps_to_genie_one():
     utterance = "What is Model Serving?"
     classifier = ScriptedClassifier(
-        {utterance: _decision(CapabilityId.KNOWLEDGE_DOCS)}
+        {utterance: _decision(CapabilityId.WORKSPACE_QUERY)}
     )
     decision = navigate_knowledge(
         utterance,
@@ -100,8 +100,8 @@ def test_documentation_explanation_maps_to_docs_pack():
         min_confidence=0.80,
     )
     route = route_for_navigation(decision, utterance=utterance, profile="knowledge")
-    assert route.adapter == "pack_facts"
-    assert route.frame is not None and route.frame.scope == "pack"
+    assert route.adapter == "genie_one_mcp"
+    assert route.frame is not None and route.frame.scope == "workspace"
 
 
 def test_open_workspace_conversation_is_policy_owned_without_model_call():
@@ -136,26 +136,35 @@ def test_workspace_proposal_without_obo_fails_closed():
     assert decision.reason == NavigationReason.PERMISSION_REQUIRED
 
 
-def test_low_confidence_or_malformed_proposal_clarifies():
+def test_low_confidence_genie_one_request_is_delegated_upstream():
     low = "Tell me about this"
-    malformed = "Something else"
     classifier = ScriptedClassifier(
-        {
-            low: _decision(CapabilityId.KNOWLEDGE_DOCS, confidence=0.51),
-            malformed: {"answer": "I think this is docs"},
-        }
+        {low: _decision(CapabilityId.WORKSPACE_QUERY, confidence=0.51)}
     )
-    for utterance in (low, malformed):
-        decision = navigate_knowledge(
-            utterance,
-            language="en-US",
-            classifier=classifier,
-            has_obo=True,
-            conversation_open=False,
-            min_confidence=0.80,
-        )
-        assert decision.capability_id == CapabilityId.CLARIFY
-        assert decision.ambiguous is True
+    decision = navigate_knowledge(
+        low,
+        language="en-US",
+        classifier=classifier,
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.80,
+    )
+    assert decision.capability_id == CapabilityId.WORKSPACE_QUERY
+
+
+def test_malformed_proposal_falls_back_to_genie_one_on_knowledge():
+    utterance = "Something else"
+    classifier = ScriptedClassifier({utterance: {"answer": "I think this is docs"}})
+    decision = navigate_knowledge(
+        utterance,
+        language="en-US",
+        classifier=classifier,
+        has_obo=True,
+        conversation_open=False,
+        min_confidence=0.80,
+    )
+    assert decision.capability_id == CapabilityId.WORKSPACE_QUERY
+    assert decision.reason == NavigationReason.POLICY_OVERRIDE
 
 
 class CaptureClient:
@@ -218,6 +227,17 @@ def test_serving_classifier_forces_one_structured_navigation_call():
         "function": {"name": "select_navigation_capability"},
     }
     assert client.inputs["tools"][0]["function"]["parameters"]["additionalProperties"] is False
+    required = client.inputs["tools"][0]["function"]["parameters"]["required"]
+    assert "request_state" in required
+    assert "clarification_focus" in required
+    system_prompt = client.inputs["messages"][0]["content"]
+    assert "do not require the caller to know discoverable workspace metadata" in system_prompt
+    assert "forecast horizon" not in system_prompt
+    spoken_reply = client.inputs["tools"][0]["function"]["parameters"]["properties"][
+        "spoken_reply"
+    ]
+    assert spoken_reply["maxLength"] == 500
+    assert "app.self_know" in spoken_reply["description"]
 
 
 def test_stateless_graph_sequences_semantic_route_and_has_no_checkpointer():

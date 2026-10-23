@@ -99,6 +99,15 @@ _SURFACES = {
 
 
 @dataclass(frozen=True)
+class SessionContinuation:
+    """One typed cross-surface request processed as the session's first turn."""
+
+    kind: Literal["knowledge_question"]
+    text: str
+    language: str
+
+
+@dataclass(frozen=True)
 class SessionStart:
     language: str
     sample_rate_hz: int
@@ -138,6 +147,7 @@ class SessionStart:
     # App-wide voice selected on the Home page. This is an allowlisted key, never
     # a client-provided path: the server alone maps it to a committed WAV asset.
     voice_variant: Literal["female", "male"] = "female"
+    continuation: SessionContinuation | None = None
 
     @classmethod
     def from_event(cls, payload: dict) -> "SessionStart":
@@ -193,6 +203,11 @@ class SessionStart:
             raise ValueError(
                 f"voice_variant must be one of: {', '.join(VOICE_VARIANTS)}"
             )
+        continuation = _optional_continuation(
+            payload.get("continuation"),
+            profile=profile,
+            selected_language=selected_language,
+        )
         return cls(
             language=language,
             sample_rate_hz=sample_rate_hz,
@@ -210,7 +225,43 @@ class SessionStart:
             surface=surface,
             space_name=space_name,
             voice_variant=voice_variant,  # type: ignore[arg-type]
+            continuation=continuation,
         )
+
+
+def _optional_continuation(
+    value: object,
+    *,
+    profile: str | None,
+    selected_language: str | None,
+) -> SessionContinuation | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("continuation must be an object")
+    if set(value) - {"kind", "text", "language"}:
+        raise ValueError("continuation contains unsupported fields")
+    if value.get("kind") != "knowledge_question":
+        raise ValueError("continuation kind must be 'knowledge_question'")
+    if profile != "knowledge":
+        raise ValueError("knowledge_question continuation requires profile 'knowledge'")
+    text = str(value.get("text") or "").strip()
+    if not text:
+        raise ValueError("continuation text is required")
+    if len(text) > _MAX_CONTEXT_CHARS:
+        raise ValueError(
+            f"continuation text must be at most {_MAX_CONTEXT_CHARS} characters"
+        )
+    language = _optional_language_tag(value.get("language"))
+    if language is None:
+        raise ValueError("continuation language is required")
+    if selected_language is not None and language != selected_language:
+        raise ValueError("continuation language must match the selected session language")
+    return SessionContinuation(
+        kind="knowledge_question",
+        text=text,
+        language=language,
+    )
 
 
 def _optional_positive_int(value: object, field: str) -> int | None:

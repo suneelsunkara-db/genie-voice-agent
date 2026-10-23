@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+from html import escape
 import json
+import logging
+import re
 import time
 from typing import Any, Callable
 
 from .identity import SessionPrincipal, require_obo_token
+
+logger = logging.getLogger("realtime_voice")
 
 WORKSPACE_QUERY_SPEC: dict[str, Any] = {
     "type": "function",
@@ -26,6 +31,54 @@ _MAX_RESULT_ROWS = 200
 
 # Statuses that mean Genie is done with this response, one way or another.
 TERMINAL_STATUSES = frozenset({"completed", "failed", "incomplete", "cancelled"})
+GENIE_ONE_MCP_PATH = "/ai-gateway/mcp-services/system.ai.genie_one_mcp"
+_SOURCE_INTEGRITY_POLICY = """\
+Use governed evidence for the entity and scope named in the caller request.
+Never silently substitute another customer, account, workspace, entity, or dataset.
+If the requested entity or required source cannot be resolved, ask one concise
+clarifying question or state which source is unavailable. Use proxy data only
+after the caller explicitly approves that substitution. Answer in the language
+of the caller request."""
+
+_SECRET_PATTERN = re.compile(
+    r"(?i)(authorization\s*[:=]\s*bearer\s+|bearer\s+)[^\s,;]+"
+)
+
+
+def technical_exception_detail(exc: BaseException) -> str:
+    """Flatten transport exception groups into a bounded, secret-safe diagnostic."""
+    leaves: list[str] = []
+
+    def visit(item: BaseException) -> None:
+        nested = getattr(item, "exceptions", None)
+        if isinstance(nested, (list, tuple)) and nested:
+            for child in nested:
+                if isinstance(child, BaseException):
+                    visit(child)
+            return
+        response = getattr(item, "response", None)
+        status = getattr(response, "status_code", None) or getattr(
+            item, "status_code", None
+        )
+        prefix = f"HTTP {status} " if status else ""
+        message = _SECRET_PATTERN.sub(r"\1[REDACTED]", str(item)).strip()
+        leaves.append(f"{prefix}{type(item).__name__}: {message or '(no message)'}")
+
+    visit(exc)
+    detail = "; ".join(leaves) or f"{type(exc).__name__}: (no message)"
+    return detail[:2000]
+
+
+def governed_question(question: str) -> str:
+    """Attach stable execution policy without rewriting the caller's request."""
+    return (
+        "<application_execution_policy>\n"
+        f"{_SOURCE_INTEGRITY_POLICY}\n"
+        "</application_execution_policy>\n"
+        "<caller_request>\n"
+        f"{escape(question, quote=False)}\n"
+        "</caller_request>"
+    )
 
 _MAX_PROGRESS_STEPS = 12
 # Genie reports progress as free-form steps whose field names are not part of any
@@ -297,7 +350,10 @@ async def _query(
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
-    url = f"{host.rstrip('/')}/api/2.0/mcp/genie"
+    # The previous /api/2.0/mcp/genie Beta endpoint is retired in October 2026.
+    # Genie One is now a governed managed MCP behind Unity Gateway and requires
+    # the caller's ``ai-gateway`` OBO scope.
+    url = f"{host.rstrip('/')}{GENIE_ONE_MCP_PATH}"
     # OBO travels on the HTTP client, which is where this transport takes auth.
     # Passing headers to streamable_http_client instead raises a TypeError that the
     # caller can only report as a generic failure, so keep the two in one place.
@@ -313,7 +369,7 @@ async def _query(
             # "Unity Catalog") mean anything: Genie resolves it against what it just
             # said. Omitting the id starts a fresh conversation with no memory of the
             # clarifying question it asked.
-            ask_args: dict[str, Any] = {"question": question}
+            ask_args: dict[str, Any] = {"question": governed_question(question)}
             if conversation_id:
                 ask_args["conversation_id"] = conversation_id
             started = _payload(await client.call_tool("genie_ask", ask_args))
@@ -417,8 +473,20 @@ def run_workspace_query(
                 on_progress=on_progress,
             )
         )
+        result = dict(result)
+        # Preserve the exact caller request beside the governed response so the
+        # presentation planner can title and select a view without reconstructing
+        # intent from SQL or prose.
+        result["request"] = question
         return json.dumps(result, default=str)
     except Exception as exc:  # noqa: BLE001
+        technical_error = technical_exception_detail(exc)
+        logger.exception("Genie One MCP request failed: %s", technical_error)
         return json.dumps(
-            {"error": f"Genie One failed: {exc}", "conversation_id": conversation_id}
+            {
+                "error": "Genie One is temporarily unavailable.",
+                "error_code": "genie_one_transport_failed",
+                "technical_error": technical_error,
+                "conversation_id": conversation_id,
+            }
         )

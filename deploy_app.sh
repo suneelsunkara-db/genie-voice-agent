@@ -33,7 +33,7 @@
 # Auth:   uses your Databricks CLI profile (U2M) to DEPLOY; the running app uses
 #         its own service principal for hosting / serving. Genie workspace Q&A
 #         prefers the viewer's OBO token (x-forwarded-access-token) when Apps
-#         user authorization is enabled with genie (+ sql) scopes — see app.yaml
+#         user authorization is enabled with ai-gateway + genie + sql scopes — see app.yaml
 #         and README "User authorization (OBO)".
 # =============================================================================
 set -euo pipefail
@@ -650,7 +650,7 @@ print(json.dumps({
     "resources": res,
     # app.yaml requests these at runtime; the Apps control plane must also grant
     # them explicitly or x-forwarded-access-token contains only default IAM scopes.
-    "user_api_scopes": ["genie", "sql"],
+    "user_api_scopes": ["ai-gateway", "genie", "sql"],
 }))
 PY
 
@@ -763,7 +763,7 @@ printf '%s' "$APP_STATE" | "$PYBIN" -c '
 import json, sys
 d = json.load(sys.stdin)
 effective = set(d.get("effective_user_api_scopes") or [])
-missing = {"genie", "sql"} - effective
+missing = {"ai-gateway", "genie", "sql"} - effective
 if missing:
     print(
         "[app-deploy] WARNING: deployed app is missing effective OBO scopes: "
@@ -830,16 +830,17 @@ except (urllib.error.URLError, UnicodeDecodeError) as exc:
 print("[app-deploy] smoke ok: /story/")
 PY
 
-# Final readiness snapshot from the DEPLOYED app: one source of truth shared with
-# the in-app Setup page. Prints the same checklist so the operator sees exactly
-# which UI-only steps (CDF start, Gateway policy attach, User Authorization) remain.
-log "checking deployment readiness (GET /readiness)"
+# Final readiness gate from the DEPLOYED app: one source of truth shared with the
+# in-app Setup page. The full probes include viewer-scoped Genie One, Genie Space,
+# and Agent Mode calls; a shallow infrastructure-only snapshot can otherwise
+# declare the app ready while its primary conversational path is unusable.
+log "checking full deployment readiness (GET /readiness?full=true)"
 APP_URL="$APP_URL" APP_TOKEN="$(dbx auth token -o json | "$PYBIN" -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')" \
-  "$PYBIN" - <<'PY' || warn "readiness endpoint not reachable yet; open the Setup page in the app to check."
+  "$PYBIN" - <<'PY'
 import json, os, urllib.request
 
 base = os.environ["APP_URL"].rstrip("/")
-req = urllib.request.Request(base + "/readiness?full=false", headers={"Authorization": f"Bearer {os.environ['APP_TOKEN']}"})
+req = urllib.request.Request(base + "/readiness?full=true", headers={"Authorization": f"Bearer {os.environ['APP_TOKEN']}"})
 with urllib.request.urlopen(req, timeout=60) as resp:
     data = json.load(resp)
 mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}
@@ -848,6 +849,8 @@ for c in data.get("checks", []):
 s = data.get("summary", {})
 print(f"[app-deploy] readiness: {s.get('ok',0)} ok / {s.get('warn',0)} warn / {s.get('fail',0)} fail"
       + ("  -> READY TO USE" if data.get("ready") else "  -> finish the WARN/FAIL items above, then re-check on the Setup page"))
+if not data.get("ready"):
+    raise SystemExit("deployed app failed the full readiness gate")
 PY
 
 log "------------------------------------------------------------------"

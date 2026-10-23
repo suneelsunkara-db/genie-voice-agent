@@ -186,6 +186,9 @@ _PLACEHOLDER_RE = re.compile(r"\[\[FACT_(\d+)]]")
 _FACT_ATOM_RE = re.compile(
     r"(?<![A-Za-z0-9_])"
     r"(?:[$€£¥₹₩₽]\s*)?[+-]?\d(?:[\d\s,.'’٬٫:/-]*\d)?"
+    r"(?:\s*[KMB](?:illion)?)?"
+    r"(?:\s*[–—-]\s*[+-]?\d(?:[\d\s,.'’٬٫:/-]*\d)?"
+    r"(?:\s*[KMB](?:illion)?)?)?"
     r"(?:\s*(?:%|USD|EUR|GBP|JPY|INR|SGD|DBU(?:s)?|ms|s|min|hours?))?"
     r"(?![A-Za-z0-9_])"
     r"|(?<![\w-])(?=[A-Za-z][A-Za-z0-9_.:/-]*\d)"

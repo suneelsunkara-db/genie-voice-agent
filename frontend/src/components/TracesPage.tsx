@@ -406,6 +406,15 @@ function TraceDetailView({ trace }: { trace: TraceDetail }) {
           <div className="tv-meta-label">Call / Customer</div>
           <div className="tv-meta-value">{trace.call_id || "—"} · {trace.customer_id || "—"}</div>
         </div>
+        <div className="tv-meta">
+          <div className="tv-meta-label">Signed-in user</div>
+          <div className="tv-meta-value">
+            {trace.actor_display_name || trace.actor_username || trace.actor_email || "—"}
+            {trace.actor_email && (
+              <span className="tv-meta-hint">{trace.actor_email}</span>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="tv-meta" style={{ marginBottom: 12 }}>
@@ -489,6 +498,8 @@ function GuardrailStrip({ roster }: { roster?: GuardEntry[] | null }) {
 interface SessionGroup {
   sessionId: string;
   callId?: string | null;
+  actorEmail?: string | null;
+  actorName?: string | null;
   turns: TraceSummary[];
   applied: boolean;
   lookupTotal: number;
@@ -508,6 +519,7 @@ export function TracesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(traceIdFromHash);
   const [detail, setDetail] = useState<TraceDetail | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [actorFilter, setActorFilter] = useState("all");
 
   const load = () => {
     setLoading(true);
@@ -538,11 +550,27 @@ export function TracesPage() {
     };
   }, [selectedId]);
 
+  const actors = useMemo(() => {
+    const values = new Map<string, string>();
+    for (const trace of traces) {
+      if (!trace.actor_email) continue;
+      values.set(
+        trace.actor_email,
+        trace.actor_display_name || trace.actor_username || trace.actor_email
+      );
+    }
+    return Array.from(values, ([email, name]) => ({ email, name })).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [traces]);
+
   const filtered = useMemo(() => {
-    if (statusFilter === "all") return traces;
-    if (statusFilter === "ok") return traces.filter((t) => (t.status || "ok") === "ok");
-    return traces.filter((t) => (t.status || "ok") !== "ok");
-  }, [traces, statusFilter]);
+    let rows = traces;
+    if (statusFilter === "ok") rows = rows.filter((t) => (t.status || "ok") === "ok");
+    if (statusFilter === "issues") rows = rows.filter((t) => (t.status || "ok") !== "ok");
+    if (actorFilter !== "all") rows = rows.filter((t) => t.actor_email === actorFilter);
+    return rows;
+  }, [traces, statusFilter, actorFilter]);
 
   const sessions = useMemo<SessionGroup[]>(() => {
     const map = new Map<string, SessionGroup>();
@@ -554,6 +582,8 @@ export function TracesPage() {
           .set(sid, {
             sessionId: sid,
             callId: t.call_id,
+            actorEmail: t.actor_email,
+            actorName: t.actor_display_name || t.actor_username,
             turns: [],
             applied: false,
             lookupTotal: 0,
@@ -597,6 +627,19 @@ export function TracesPage() {
         )}
         <div className="tv-header-spacer" />
         <div className="tv-filters">
+          <select
+            className="tv-actor-select"
+            value={actorFilter}
+            onChange={(event) => setActorFilter(event.target.value)}
+            aria-label="Filter traces by signed-in user"
+          >
+            <option value="all">all users</option>
+            {actors.map((actor) => (
+              <option key={actor.email} value={actor.email}>
+                {actor.name} · {actor.email}
+              </option>
+            ))}
+          </select>
           {(["all", "ok", "issues"] as StatusFilter[]).map((f) => (
             <button
               key={f}
@@ -632,6 +675,11 @@ export function TracesPage() {
               <div className="tv-session-head">
                 <span className="tv-session-id">◈ {shortId(g.sessionId)}</span>
                 <div className="tv-session-meta">
+                  {(g.actorName || g.actorEmail) && (
+                    <span className="tv-badge" title={g.actorEmail || undefined}>
+                      {g.actorName || g.actorEmail}
+                    </span>
+                  )}
                   {g.languages.map((l) => (
                     <span key={l} className="tv-badge">{l}</span>
                   ))}

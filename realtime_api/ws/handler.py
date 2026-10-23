@@ -15,7 +15,7 @@ from ..capabilities import (
     TEXT_TO_SPEECH,
 )
 from ..config import RealtimeSettings
-from ..contracts import SessionStart
+from ..contracts import LANGUAGE_TAG_RE, SessionStart
 from ..endpointing import EndpointModels, endpointer_for
 from ..observability import log_event, new_session_id
 from ..pipelines import ServingBundle
@@ -35,6 +35,7 @@ class RouteSpec:
     capability: CapabilityMode
     path: str
     accepts_audio: bool
+    accepts_text: bool
     accepts_synthesize: bool
     supports_barge_in: bool
 
@@ -44,6 +45,7 @@ ROUTES: tuple[RouteSpec, ...] = (
         capability=SPEECH_TO_TEXT,
         path="/v1/speech-to-text",
         accepts_audio=True,
+        accepts_text=False,
         accepts_synthesize=False,
         supports_barge_in=False,
     ),
@@ -51,6 +53,7 @@ ROUTES: tuple[RouteSpec, ...] = (
         capability=SPEECH_LLM_TOOLASSIST_SPEECH,
         path="/v1/speech-llm-toolassist-speech",
         accepts_audio=True,
+        accepts_text=True,
         # Also accept `synthesize`: agent-initiated flows (e.g. the card assistant's
         # opening greeting and its deep-dive spoken summary) speak text WITHOUT a
         # preceding STT turn. Routing them through THIS session — instead of a
@@ -64,6 +67,7 @@ ROUTES: tuple[RouteSpec, ...] = (
         capability=TEXT_TO_SPEECH,
         path="/v1/text-to-speech",
         accepts_audio=False,
+        accepts_text=False,
         accepts_synthesize=True,
         supports_barge_in=False,
     ),
@@ -103,7 +107,7 @@ def capabilities_payload(settings: RealtimeSettings) -> dict:
         SPEECH_LLM_TOOLASSIST_SPEECH: {
             "path": "/v1/speech-llm-toolassist-speech",
             "transport": "websocket",
-            "input": ["audio"],
+            "input": ["audio", "input.text"],
             "output": ["transcript.final", "response.text", "response.audio"],
             "languages": conversation_langs,
         },
@@ -205,6 +209,13 @@ async def handle_voice_ws(
                             turn_id=session.turn_id + 1,
                             reason="no_speech",
                             audio_ms=round(session.turn_audio_ms),
+                            voiced_ms=round(session.voiced_ms),
+                            last_rms=round(session.last_rms, 1),
+                            peak_rms=round(session.peak_rms, 1),
+                            max_speech_probability=round(
+                                session.endpointer.max_speech_probability, 4
+                            ),
+                            sample_rate_hz=session.config.sample_rate_hz,
                         )
                         session.discard_buffer()
                         continue
@@ -263,9 +274,13 @@ async def handle_voice_ws(
                     session.voice_id = voice_seed.voice_id
                 # Bind OBO principal from Apps forwarded access token (or local
                 # GENIE_OBO_LOCAL_TOKEN stand-in). Genie paths fail closed without it.
-                from ..runtime.identity import resolve_session_principal
+                from ..runtime.identity import enrich_principal_identity, resolve_session_principal
 
                 session.principal = resolve_session_principal(websocket.headers)
+                if session.principal.has_token:
+                    session.principal = await asyncio.to_thread(
+                        enrich_principal_identity, session.principal
+                    )
                 # Who supplies conversational continuity for governed workspace
                 # turns. Once Genie One's own memory/recall does, this runtime stops
                 # carrying a conversation handle (see runtime.workspace_conversation).
@@ -328,6 +343,77 @@ async def handle_voice_ws(
                     asyncio.ensure_future(
                         assist_pipeline.warm_filler(bundle, session.config.language)
                     )
+                if start.continuation is not None:
+                    if not spec.accepts_text:
+                        await _send_error(
+                            websocket,
+                            "unsupported_event",
+                            f"{spec.capability} does not accept session continuation",
+                        )
+                        await websocket.close(code=1008)
+                        return
+                    task = await _start_text_turn(
+                        websocket,
+                        bundle,
+                        session,
+                        task,
+                        session_id,
+                        spec,
+                        start.continuation.text,
+                        start.continuation.language,
+                    )
+            elif event_type == "input.text":
+                if not spec.accepts_text:
+                    await _send_error(
+                        websocket,
+                        "unsupported_event",
+                        f"{spec.capability} does not accept text input",
+                    )
+                    continue
+                if session is None:
+                    await _send_error(
+                        websocket, "session_not_started", "Send session.start before input.text."
+                    )
+                    continue
+                text = str(payload.get("text") or "").strip()
+                if not text:
+                    await _send_error(websocket, "invalid_event", "input.text text is required")
+                    continue
+                if len(text) > 8_000:
+                    await _send_error(
+                        websocket, "invalid_event", "input.text exceeds 8000 characters"
+                    )
+                    continue
+                input_language = str(payload.get("language") or "").strip()
+                if input_language and not LANGUAGE_TAG_RE.fullmatch(input_language):
+                    await _send_error(
+                        websocket,
+                        "invalid_event",
+                        "input.text language must be a BCP 47 tag",
+                    )
+                    continue
+                if session.config.language_mode == "auto" and not input_language:
+                    await _send_error(
+                        websocket,
+                        "invalid_event",
+                        "input.text language is required for an auto-language session",
+                    )
+                    continue
+                if session.busy:
+                    await _send_error(
+                        websocket, "turn_in_progress", "Wait for the active turn to finish."
+                    )
+                    continue
+                task = await _start_text_turn(
+                    websocket,
+                    bundle,
+                    session,
+                    task,
+                    session_id,
+                    spec,
+                    text,
+                    input_language,
+                )
             elif event_type == "audio.end":
                 if not spec.accepts_audio:
                     continue
@@ -540,6 +626,46 @@ async def _start_audio_turn(
     await websocket.send_json({"type": "turn.started", "turn_id": turn_id})
     return asyncio.create_task(
         _emit_audio_turn(websocket, bundle, session, turn_id, audio, session_id, spec)
+    )
+
+
+async def _start_text_turn(
+    websocket: WebSocket,
+    bundle: ServingBundle,
+    session: VoiceSession,
+    previous_task: asyncio.Task | None,
+    session_id: str,
+    spec: RouteSpec,
+    text: str,
+    language: str,
+) -> asyncio.Task:
+    """Start a user-authored text turn through the same guarded agent pipeline."""
+    if previous_task and not previous_task.done():
+        previous_task.cancel()
+    session.turn_id += 1
+    turn_id = session.turn_id
+    session.set_working()
+    from ..runtime import SpeechScheduler, TurnState
+
+    session.active_turn = TurnState(turn_id=turn_id)
+    resolved_language = (
+        session.config.selected_language
+        or (language if language else None)
+        or (session.config.language if session.config.language != "auto" else None)
+    )
+    session.active_turn.meta["pretranscribed"] = (text, resolved_language, 0)
+    session.active_turn.meta["input_transport"] = "text"
+    session.speech_scheduler = SpeechScheduler()
+    log_event(
+        "turn.started",
+        session_id=session_id,
+        turn_id=turn_id,
+        capability=spec.capability,
+        input_transport="text",
+    )
+    await websocket.send_json({"type": "turn.started", "turn_id": turn_id})
+    return asyncio.create_task(
+        _emit_audio_turn(websocket, bundle, session, turn_id, b"", session_id, spec)
     )
 
 

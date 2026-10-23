@@ -19,9 +19,19 @@ router = APIRouter(prefix="/traces", tags=["traces"])
 
 
 @router.get("")
-def list_traces(limit: int = 100, session_id: str | None = None, call_id: str | None = None) -> dict:
+def list_traces(
+    limit: int = 100,
+    session_id: str | None = None,
+    call_id: str | None = None,
+    actor_email: str | None = None,
+) -> dict:
     limit = max(1, min(int(limit), 500))
-    rows = serving().list_voice_traces(limit=limit, session_id=session_id, call_id=call_id)
+    rows = serving().list_voice_traces(
+        limit=limit,
+        session_id=session_id,
+        call_id=call_id,
+        actor_email=actor_email,
+    )
     return {"traces": rows, "count": len(rows)}
 
 
@@ -44,6 +54,9 @@ def list_sessions(limit: int = 200) -> dict:
                 "session_id": sid,
                 "call_id": row.get("call_id"),
                 "customer_id": row.get("customer_id"),
+                "actor_email": row.get("actor_email"),
+                "actor_username": row.get("actor_username"),
+                "actor_display_name": row.get("actor_display_name"),
                 "turns": 0,
                 "languages": set(),
                 "apply_billing_action_called": False,

@@ -276,6 +276,15 @@
   padding-top: 14px;
   border-top: 1px solid rgba(150, 160, 200, 0.14);
 }
+.kb-full-answer > summary,
+.kb-analysis-evidence > summary {
+  cursor: pointer;
+  list-style-position: outside;
+}
+.kb-full-answer[open] > summary,
+.kb-analysis-evidence[open] > summary {
+  margin-bottom: 14px;
+}
 .kb-full-answer > p:not(.kb-answer-pending) {
   margin: 0;
   font-size: 13px;
@@ -373,6 +382,26 @@
 .kb-analysis-chart {
   width: 100%;
   margin: 4px 0 14px;
+}
+.kb-analysis-chart-title {
+  margin: 0 0 4px 58px;
+  color: var(--kb-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.kb-analysis-evidence {
+  border-top: 1px solid rgba(150, 160, 200, 0.14);
+  padding-top: 12px;
+}
+.kb-analysis-evidence > summary {
+  color: var(--kb-muted);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.kb-analysis-evidence .kb-analysis + .kb-analysis {
+  margin-top: 14px;
 }
 .kb-kpis {
   display: grid;

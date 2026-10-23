@@ -378,9 +378,10 @@ class DatabricksServing:
     ) -> dict[str, Any]:
         """Classify one utterance onto a language-neutral capability contract.
 
-        This is not a conversational agent and cannot answer the caller.  A forced
-        function call gives the policy layer a strict object to validate; malformed
-        or absent calls fail closed rather than falling back to keyword routing.
+        A forced function call gives the policy layer a strict object to validate;
+        malformed or absent calls fail closed rather than falling back to keyword
+        routing. The only permitted response is a short, tool-free app-conversation
+        reply attached to ``app.self_know``; policy discards it on every other route.
         """
         capability_ids = [
             str(item.get("id") or "")
@@ -421,6 +422,47 @@ class DatabricksServing:
                             "type": "string",
                             "enum": ["fact", "investigate"],
                         },
+                        "request_state": {
+                            "type": "string",
+                            "enum": ["complete", "incomplete", "ambiguous", "unsupported"],
+                            "description": (
+                                "Whether the caller expressed a complete request, an "
+                                "incomplete thought, an ambiguous request, or a truly "
+                                "unsupported request. Judge this separately from routing."
+                            ),
+                        },
+                        "clarification_focus": {
+                            "type": "string",
+                            "enum": [
+                                "none",
+                                "outcome",
+                                "data_scope",
+                                "destination",
+                                "missing_details",
+                            ],
+                            "description": (
+                                "What one follow-up should clarify. Use outcome or "
+                                "data_scope for a substantive but incomplete question; "
+                                "destination only for an app-experience choice."
+                            ),
+                        },
+                        "candidate_capability_id": {
+                            "type": "string",
+                            "enum": capability_ids,
+                            "description": (
+                                "The most likely capability when clarification is needed. "
+                                "Omit only when there is no meaningful candidate."
+                            ),
+                        },
+                        "spoken_reply": {
+                            "type": "string",
+                            "maxLength": 500,
+                            "description": (
+                                "Only for app.self_know: one short natural reply in the "
+                                "turn language that directly handles tool-free app "
+                                "conversation. Omit for every other capability."
+                            ),
+                        },
                     },
                     "required": [
                         "capability_id",
@@ -428,6 +470,8 @@ class DatabricksServing:
                         "ambiguous",
                         "confirmed",
                         "depth",
+                        "request_state",
+                        "clarification_focus",
                     ],
                     "additionalProperties": False,
                 },
@@ -439,8 +483,23 @@ class DatabricksServing:
             "word overlap. Distinguish choosing an offered destination or topic from "
             "asking it a question; distinguish a concrete fact from an investigation, "
             "an analysis, and an account-changing action. Preserve the meaning and "
-            "conversational force of the original language. If more than one capability "
-            "fits, choose system.clarify with ambiguous=true. Never answer the caller. "
+            "conversational force of the original language. Classify conversational "
+            "completeness separately from capability: an incomplete declarative thought "
+            "is recoverable, not unsupported. If clarification is needed, identify the "
+            "most likely candidate capability and whether the missing information is the "
+            "caller's desired outcome, data scope, destination, or concrete detail. For a "
+            "governed conversational capability, do not require the caller to know "
+            "discoverable workspace metadata such as schemas, available tables, columns, "
+            "data freshness, or historical coverage. That upstream conversation can "
+            "discover data and ask its own grounded follow-up while retaining context. For a "
+            "substantive question or thought, prefer outcome/data_scope over asking which "
+            "app experience to open; destination applies only when the caller is choosing "
+            "among experiences. If more than one capability fits, choose system.clarify "
+            "with ambiguous=true. Only when capability_id is app.self_know, include "
+            "spoken_reply as one short natural response in the turn language; for a "
+            "permission-to-speak preamble, simply invite the caller to continue. Never "
+            "include spoken_reply for any other capability and never answer workspace, "
+            "account, billing, or domain questions from memory. "
             "Return exactly one select_navigation_capability function call.\n\n"
             f"Turn language: {language}\n"
             f"Allowed capabilities: {json.dumps(capabilities, ensure_ascii=False)}"

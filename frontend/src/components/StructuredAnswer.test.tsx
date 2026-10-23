@@ -21,6 +21,11 @@ const spending: AnalysisResult = {
   ],
   totalRowCount: 3,
   truncated: false,
+  view: {
+    kind: "bar",
+    dimension: "category",
+    measures: ["total_spend_sgd"],
+  },
 };
 
 describe("StructuredAnswer data modeling", () => {
@@ -31,13 +36,11 @@ describe("StructuredAnswer data modeling", () => {
     expect(model?.data[0]).toEqual({ category: "Shopping", total_spend_sgd: 73998.64 });
   });
 
-  it("charts only measures that can share one axis", () => {
-    // Spend is ~250x the transaction count. Plotting both scales the axis to spend
-    // and flattens the count onto the baseline, which reads as a broken chart.
+  it("charts only the measures named by a governed view", () => {
     expect(chartModel(spending)?.measures.map((m) => m.name)).toEqual(["total_spend_sgd"]);
   });
 
-  it("keeps several measures when they are of comparable size", () => {
+  it("supports several measures when the governed view selects them", () => {
     const model = chartModel({
       ...spending,
       columns: [
@@ -49,6 +52,11 @@ describe("StructuredAnswer data modeling", () => {
         ["Shopping", "410", "380"],
         ["Dining", "260", "300"],
       ],
+      view: {
+        kind: "bar",
+        dimension: "category",
+        measures: ["this_cycle", "last_cycle"],
+      },
     });
     expect(model?.measures.map((m) => m.name)).toEqual(["this_cycle", "last_cycle"]);
   });
@@ -61,12 +69,57 @@ describe("StructuredAnswer data modeling", () => {
         { name: "revenue", typeText: "DOUBLE" },
       ],
       rows: [["2026-01", 10], ["2026-02", 12]],
+      view: {
+        kind: "line",
+        dimension: "month",
+        measures: ["revenue"],
+      },
     });
     expect(model?.kind).toBe("line");
   });
 
   it("does not chart a one-row KPI result", () => {
     expect(chartModel({ ...spending, rows: [["Shopping", 73998, 295]] })).toBeNull();
+  });
+
+  it("does not guess a chart for a two-dimension scenario matrix", () => {
+    expect(chartModel({
+      ...spending,
+      columns: [
+        { name: "resource", typeText: "STRING" },
+        { name: "scenario", typeText: "STRING" },
+        { name: "monthly_value", typeText: "DOUBLE" },
+        { name: "total_value", typeText: "DOUBLE" },
+      ],
+      rows: [
+        ["CPU", "Base", 100, 1200],
+        ["CPU", "High", 180, 1800],
+        ["GPU", "Base", 10, 120],
+      ],
+      view: undefined,
+    })).toBeNull();
+  });
+
+  it("does not guess a chart for a wide mixed-unit time result", () => {
+    expect(chartModel({
+      ...spending,
+      columns: [
+        { name: "month", typeText: "TIMESTAMP" },
+        { name: "cpu_dbu", typeText: "DOUBLE" },
+        { name: "gpu_dbu", typeText: "DOUBLE" },
+        { name: "gpu_workspaces", typeText: "BIGINT" },
+        { name: "cpu_workspaces", typeText: "BIGINT" },
+      ],
+      rows: [
+        ["2026-01-01", 1000000, 100, 2, 40],
+        ["2026-02-01", 1200000, 150, 3, 45],
+      ],
+      view: undefined,
+    })).toBeNull();
+  });
+
+  it("renders a typed dataset as a table when no governed view exists", () => {
+    expect(chartModel({ ...spending, view: undefined })).toBeNull();
   });
 
   it("hides the lookup Genie ran on the way to the answer", () => {
@@ -109,5 +162,22 @@ describe("StructuredAnswer data modeling", () => {
 
     expect(withoutEmbeddedQueryMarkdown(markdown, true)).toBe("# Result\n\nTakeaway.");
     expect(withoutEmbeddedQueryMarkdown(markdown, false)).toBe(markdown);
+  });
+
+  it("removes an unmarked markdown table when the same typed rows exist", () => {
+    const markdown = [
+      "## Forecast scenarios",
+      "",
+      "| resource | scenario | total |",
+      "| --- | --- | --- |",
+      "| CPU | Base | 1200 |",
+      "| GPU | Base | 120 |",
+      "",
+      "The base case is directional.",
+    ].join("\n");
+
+    expect(withoutEmbeddedQueryMarkdown(markdown, true)).toBe(
+      "## Forecast scenarios\n\nThe base case is directional."
+    );
   });
 });

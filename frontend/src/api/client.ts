@@ -363,7 +363,7 @@ export interface ASRBenchmarkOverviewResponse {
 }
 
 // ---- Voice observability / eval traces ------------------------------------ //
-export type TraceSpanKind = "STT" | "LLM" | "TOOL" | "TTS" | "GUARD";
+export type TraceSpanKind = "INPUT" | "STT" | "LLM" | "TOOL" | "TTS" | "GUARD";
 
 export interface TraceSpan {
   name: string;
@@ -383,6 +383,9 @@ export interface TraceSummary {
   turn_id?: number;
   call_id?: string | null;
   customer_id?: string | null;
+  actor_email?: string | null;
+  actor_username?: string | null;
+  actor_display_name?: string | null;
   capability?: string;
   profile?: string | null;
   surface?: string | null;
@@ -679,6 +682,9 @@ export interface TraceSessionRollup {
   session_id: string;
   call_id?: string | null;
   customer_id?: string | null;
+  actor_email?: string | null;
+  actor_username?: string | null;
+  actor_display_name?: string | null;
   turns: number;
   languages: string[];
   apply_billing_action_called: boolean;
@@ -967,11 +973,17 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
-  voiceTraces: (opts?: { limit?: number; sessionId?: string; callId?: string }) => {
+  voiceTraces: (opts?: {
+    limit?: number;
+    sessionId?: string;
+    callId?: string;
+    actorEmail?: string;
+  }) => {
     const params = new URLSearchParams();
     if (opts?.limit) params.set("limit", String(opts.limit));
     if (opts?.sessionId) params.set("session_id", opts.sessionId);
     if (opts?.callId) params.set("call_id", opts.callId);
+    if (opts?.actorEmail) params.set("actor_email", opts.actorEmail);
     const query = params.toString();
     return getJSON<{ traces: TraceSummary[]; count: number }>(`/traces${query ? `?${query}` : ""}`);
   },

@@ -79,6 +79,9 @@ def ensure_voice_traces_table(settings: Settings | None = None) -> None:
             turn_id                     INT,
             call_id                     STRING,
             customer_id                 STRING,
+            actor_email                 STRING,
+            actor_username              STRING,
+            actor_display_name          STRING,
             capability                  STRING,
             language                    STRING,
             detected_language           STRING,
@@ -113,7 +116,10 @@ def ensure_voice_traces_table(settings: Settings | None = None) -> None:
             tts_first_ms   DOUBLE COMMENT 'TTS-local time to the answer first chunk',
             server_ttfb_ms DOUBLE COMMENT 'TTS endpoint time to its own first chunk',
             server_gen_ms  DOUBLE COMMENT 'TTS endpoint full synthesis time',
-            guard_roster   STRING COMMENT 'JSON array: every guardrail check on the turn, incl. passed/delegated'
+            guard_roster   STRING COMMENT 'JSON array: every guardrail check on the turn, incl. passed/delegated',
+            actor_email        STRING COMMENT 'Signed-in Databricks user email',
+            actor_username     STRING COMMENT 'Signed-in Databricks preferred username',
+            actor_display_name STRING COMMENT 'Authoritative display name from current_user.me'
         )
         """,
     )
@@ -131,13 +137,15 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
     tbl = settings.fqtn("voice_traces")
     stmt = f"""
         INSERT INTO {tbl} (
-          trace_id, session_id, turn_id, call_id, customer_id, capability,
+          trace_id, session_id, turn_id, call_id, customer_id,
+          actor_email, actor_username, actor_display_name, capability,
           language, detected_language, status, input_transcript, output_text,
           tool_names, apply_billing_action_called, lookup_account_count,
           llm_iterations, ttft_ms, answer_ttft_ms, tts_first_ms, server_ttfb_ms,
           server_gen_ms, total_ms, guard_roster, trace, created_at
         ) VALUES (
-          :trace_id, :session_id, CAST(:turn_id AS INT), :call_id, :customer_id, :capability,
+          :trace_id, :session_id, CAST(:turn_id AS INT), :call_id, :customer_id,
+          :actor_email, :actor_username, :actor_display_name, :capability,
           :language, :detected_language, :status, :input_transcript, :output_text,
           :tool_names, CAST(:apply_billing_action_called AS BOOLEAN), CAST(:lookup_account_count AS INT),
           CAST(:llm_iterations AS INT), CAST(:ttft_ms AS DOUBLE),
@@ -153,6 +161,9 @@ def insert_voice_trace_uc(settings: Settings, trace: dict[str, Any]) -> dict[str
             "turn_id": str(int(trace.get("turn_id") or 0)),
             "call_id": str(trace.get("call_id") or ""),
             "customer_id": str(trace.get("customer_id") or ""),
+            "actor_email": str(trace.get("actor_email") or ""),
+            "actor_username": str(trace.get("actor_username") or ""),
+            "actor_display_name": str(trace.get("actor_display_name") or ""),
             "capability": str(trace.get("capability") or ""),
             "language": str(trace.get("language") or ""),
             "detected_language": str(trace.get("detected_language") or ""),

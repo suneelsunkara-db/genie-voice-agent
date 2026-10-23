@@ -156,6 +156,20 @@ def test_is_noise_timeout_false_with_speech() -> None:
     assert session.is_noise_timeout(4) is False
 
 
+def test_turn_audio_level_diagnostics_reset_with_discarded_buffer() -> None:
+    session = VoiceSession(
+        SessionStart.from_event({"language": "en-US", "sample_rate_hz": 16_000})
+    )
+    loud = struct.pack("<" + "h" * 320, *([4_000, -4_000] * 160))
+    session.add_audio(loud)
+    assert session.last_rms > 0
+    assert session.peak_rms >= session.last_rms
+
+    session.discard_buffer()
+    assert session.last_rms == 0
+    assert session.peak_rms == 0
+
+
 _MODELS_PRESENT = _SILERO_PATH.exists() and _SMART_TURN_PATH.exists()
 
 

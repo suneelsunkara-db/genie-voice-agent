@@ -121,6 +121,9 @@ class TurnTrace:
         capability: str,
         call_id: str | None = None,
         customer_id: str | None = None,
+        actor_email: str | None = None,
+        actor_username: str | None = None,
+        actor_display_name: str | None = None,
         profile: str | None = None,
         surface: str | None = None,
         traffic_class: str = "conversation",
@@ -131,6 +134,9 @@ class TurnTrace:
         self.capability = capability
         self.call_id = call_id
         self.customer_id = customer_id
+        self.actor_email = actor_email
+        self.actor_username = actor_username
+        self.actor_display_name = actor_display_name
         self.profile = profile
         self.surface = surface
         self.traffic_class = traffic_class
@@ -251,6 +257,9 @@ class TurnTrace:
             "traffic_class": self.traffic_class,
             "call_id": self.call_id,
             "customer_id": self.customer_id,
+            "actor_email": self.actor_email,
+            "actor_username": self.actor_username,
+            "actor_display_name": self.actor_display_name,
             "language": self.language,
             "detected_language": self.detected_language,
             "input_transcript": _truncate(self.input_transcript),

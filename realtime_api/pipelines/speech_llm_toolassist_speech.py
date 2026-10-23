@@ -51,7 +51,12 @@ def _public_agent_event(envelope: dict[str, Any]) -> dict[str, Any]:
         return envelope
 
     public_result = dict(result)
-    for internal_field in ("report", "canonical_question", "reasoning"):
+    for internal_field in (
+        "report",
+        "canonical_question",
+        "canonical_request",
+        "reasoning",
+    ):
         public_result.pop(internal_field, None)
     return {
         **envelope,
@@ -115,6 +120,11 @@ def _timeout_for_profile(profile_name: str | None) -> float:
 _LONG_WORK_ADAPTERS = frozenset({"genie_one_mcp", "agent_mode"})
 
 
+def _has_long_work(*, adapter: str | None, workspace_selected: bool) -> bool:
+    """Whether this route may narrate engagement after its tool starts."""
+    return bool(workspace_selected or adapter in _LONG_WORK_ADAPTERS)
+
+
 def _tool_work_timeout_s(adapter: str | None, profile_name: str | None) -> float:
     """Budget handed to the long-running tool on this route.
 
@@ -171,6 +181,15 @@ _CLARIFY_PROMPT = (
     "choose one evidence source. Ask exactly one short clarifying question in "
     "{language}. Do not answer the original question and do not mention routing."
 )
+_CONCIERGE_CLARIFY_PROMPT = (
+    "You are a concise voice assistant clarifying an incomplete or ambiguous request "
+    "on the Home page. Ask exactly one short, content-aware question in {language}. "
+    "Ground it only in the caller's words. Do not propose categories, examples, "
+    "interpretations, metrics, or business outcomes the caller did not state. Do not "
+    "ask the caller to choose Telco, Financial Services, Knowledge Agent, an industry, "
+    "an app page, or an evidence source unless policy explicitly says the clarification "
+    "focus is destination. Do not answer the request and do not invent facts."
+)
 _CONFIRM_PROMPT = (
     "You are a concise billing voice assistant. An exact billing offer is already "
     "present in the conversation, but the caller has not explicitly confirmed it. "
@@ -186,9 +205,37 @@ _REFUSE_PROMPT = (
 )
 _SELF_KNOW_PROMPT = (
     "You are the Genie Assisted Voice application. Briefly explain your own "
-    "capabilities or help the caller navigate the app in {language}. Do not claim "
-    "facts about the caller's workspace."
+    "capabilities or help the caller navigate the app in {language}. If the caller "
+    "merely asks permission to ask a question, just invite them to continue in one "
+    "short sentence; do not list destinations or capabilities. Do not claim facts "
+    "about the caller's workspace."
 )
+
+
+def _clarification_instruction(focus: str) -> str:
+    """Policy-owned clarification shape; domain wording still comes from the caller."""
+    return {
+        "outcome": (
+            "Ask an open question about the caller's intended outcome. Reuse only subject "
+            "nouns the caller actually said; do not introduce a domain, activity, metric, "
+            "or possible outcome."
+        ),
+        "data_scope": (
+            "Ask for the one missing entity, population, data source, time boundary, "
+            "or other scope detail needed to run the request. Reuse only the caller's "
+            "subject nouns and do not suggest a source they did not mention."
+        ),
+        "destination": (
+            "Ask which offered app experience they intend to open."
+        ),
+        "missing_details": (
+            "Ask an open question for the one missing detail needed to understand the "
+            "request. Do not suggest possible answers."
+        ),
+    }.get(
+        focus,
+        "Ask an open question about the caller's intended outcome. Do not suggest answers.",
+    )
 
 
 def _tools_and_prompt(
@@ -198,6 +245,7 @@ def _tools_and_prompt(
     workspace_selected: bool,
     conversation_joinable: bool,
     briefing: str = "",
+    clarification_focus: str = "none",
 ) -> tuple[list[dict[str, Any]], str]:
     """Tool set and system prompt for this turn.
 
@@ -211,7 +259,17 @@ def _tools_and_prompt(
     if route_adapter == "confirm":
         return [], _CONFIRM_PROMPT
     if route_adapter == "clarify":
-        return [], _CLARIFY_PROMPT
+        if getattr(profile, "name", "") == "concierge":
+            return [], (
+                _CONCIERGE_CLARIFY_PROMPT
+                + "\nPolicy clarification instruction: "
+                + _clarification_instruction(clarification_focus)
+            )
+        return [], (
+            _CLARIFY_PROMPT
+            + "\nPolicy clarification instruction: "
+            + _clarification_instruction(clarification_focus)
+        )
     if route_adapter == "refuse":
         return [], _REFUSE_PROMPT
     if route_adapter == "self_know":
@@ -224,7 +282,12 @@ def _tools_and_prompt(
     return [WORKSPACE_QUERY_SPEC], f"{_WORKSPACE_CONTINUE_PROMPT}{note}"
 
 
-def _navigation_intents(decision: Any) -> list[Any]:
+def _navigation_intents(
+    decision: Any,
+    *,
+    utterance: str = "",
+    language: str = "",
+) -> list[Any]:
     """Typed navigation outcomes that execute an app-selection signal directly."""
     from ..profiles import ResolvedIntent
     from ..runtime import capability_descriptor
@@ -232,10 +295,14 @@ def _navigation_intents(decision: Any) -> list[Any]:
     selection = capability_descriptor(decision.capability_id).selection
     if selection is None:
         return []
+    arguments = dict(selection.arguments)
+    if selection.include_utterance:
+        arguments["handoff_query"] = utterance
+        arguments["handoff_language"] = language
     return [
         ResolvedIntent(
             name=selection.tool_name,
-            arguments=dict(selection.arguments),
+            arguments=arguments,
             confirm_phrase=selection.confirm_phrase,
         )
     ]
@@ -277,6 +344,33 @@ def _forced_tool_choice(tools: list[dict[str, Any]]) -> dict[str, Any] | str:
     if len(names) == 1:
         return {"type": "function", "function": {"name": names[0]}}
     return "auto"
+
+
+def _direct_terminal_call(
+    tools: list[dict[str, Any]],
+    request_text: str,
+) -> tuple[str, dict[str, str]] | None:
+    """Map one string-input terminal tool to the caller's exact request.
+
+    This is schema-driven rather than tied to a tool or use case: policy must leave
+    exactly one tool in reach, and that tool must require exactly one string field.
+    More complex terminal tools continue through the normal model adapter.
+    """
+    if len(tools) != 1:
+        return None
+    fn = tools[0].get("function") or {}
+    name = str(fn.get("name") or "")
+    parameters = fn.get("parameters") or {}
+    required = list(parameters.get("required") or [])
+    properties = parameters.get("properties") or {}
+    if (
+        not name
+        or len(required) != 1
+        or not isinstance(properties, dict)
+        or (properties.get(required[0]) or {}).get("type") != "string"
+    ):
+        return None
+    return name, {str(required[0]): request_text}
 
 
 def _spoken_answer(
@@ -448,12 +542,16 @@ async def process_turn(
     # persisted even on early-return paths (empty/mismatch/superseded) and errors,
     # and NEVER blocks the turn (submit is a non-blocking enqueue).
     profile_name, surface, traffic_class = turn_provenance(session.config)
+    principal = getattr(session, "principal", None)
     trace = TurnTrace(
         session_id=session.session_id or "",
         turn_id=turn_id,
         capability=SPEECH_LLM_TOOLASSIST_SPEECH,
         call_id=session.config.call_id,
         customer_id=session.config.customer_id,
+        actor_email=getattr(principal, "email", None),
+        actor_username=getattr(principal, "username", None),
+        actor_display_name=getattr(principal, "name", None),
         profile=profile_name,
         surface=surface,
         traffic_class=traffic_class,
@@ -473,18 +571,24 @@ async def process_turn(
     )
     localization_task: asyncio.Task | None = None
     try:
+        pretranscribed = None
+        input_transport = "audio"
+        if getattr(session, "active_turn", None) is not None:
+            input_transport = str(
+                session.active_turn.meta.get("input_transport") or "audio"
+            )
+            pretranscribed = session.active_turn.meta.pop("pretranscribed", None)
         stt_span = trace.span(
-            "stt", "STT",
+            "input.text" if input_transport == "text" else "stt",
+            "INPUT" if input_transport == "text" else "STT",
             input={
+                "transport": input_transport,
                 "audio_bytes": len(audio),
                 "sample_rate_hz": session.config.sample_rate_hz,
                 "requested_language": session.config.language,
                 "expected_language": session.config.expected_language,
             },
         )
-        pretranscribed = None
-        if getattr(session, "active_turn", None) is not None:
-            pretranscribed = session.active_turn.meta.pop("pretranscribed", None)
         if (
             isinstance(pretranscribed, tuple)
             and len(pretranscribed) == 3
@@ -493,7 +597,11 @@ async def process_turn(
             trace.set_metric("stt_reused_for_barge_classification", True)
         else:
             transcript, detected, stt_ms = await transcribe(bundle, session, audio)
-        stt_resource = str(getattr(bundle.stt, "stt_endpoint", "stt"))
+        stt_resource = (
+            "input.text"
+            if input_transport == "text"
+            else str(getattr(bundle.stt, "stt_endpoint", "stt"))
+        )
         transcript = admit_transcript(
             transcript,
             detected_language=detected,
@@ -639,6 +747,8 @@ async def process_turn(
             NavigationReason,
             capability_descriptor,
             classifier_capabilities,
+            navigation_request_for_classification,
+            resolve_navigation_continuation,
             route_for_navigation,
             run_profile_navigation,
         )
@@ -672,9 +782,13 @@ async def process_turn(
         # it is never an open offer and must not cross into a new turn.
         session.profile_state.pop("pending_billing_offer", None)
         offer_open = bool(session.profile_state.get("pending_confirm_mutate"))
+        classification_request = navigation_request_for_classification(
+            transcript,
+            profile_state=session.profile_state,
+        )
         try:
             navigation_decision, route = await run_profile_navigation(
-                transcript,
+                classification_request,
                 profile=profile.name,
                 language=language,
                 classifier=bundle.llm,
@@ -723,15 +837,42 @@ async def process_turn(
                 confidence=0.0,
                 ambiguous=True,
                 reason=NavigationReason.AMBIGUOUS,
+                request_state="ambiguous",
+                clarification_focus="missing_details",
             )
 
+        classified_capability = navigation_decision.capability_id
+        navigation_decision, continuation_utterance = resolve_navigation_continuation(
+            navigation_decision,
+            utterance=transcript,
+            profile=profile.name,
+            profile_state=session.profile_state,
+        )
+        request_text = continuation_utterance or transcript
+        if (
+            navigation_decision.capability_id != classified_capability
+            or continuation_utterance is not None
+        ):
+            # The current turn resolved a prior clarification. Re-project the
+            # policy-owned continuation capability instead of using the route
+            # produced for the short destination-selection reply.
+            route = None
+            trace.set_metric("navigation_classified_capability", classified_capability.value)
+            trace.set_metric(
+                "navigation_continuation_turns",
+                len((continuation_utterance or "").splitlines()),
+            )
         if route is None:
             route = route_for_navigation(
                 navigation_decision,
-                utterance=transcript,
+                utterance=request_text,
                 profile=profile.name,
             )
-        navigation_intents = _navigation_intents(navigation_decision)
+        navigation_intents = _navigation_intents(
+            navigation_decision,
+            utterance=request_text,
+            language=language,
+        )
         if navigation_decision.reason == NavigationReason.CONFIRMATION_REQUIRED:
             # Keep the exact preparation snapshot. Replacing it with a boolean
             # would sever confirmation from the action/customer/invoice it covers.
@@ -795,7 +936,7 @@ async def process_turn(
         # a domain — only the profile knows what its intents are.
         resolved = navigation_intents
         if resolved:
-            with trace.span("intent.router", "GUARD", input={"transcript": transcript}) as span:
+            with trace.span("intent.router", "GUARD", input={"transcript": request_text}) as span:
                 span.set_output({"intents": [r.name for r in resolved]})
             confirm_text = ""
             confirm_phrase_key = ""
@@ -885,7 +1026,7 @@ async def process_turn(
 
                 from ..runtime.genie_one import run_workspace_query
 
-                question = str(arguments.get("question") or transcript)
+                question = str(arguments.get("question") or request_text)
 
                 def _on_workspace_progress(payload: dict[str, Any]) -> None:
                     # The MCP client runs in the tool thread. Marshal progress back
@@ -945,6 +1086,7 @@ async def process_turn(
             workspace_selected=workspace_selected,
             conversation_joinable=conversation_joinable,
             briefing=conversation.briefing(),
+            clarification_focus=navigation_decision.clarification_focus,
         )
         tools_for_route = _tools_for_capability(
             tools_for_route,
@@ -956,6 +1098,11 @@ async def process_turn(
             system_prompt_for_route,
         )
         capability = capability_descriptor(navigation_decision.capability_id)
+        direct_spoken_reply = (
+            (navigation_decision.spoken_reply or "").strip()
+            if navigation_decision.capability_id == CapabilityId.APP_SELF_KNOW
+            else ""
+        )
         tool_choice = (
             _forced_tool_choice(tools_for_route) if capability.requires_tool else "auto"
         )
@@ -983,11 +1130,17 @@ async def process_turn(
         # runtime branch so the committed-speech event below extends the same
         # sequence whichever LLM path ran.
         last_event_seq = int(session.event_seq_by_turn.get(turn_id, 0))
-        if respond_fn:
+        if direct_spoken_reply:
+            # The policy-validated navigation result already contains the complete
+            # tool-free conversational reply. Avoid a second serial model call.
+            response_text = direct_spoken_reply
+            trace.set_metric("navigation_direct_reply", True)
+        elif respond_fn:
             from ..runtime import (
                 AgentContext,
                 AgentEventKind,
                 AgentGoal,
+                DirectToolAdapter,
                 LiveToolRespondAdapter,
             )
 
@@ -997,7 +1150,18 @@ async def process_turn(
                 from ..runtime import CancellationToken
 
                 cancellation = CancellationToken()
-            runtime = LiveToolRespondAdapter(respond_fn)
+            direct_call = (
+                _direct_terminal_call(tools_for_route, request_text)
+                if capability.terminal_tool_result
+                else None
+            )
+            runtime = (
+                DirectToolAdapter(direct_call[0], direct_call[1])
+                if direct_call is not None
+                else LiveToolRespondAdapter(respond_fn)
+            )
+            if direct_call is not None:
+                trace.set_metric("terminal_tool_direct", True)
             event_queue: asyncio.Queue = asyncio.Queue()
             runtime_event_queue = event_queue
             seq_offset = last_event_seq
@@ -1006,7 +1170,7 @@ async def process_turn(
                 try:
                     async for agent_event in runtime.run(
                         AgentGoal(
-                            utterance=transcript,
+                            utterance=request_text,
                             language=language,
                             meta={
                                 "route_path": route.path.value,
@@ -1059,7 +1223,13 @@ async def process_turn(
             # response and then allowed 60–90 seconds of silence. This clock runs
             # independently of runtime events and stops the moment work completes.
             engagement = LongWorkEngagement()
-            engagement_started = time.monotonic()
+            # Engagement describes real governed work, not generic model latency.
+            # Start its clock only after a long-running tool actually begins.
+            long_work_route = _has_long_work(
+                adapter=route.adapter,
+                workspace_selected=workspace_selected,
+            )
+            engagement_started: float | None = None
             engagement_seq_shift = 0
             spoken_step = ""
 
@@ -1146,7 +1316,7 @@ async def process_turn(
                 async with asyncio.timeout(turn_budget_s):
                     current = None
                     while True:
-                        if not runtime_task.done():
+                        if not runtime_task.done() and engagement_started is not None:
                             elapsed_s = time.monotonic() - engagement_started
                             for stage in engagement.pop_due(elapsed_s):
                                 base = base_code(language)
@@ -1172,7 +1342,11 @@ async def process_turn(
                         if current is None:
                             if runtime_task.done() and event_queue.empty():
                                 break
-                            next_due = engagement.next_due_s
+                            next_due = (
+                                engagement.next_due_s
+                                if engagement_started is not None
+                                else None
+                            )
                             wait_s = (
                                 None
                                 if next_due is None or runtime_task.done()
@@ -1198,11 +1372,17 @@ async def process_turn(
                             and len(current) == 2
                             and current[0] == "workspace.progress"
                         ):
+                            if long_work_route and engagement_started is None:
+                                engagement_started = time.monotonic()
                             progress_payload = current[1]
                             steps = normalize_progress_steps(
                                 progress_payload.get("progress_steps")
                             )
-                            progress_elapsed_s = time.monotonic() - engagement_started
+                            progress_elapsed_s = (
+                                time.monotonic() - engagement_started
+                                if engagement_started is not None
+                                else 0.0
+                            )
                             engagement_seq_shift += 1
                             last_event_seq += 1
                             session.event_seq_by_turn[turn_id] = last_event_seq
@@ -1245,6 +1425,12 @@ async def process_turn(
                                         yield event
                             current = None
                             continue
+                        if (
+                            long_work_route
+                            and engagement_started is None
+                            and current.kind == AgentEventKind.ACTION_STARTED
+                        ):
+                            engagement_started = time.monotonic()
                         await _consume(current)
                         # Ordered AgentRuntime events are now a real wire contract,
                         # not a test-only library.
@@ -1276,7 +1462,7 @@ async def process_turn(
             response_text = await asyncio.wait_for(
                 asyncio.to_thread(
                     bundle.llm.respond,
-                    transcript,
+                    request_text,
                     language=language,
                     context=context,
                     tool_ctx=tool_ctx,
@@ -1321,7 +1507,7 @@ async def process_turn(
         # rows as a table/chart rather than a second copy of them as markdown.
         render_answer = ""
         render_report = ""
-        render_question = transcript
+        render_question = request_text
         render_source = ""
         render_source_language = language
         from ..runtime import evidence_from_tool_result

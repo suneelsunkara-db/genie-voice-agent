@@ -616,12 +616,13 @@ def _manual_guidance(settings: Settings, check_id: str) -> tuple[list[str], list
     if check_id == "obo":
         return [
             f"App '{app_name}': User Authorization enabled",
+            "Requested/effective user scope: ai-gateway",
             "Requested/effective user scope: genie",
             "Requested/effective user scope: sql",
             "Each viewer has accepted the current consent prompt",
         ], [
             f"Open Compute → Apps → '{app_name}' → Authorization.",
-            "Enable User Authorization and add scopes 'genie' and 'sql'.",
+            "Enable User Authorization and add scopes 'ai-gateway', 'genie', and 'sql'.",
             "Restart/redeploy the App after a scope change; have each viewer revoke old consent and consent again.",
         ]
     if check_id == "viewer_genie":
@@ -1518,7 +1519,10 @@ def check_viewer_genie(settings: Settings, obo_token: str | None) -> Check:
             id="viewer_genie", title="App viewer + Genie permissions", category=CATEGORY_MANUAL,
             status=WARN,
             detail="Cannot test viewer CAN_RUN until Apps User Authorization supplies a user token.",
-            explanation="Open this page through the Databricks App UI after enabling genie + sql scopes.",
+            explanation=(
+                "Open this page through the Databricks App UI after enabling "
+                "ai-gateway + genie + sql scopes."
+            ),
             fix=Fix(kind="link", label="Open App settings", href=_host_url(settings, "/apps")),
         )
     from genie_voice.genie.client import GenieClient
@@ -1548,7 +1552,7 @@ def check_viewer_genie(settings: Settings, obo_token: str | None) -> Check:
             technical_detail="; ".join(failures),
             resolution_steps=[
                 "Grant this user (or their group) CAN_RUN on both configured Genie spaces.",
-                "Confirm Apps User Authorization requests both genie and sql scopes.",
+                "Confirm Apps User Authorization requests ai-gateway, genie, and sql scopes.",
                 "Sign out/in or revoke and re-consent if scopes changed after the first app visit.",
                 "Re-run deploy_app.sh with APP_EXTERNAL_USERS or APP_EXTERNAL_GROUPS populated.",
             ],
@@ -1559,6 +1563,68 @@ def check_viewer_genie(settings: Settings, obo_token: str | None) -> Check:
         status=OK,
         detail="Real viewer-scoped query succeeded: " + "; ".join(passed),
         explanation="; ".join(passed),
+    )
+
+
+def check_genie_one(settings: Settings, obo_token: str | None) -> Check:
+    """Verify the managed Genie One MCP and ai-gateway OBO scope end to end."""
+    if not obo_token:
+        return Check(
+            id="genie_one",
+            title="Genie One managed MCP",
+            category=CATEGORY_MANUAL,
+            status=WARN,
+            detail="Cannot validate Genie One without the signed-in user's OBO token.",
+            fix=Fix(kind="link", label="Open App settings", href=_host_url(settings, "/apps")),
+        )
+    try:
+        import json
+
+        from realtime_api.runtime.genie_one import run_workspace_query
+        from realtime_api.runtime.identity import SessionPrincipal
+
+        payload = json.loads(
+            run_workspace_query(
+                "What governed data domains can I ask about? Answer briefly.",
+                principal=SessionPrincipal(
+                    access_token=obo_token,
+                    from_forwarded_header=True,
+                ),
+                host=settings.databricks_host,
+                session_id="readiness",
+                turn_id=0,
+                timeout_s=120,
+            )
+        )
+        if str(payload.get("status") or "").lower() != "completed":
+            raise RuntimeError(
+                f"status={payload.get('status')}; "
+                f"error={payload.get('error') or 'no final response'}; "
+                f"technical_error={payload.get('technical_error') or 'unavailable'}"
+            )
+        if not str(payload.get("final_answer") or "").strip():
+            raise RuntimeError("completed without a final answer")
+    except Exception as exc:  # noqa: BLE001
+        return Check(
+            id="genie_one",
+            title="Genie One managed MCP",
+            category=CATEGORY_MANUAL,
+            status=FAIL,
+            detail="The signed-in viewer could not query the managed Genie One MCP.",
+            technical_detail=_error_text(exc),
+            resolution_steps=[
+                "Add the ai-gateway scope to Apps User Authorization.",
+                "Restart the App and have the viewer consent again.",
+                "Confirm system.ai.genie_one_mcp is available through Unity Gateway.",
+            ],
+            fix=Fix(kind="link", label="Open App settings", href=_host_url(settings, "/apps")),
+        )
+    return Check(
+        id="genie_one",
+        title="Genie One managed MCP",
+        category=CATEGORY_MANUAL,
+        status=OK,
+        detail="Managed Genie One MCP completed a viewer-scoped governed query.",
     )
 
 
@@ -1635,7 +1701,7 @@ def check_obo(settings: Settings, obo_token: str | None) -> Check:
     fix = Fix(kind="link", label="Open App settings", href=_host_url(settings, "/apps"))
     steps = [
         "Open the Databricks App settings and enable User Authorization.",
-        "Grant/request the genie and sql scopes declared in app.yaml.",
+        "Grant/request the ai-gateway, genie, and sql scopes declared in app.yaml.",
         "Restart/redeploy the App, then re-open it and approve the user-consent prompt.",
         "If consent predates the scope change, revoke it and consent again.",
     ]
@@ -1660,7 +1726,7 @@ def check_obo(settings: Settings, obo_token: str | None) -> Check:
             str(scope)
             for scope in (getattr(app, "effective_user_api_scopes", None) or [])
         }
-        missing = {"genie", "sql"} - effective
+        missing = {"ai-gateway", "genie", "sql"} - effective
         if missing:
             raise RuntimeError(
                 "missing effective App scope(s): " + ", ".join(sorted(missing))
@@ -1680,7 +1746,7 @@ def check_obo(settings: Settings, obo_token: str | None) -> Check:
             id="obo", title="Apps User Authorization (OBO)", category=CATEGORY_MANUAL,
             status=FAIL,
             detail=(
-                f"App '{app_name}' User Authorization is not effective for both "
+                f"App '{app_name}' User Authorization is not effective for all "
                 f"required scopes: {_error_text(exc)}"
             ),
             fix=fix,
@@ -1691,7 +1757,7 @@ def check_obo(settings: Settings, obo_token: str | None) -> Check:
         id="obo", title="Apps User Authorization (OBO)", category=CATEGORY_MANUAL,
         status=OK,
         detail=(
-            f"App '{app_name}': effective scopes=genie,sql; "
+            f"App '{app_name}': effective scopes=ai-gateway,genie,sql; "
             f"x-forwarded-access-token=PRESENT; viewer={viewer_name}."
         ),
     )
@@ -1762,6 +1828,7 @@ _CHECKS: list[Callable[[Settings, str | None], Check]] = [
 
 _FULL_CHECKS: list[Callable[[Settings, str | None], Check]] = [
     check_voice_contract,
+    check_genie_one,
     check_viewer_genie,
     check_agent_mode,
 ]

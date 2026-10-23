@@ -4,6 +4,7 @@ from .agent_runtime import (
     AgentContext,
     AgentGoal,
     AgentRuntime,
+    DirectToolAdapter,
     LiveToolRespondAdapter,
     RespondWithToolsAdapter,
 )
@@ -36,6 +37,8 @@ from .navigation import (
     knowledge_classifier_capabilities,
     navigate_profile,
     navigate_knowledge,
+    navigation_request_for_classification,
+    resolve_navigation_continuation,
     route_for_navigation,
 )
 from .navigation_graph import (
@@ -64,6 +67,7 @@ __all__ = [
     "ErrorEvidence",
     "Evidence",
     "EventSequencer",
+    "DirectToolAdapter",
     "GoalFrame",
     "LiveToolRespondAdapter",
     "NavigationDecision",
@@ -96,6 +100,8 @@ __all__ = [
     "classifier_capabilities",
     "navigate_profile",
     "navigate_knowledge",
+    "navigation_request_for_classification",
+    "resolve_navigation_continuation",
     "obo_deny",
     "refuse_speech",
     "resolve_session_principal",

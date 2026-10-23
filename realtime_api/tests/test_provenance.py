@@ -64,3 +64,19 @@ def test_trace_persists_content_free_model_lineage() -> None:
             "status": "ok",
         }
     ]
+
+
+def test_trace_persists_actor_identity_without_credentials() -> None:
+    trace = TurnTrace(
+        session_id="session-1",
+        turn_id=1,
+        capability="voice",
+        actor_email="person@example.com",
+        actor_username="person@example.com",
+        actor_display_name="Example Person",
+    )
+    payload = trace.to_dict()
+    assert payload["actor_email"] == "person@example.com"
+    assert payload["actor_username"] == "person@example.com"
+    assert payload["actor_display_name"] == "Example Person"
+    assert "access_token" not in payload
