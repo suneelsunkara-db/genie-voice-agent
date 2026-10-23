@@ -259,12 +259,15 @@ def _clarify_english_date_ranges(text: str) -> str:
     )
 
 
-def _speech_blocks(markdown: str) -> tuple[list[str], list[str], list[str]]:
-    """Return plain paragraphs, list items and headings from a Markdown answer."""
+def _speech_blocks(
+    markdown: str,
+) -> tuple[list[str], list[str], list[str], list[tuple[str, str]]]:
+    """Return categorized and document-ordered plain blocks from Markdown."""
     without_fences = _FENCE_RE.sub("", markdown)
     paragraphs: list[str] = []
     list_items: list[str] = []
     headings: list[str] = []
+    ordered: list[tuple[str, str]] = []
     current: list[str] = []
 
     def flush() -> None:
@@ -272,6 +275,7 @@ def _speech_blocks(markdown: str) -> tuple[list[str], list[str], list[str]]:
             value = _strip_inline_markdown(" ".join(current))
             if value:
                 paragraphs.append(value)
+                ordered.append(("paragraph", value))
             current.clear()
 
     for raw_line in without_fences.splitlines():
@@ -293,6 +297,7 @@ def _speech_blocks(markdown: str) -> tuple[list[str], list[str], list[str]]:
             value = _strip_inline_markdown(heading.group(1))
             if value:
                 headings.append(value)
+                ordered.append(("heading", value))
             continue
         item = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", line)
         if item:
@@ -300,11 +305,12 @@ def _speech_blocks(markdown: str) -> tuple[list[str], list[str], list[str]]:
             value = _strip_inline_markdown(item.group(1))
             if value:
                 list_items.append(value)
+                ordered.append(("list_item", value))
             continue
         line = re.sub(r"^>\s?", "", line)
         current.append(line)
     flush()
-    return paragraphs, list_items, headings
+    return paragraphs, list_items, headings, ordered
 
 
 def _protect_facts(text: str) -> tuple[str, list[str]]:
@@ -420,24 +426,32 @@ def _extractive_voice_excerpt(text: str) -> str:
     across the maintained languages, so this does not classify business intent or
     rewrite the upstream agent's words.
     """
-    paragraphs, list_items, headings = _speech_blocks(text)
+    paragraphs, list_items, headings, ordered = _speech_blocks(text)
     candidates = paragraphs or list_items or headings
     if not candidates:
         raise SpeechRenderError("upstream answer contained no speakable prose")
 
     follow_up = ""
-    for block in reversed(paragraphs[1:]):
-        question_units = [
-            unit
-            for unit in _sentence_units(block)
-            if any(mark in unit for mark in _QUESTION_END)
-        ]
-        if question_units:
+    paragraph_positions = [
+        index
+        for index, (kind, block) in enumerate(ordered)
+        if kind == "paragraph" and any(mark in block for mark in _QUESTION_END)
+    ]
+    if paragraph_positions:
+        question_index = paragraph_positions[-1]
+        # A clarification's numbered/bulleted choices belong to the question
+        # immediately before them. Preserve that adjacency instead of flattening
+        # all list items from the report into one unrelated collection.
+        follow_up_blocks = [ordered[question_index][1]]
+        for kind, block in ordered[question_index + 1 :]:
+            if kind != "list_item":
+                break
+            follow_up_blocks.append(block)
+        if question_index > 0:
             follow_up = _bounded_speech_text(
-                " ".join(question_units),
+                " ".join(follow_up_blocks),
                 max_chars=min(400, _MAX_SPEECH_CHARS),
             )
-            break
 
     if follow_up:
         # Reserve the voice budget for the caller-facing question. The first

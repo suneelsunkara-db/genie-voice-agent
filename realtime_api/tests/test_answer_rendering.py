@@ -227,6 +227,40 @@ With that, I can show the requested monthly breakdown.
     assert serving.calls == []
 
 
+def test_spoken_clarification_keeps_question_with_its_numbered_choices(monkeypatch):
+    serving = _Serving()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+    answer = """
+I can't give you customer-level CPU and GPU spend because no governed source
+breaks compute cost down by customer.
+
+**What I checked:**
+- Customer records do not hold compute costs.
+- Only a small portion has customer tags.
+
+**How would you like me to proceed?** I can:
+1. use a customer cost-allocation source you point me to,
+2. show account-wide CPU versus GPU spend by month, or
+3. break down only the customer-tagged portion by customer.
+"""
+
+    spoken = answer_rendering.summarize_for_voice(
+        "How much are we spending for CPUs and GPUs for our customers?",
+        answer,
+        "en-US",
+    )
+
+    assert "How would you like me to proceed?" in spoken
+    assert "use a customer cost-allocation source you point me to" in spoken
+    assert "show account-wide CPU versus GPU spend by month" in spoken
+    assert "break down only the customer-tagged portion by customer" in spoken
+    assert "Customer records do not hold compute costs" not in spoken
+    assert serving.calls == []
+
+
 @pytest.mark.parametrize(
     ("language", "outcome", "question"),
     [
