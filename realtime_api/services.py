@@ -1014,12 +1014,12 @@ class DatabricksServing:
         reference_audio_b64: str | None = None,
         voice_id: str | None = None,
     ) -> Iterator[AudioChunk]:
-        """Yield PCM audio chunks as the TTS agent generates them.
+        """Yield validated PCM audio packets from the TTS endpoint.
 
-        Invokes the endpoint's ``predict_stream`` (VoxCPM2 ``generate(streaming=
-        True)``): each SSE event carries a ~80 ms base64 PCM16 slice in
-        ``custom_outputs.audio_pcm16_b64``. Emitting these as they arrive lets the
-        client start playback long before the sentence finishes generating.
+        ``predict_stream`` is a transport contract, not permission to expose raw
+        model generation. The endpoint validates a complete VoxCPM waveform with
+        native bad-case regeneration before packetizing it into ~80 ms PCM slices.
+        Thus every page and language receives the same integrity guarantee.
 
         ``reference_audio_b64`` (a base64 WAV) pins the voice: the endpoint clones
         its timbre so every turn in a session keeps the same voice. Passing a

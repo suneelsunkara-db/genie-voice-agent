@@ -927,8 +927,9 @@ isolated latency and multilingual-quality testing (see [`ROADMAP.md`](ROADMAP.md
 ### VoxCPM2 spoken-output integrity eval
 
 Reuse the deployed Qwen STT endpoint as an objective listener for every VoxCPM2
-waveform. The existing streaming benchmark compares the production streaming path
-with buffered generation and native bad-case retry across all 24 app languages:
+waveform. Both endpoint transports run the same mandatory native integrity
+validation before audio is released; the benchmark verifies that contract and
+compares their latency and quality across all 24 app languages:
 
 ```bash
 ./scripts/ml_asr.sh tts-integrity --languages all --reps 5

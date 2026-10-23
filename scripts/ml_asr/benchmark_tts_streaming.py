@@ -1,8 +1,8 @@
 """Benchmark VoxCPM2 streaming latency *and spoken-output integrity*.
 
-Compares two serving paths on the SAME GPU:
-  * streaming ``predict_stream`` -> production path, low TTFA, no native retry
-  * non-streaming ``predict``    -> buffered WAV with native bad-case retry
+Compares the two transport contracts on the SAME GPU:
+  * streaming ``predict_stream`` -> validated waveform packetized over SSE
+  * non-streaming ``predict``    -> the same validated waveform returned as WAV
 
 Every generated waveform is sent through the configured Qwen STT endpoint. The
 result is compared with the exact source text using multilingual character edits.
@@ -164,6 +164,7 @@ def _stream_call(host: str, auth: Callable[[], dict[str, str]], endpoint: str, t
         "server_ttfb_ms": final.get("ttfb_ms"),
         "sample_rate_hz": final.get("sample_rate_hz"),
         "device": final.get("inference_device"),
+        "integrity_validated": bool(final.get("integrity_validated")),
     }
 
 
@@ -181,7 +182,7 @@ def _predict_call(host: str, auth: Callable[[], dict[str, str]], endpoint: str, 
         "device": co.get("inference_device"),
         "audio_b64": str(co.get("audio_b64") or ""),
         "sample_rate_hz": int(co.get("sample_rate_hz") or 0),
-        "retry_badcase": bool(co.get("retry_badcase")),
+        "integrity_validated": bool(co.get("integrity_validated")),
     }
 
 
@@ -330,13 +331,7 @@ def main() -> None:
                     streamed.pop("audio_pcm", None)
                 stream.append(streamed)
 
-                buffered = _predict_call(
-                    host,
-                    auth,
-                    endpoint,
-                    text,
-                    {**ci, "retry_badcase": True},
-                )
+                buffered = _predict_call(host, auth, endpoint, text, ci)
                 buffered.update({"language": language, "mode": "buffered", "rep": rep})
                 if not args.no_quality and stt_endpoint and buffered["audio_b64"]:
                     buffered["quality"] = _quality_call(
@@ -386,22 +381,25 @@ def main() -> None:
         )
         for mode in ("stream", "buffered")
     }
-    buffered_rows = [
-        row for row in report["results"] if row["mode"] == "buffered"
-    ]
-    report["summary"]["buffered"]["native_retry_enabled"] = bool(
-        buffered_rows
-    ) and all(row.get("retry_badcase") is True for row in buffered_rows)
+    for mode in ("stream", "buffered"):
+        rows = [row for row in report["results"] if row["mode"] == mode]
+        report["summary"][mode]["integrity_validated"] = bool(rows) and all(
+            row.get("integrity_validated") is True for row in rows
+        )
     output = Path(args.output).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nWrote {output}")
     print(json.dumps(report["summary"], indent=2, ensure_ascii=False))
-    if buffered_rows and not report["summary"]["buffered"]["native_retry_enabled"]:
+    invalid_modes = [
+        mode
+        for mode in ("stream", "buffered")
+        if not report["summary"][mode]["integrity_validated"]
+    ]
+    if invalid_modes:
         print(
-            "\nWARNING: the deployed TTS model predates native buffered bad-case "
-            "retry; redeploy the VoxCPM2 candidate before using the mode comparison "
-            "as a promotion decision."
+            "\nWARNING: the deployed TTS endpoint did not certify integrity for: "
+            + ", ".join(invalid_modes)
         )
 
 

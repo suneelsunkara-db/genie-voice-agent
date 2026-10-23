@@ -259,7 +259,7 @@ def test_unkeyed_reference_stays_per_request(agent) -> None:
     os.unlink(path)
 
 
-def test_buffered_generation_enables_native_badcase_retry_by_default(
+def test_buffered_generation_always_uses_native_integrity_validation(
     agent, tts_agent_module, monkeypatch
 ) -> None:
     import numpy as np
@@ -292,7 +292,53 @@ def test_buffered_generation_enables_native_badcase_retry_by_default(
     )
 
     assert model.kwargs["retry_badcase"] is True
-    assert response.custom_outputs["retry_badcase"] is True
+    assert response.custom_outputs["integrity_validated"] is True
+
+
+def test_stream_transport_releases_only_validated_buffered_audio(
+    agent, tts_agent_module, monkeypatch
+) -> None:
+    import numpy as np
+    from types import SimpleNamespace
+
+    class _Model:
+        tts_model = SimpleNamespace(sample_rate=48_000)
+
+        def __init__(self) -> None:
+            self.kwargs = {}
+
+        def generate(self, **kwargs):
+            self.kwargs = kwargs
+            return np.zeros(8_000, dtype=np.float32)
+
+        def generate_streaming(self, **_kwargs):
+            raise AssertionError("unvalidated model streaming must not be used")
+
+    model = _Model()
+    agent.model = model
+    agent.create_text_delta = lambda **kwargs: kwargs
+    agent.create_text_output_item = lambda **kwargs: kwargs
+    monkeypatch.setattr(
+        tts_agent_module,
+        "ResponsesAgentStreamEvent",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+
+    events = list(
+        agent.predict_stream(
+            SimpleNamespace(
+                custom_inputs={"text": "Hello.", "language": "en-US"},
+                input=[],
+            )
+        )
+    )
+
+    assert model.kwargs["retry_badcase"] is True
+    assert any(
+        getattr(event, "custom_outputs", {}).get("audio_pcm16_b64")
+        for event in events
+    )
+    assert events[-1].custom_outputs["integrity_validated"] is True
 
 
 def test_lru_eviction_removes_oldest_clip(agent, tts_agent_module, monkeypatch) -> None:

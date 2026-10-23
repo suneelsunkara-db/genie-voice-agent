@@ -241,18 +241,16 @@ class RealtimeTTSAgent(ResponsesAgent):
         language = str(ci.get("language") or "")
         timesteps = int(ci.get("inference_timesteps") or self.inference_timesteps)
         cfg_value = float(ci.get("cfg_value") or self.cfg_value)
-        # Buffered generation can detect abnormally short/long model output before
-        # callers hear it. Keep this enabled by default for integrity evaluation
-        # and non-realtime consumers. VoxCPM disables it internally for streaming
-        # because already-emitted chunks cannot be retracted.
-        retry_badcase = bool(ci.get("retry_badcase", True))
-
         started = time.perf_counter()
         gen_kwargs = dict(
             text=text,
             cfg_value=cfg_value,
             inference_timesteps=timesteps,
-            retry_badcase=retry_badcase,
+            # Audio integrity is an endpoint guarantee, not a caller-selected
+            # generation mode. VoxCPM can reject and regenerate a bad sample only
+            # before any audio has escaped, so every public synthesis uses its
+            # validated buffered path.
+            retry_badcase=True,
         )
         ref_path, ref_owned, cache_miss = self._resolve_reference(ci)
         if cache_miss:
@@ -293,19 +291,18 @@ class RealtimeTTSAgent(ResponsesAgent):
                 "rtf": round(gen_ms / audio_ms, 3) if audio_ms else None,
                 "inference_timesteps": timesteps,
                 "cfg_value": cfg_value,
-                "retry_badcase": retry_badcase,
+                "integrity_validated": True,
             },
         )
 
     def predict_stream(self, request: ResponsesAgentRequest):  # type: ignore[override]
-        """Stream audio as it is generated (time-to-first-audio ≪ full sentence).
+        """Release validated audio over the streaming transport.
 
-        VoxCPM2's ``generate(streaming=True)`` yields ~80 ms PCM chunks per step.
-        Each chunk is emitted as a ``ResponsesAgentStreamEvent`` whose
-        ``custom_outputs`` carries raw base64 PCM16 (no per-chunk WAV header, so
-        the client concatenates chunks directly). A final ``done`` event reports
-        timing. This is the realtime win on the current GPU: the caller can begin
-        playback after the first chunk instead of waiting ~3 s for the sentence.
+        VoxCPM's native streaming generator cannot run its bad-case detector:
+        once a hallucinated or cross-language chunk has reached the caller it
+        cannot be retracted. Generate and validate the complete utterance first,
+        then packetize the accepted PCM over SSE. This keeps one synthesis
+        contract for every page and language; callers cannot opt out of quality.
         """
         item_id = "tts-spoken-text"
         if not request.custom_inputs:
@@ -325,15 +322,12 @@ class RealtimeTTSAgent(ResponsesAgent):
         sample_rate_hz = int(getattr(getattr(self.model, "tts_model", None), "sample_rate", 48_000))
 
         started = time.perf_counter()
-        first_chunk_ms: float | None = None
         index = 0
-        # generate_streaming() yields ~80 ms numpy chunks (it sets streaming=True
-        # internally, so we must NOT pass streaming= ourselves).
         gen_kwargs = dict(
             text=text,
             cfg_value=cfg_value,
             inference_timesteps=timesteps,
-            retry_badcase=False,
+            retry_badcase=True,
         )
         # A reference clip pins the voice: VoxCPM2 clones its timbre so every turn
         # in a session keeps the same voice. build_prompt_cache reads the file at
@@ -357,16 +351,21 @@ class RealtimeTTSAgent(ResponsesAgent):
         if ref_path:
             gen_kwargs["reference_wav_path"] = ref_path
         try:
-            for chunk in self.model.generate_streaming(**gen_kwargs):
-                pcm = _float_to_pcm16(chunk)
-                if not pcm:
+            audio = self.model.generate(**gen_kwargs)
+            validated_ms = (time.perf_counter() - started) * 1000.0
+            pcm = _float_to_pcm16(audio)
+            # Preserve the existing ~80 ms transport granularity. These are
+            # packets from one already-validated waveform, not independent model
+            # generations.
+            chunk_bytes = max(round(sample_rate_hz * 0.08) * 2, 2)
+            for offset in range(0, len(pcm), chunk_bytes):
+                chunk = pcm[offset : offset + chunk_bytes]
+                if not chunk:
                     continue
-                if first_chunk_ms is None:
-                    first_chunk_ms = (time.perf_counter() - started) * 1000.0
                 yield ResponsesAgentStreamEvent(
                     **self.create_text_delta(delta=(text if index == 0 else ""), item_id=item_id),
                     custom_outputs={
-                        "audio_pcm16_b64": base64.b64encode(pcm).decode("ascii"),
+                        "audio_pcm16_b64": base64.b64encode(chunk).decode("ascii"),
                         "chunk_index": index,
                         "sample_rate_hz": sample_rate_hz,
                         "final": False,
@@ -385,10 +384,11 @@ class RealtimeTTSAgent(ResponsesAgent):
                 "final": True,
                 "chunks": index,
                 "sample_rate_hz": sample_rate_hz,
-                "ttfb_ms": round(first_chunk_ms if first_chunk_ms is not None else total_ms, 1),
+                "ttfb_ms": round(validated_ms if pcm else total_ms, 1),
                 "gen_ms": round(total_ms, 1),
                 "inference_device": self.inference_device,
                 "inference_timesteps": timesteps,
+                "integrity_validated": True,
             },
         )
 
