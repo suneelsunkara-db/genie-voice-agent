@@ -241,13 +241,18 @@ class RealtimeTTSAgent(ResponsesAgent):
         language = str(ci.get("language") or "")
         timesteps = int(ci.get("inference_timesteps") or self.inference_timesteps)
         cfg_value = float(ci.get("cfg_value") or self.cfg_value)
+        # Buffered generation can detect abnormally short/long model output before
+        # callers hear it. Keep this enabled by default for integrity evaluation
+        # and non-realtime consumers. VoxCPM disables it internally for streaming
+        # because already-emitted chunks cannot be retracted.
+        retry_badcase = bool(ci.get("retry_badcase", True))
 
         started = time.perf_counter()
         gen_kwargs = dict(
             text=text,
             cfg_value=cfg_value,
             inference_timesteps=timesteps,
-            retry_badcase=False,
+            retry_badcase=retry_badcase,
         )
         ref_path, ref_owned, cache_miss = self._resolve_reference(ci)
         if cache_miss:
@@ -288,6 +293,7 @@ class RealtimeTTSAgent(ResponsesAgent):
                 "rtf": round(gen_ms / audio_ms, 3) if audio_ms else None,
                 "inference_timesteps": timesteps,
                 "cfg_value": cfg_value,
+                "retry_badcase": retry_badcase,
             },
         )
 

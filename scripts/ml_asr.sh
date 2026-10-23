@@ -20,6 +20,12 @@ case "$cmd" in
   serve|4) exec "$ROOT/scripts/ml_asr/04_serve.sh" "${1:-help}" "${@:2}" ;;
   eval|5) exec "$ROOT/scripts/ml_asr/05_eval.sh" "${1:-next}" "${@:2}" ;;
   status) exec "$ROOT/scripts/ml_asr/05_eval.sh" status "$@" ;;
+  tts-integrity)
+    export PYTHONPATH="$ROOT/backend:$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+    PYBIN="${PYTHON:-python3}"
+    [[ -x "$ROOT/.venv/bin/python" ]] && PYBIN="$ROOT/.venv/bin/python"
+    exec "$PYBIN" "$ROOT/scripts/ml_asr/benchmark_tts_streaming.py" "$@"
+    ;;
   models)
     printf "\033[33m[ml-asr]\033[0m 'models' renamed to 'eval' (step 5)\n" >&2
     exec "$ROOT/scripts/ml_asr/05_eval.sh" "${1:-next}" "${@:2}"
@@ -34,6 +40,9 @@ ML ASR pipeline (config/ml_asr_eval.yaml). Serverless unless noted.
   4  ./scripts/ml_asr.sh serve       deploy Model Serving endpoints
   5  ./scripts/ml_asr.sh eval        score Deepgram + Databricks routes
      ./scripts/ml_asr.sh status      eval pipeline state
+     ./scripts/ml_asr.sh tts-integrity --languages all --reps 5
+                                      compare streaming vs buffered VoxCPM2
+                                      using Qwen round-trip integrity scoring
 
 Deepgram Nova-3 is a commercial API baseline (API key) — not UC/OSS.
 Steps 3–4 apply only to databricks_* models in model_serving.

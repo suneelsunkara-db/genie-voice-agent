@@ -259,6 +259,42 @@ def test_unkeyed_reference_stays_per_request(agent) -> None:
     os.unlink(path)
 
 
+def test_buffered_generation_enables_native_badcase_retry_by_default(
+    agent, tts_agent_module, monkeypatch
+) -> None:
+    import numpy as np
+    from types import SimpleNamespace
+
+    class _Model:
+        tts_model = SimpleNamespace(sample_rate=48_000)
+
+        def __init__(self) -> None:
+            self.kwargs = {}
+
+        def generate(self, **kwargs):
+            self.kwargs = kwargs
+            return np.zeros(480, dtype=np.float32)
+
+    model = _Model()
+    agent.model = model
+    agent.create_text_output_item = lambda **kwargs: kwargs
+    monkeypatch.setattr(
+        tts_agent_module,
+        "ResponsesAgentResponse",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+
+    response = agent.predict(
+        SimpleNamespace(
+            custom_inputs={"text": "Hello.", "language": "en-US"},
+            input=[],
+        )
+    )
+
+    assert model.kwargs["retry_badcase"] is True
+    assert response.custom_outputs["retry_badcase"] is True
+
+
 def test_lru_eviction_removes_oldest_clip(agent, tts_agent_module, monkeypatch) -> None:
     monkeypatch.setattr(tts_agent_module, "_VOICE_CACHE_MAX", 2)
     clip = _wav_b64()

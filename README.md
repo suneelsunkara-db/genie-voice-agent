@@ -162,7 +162,7 @@ app.yaml           Databricks Apps runtime config
   OAuth (platform-injected `DATABRICKS_CLIENT_ID/SECRET/HOST`); `deploy_app.sh`
   grants that SP its UC/Lakebase/Genie access and the `workspace-access` entitlement.
   **Genie / workspace Q&A** additionally uses **user authorization (OBO)**: enable
-  App → Authorization scopes `genie` and `sql` (declared in `app.yaml` as
+  App → Authorization scopes `ai-gateway`, `genie`, and `sql` (declared in `app.yaml` as
   `user_api_scopes` and explicitly granted/verified by `deploy_app.sh`; declaring
   scopes in `app.yaml` alone does not grant them). Databricks forwards
   `x-forwarded-access-token` on each
@@ -300,7 +300,7 @@ greenfield checklist and the UI-only checkpoints.
    - **UC + Lakebase + Genie** grants via `infra/apps/grant_app_sp.py`
      (catalog/schema/volume `SELECT`/`MODIFY`/`READ VOLUME`, Lakebase role +
      table/sequence grants, Genie `CAN_RUN`).
-9. **Applies and verifies OBO scopes** `genie` + `sql`; deployment fails if User
+9. **Applies and verifies OBO scopes** `ai-gateway` + `genie` + `sql`; deployment fails if User
    Authorization is disabled or the scopes are not effective.
 10. **Syncs source** to `/Workspace/Users/<you>/genie-voice-agent` (respects
    `.gitignore`) and **deploys** in `SNAPSHOT` mode, printing the app URL.
@@ -601,7 +601,7 @@ demo's cardholder or telco datasets.
 Omit `customer_id` / `call_id` unless you are exercising **this** app's demo
 accounts. Those fields overlay Lakebase card/telco facts that are not yours.
 
-Genie tools run as **you** (`user_api_scopes`: `genie`, `sql`). You can only
+Genie tools run as **you** (`user_api_scopes`: `ai-gateway`, `genie`, `sql`). You can only
 reach a space you already have `CAN_RUN` on. If `space_name` is omitted, Space
 and Agent Mode fall back to this app's configured demo spaces — that is the
 only time you hit "our cards".
@@ -624,7 +624,7 @@ databricks auth login --host https://<workspace-host>.cloud.databricks.com
 TOKEN=$(databricks auth token -o json | jq -r .access_token)
 ```
 
-M2M (STT/TTS only unless Apps user-authorization has consented `genie`+`sql`):
+M2M (STT/TTS only unless Apps user-authorization has consented `ai-gateway`+`genie`+`sql`):
 
 ```python
 from databricks.sdk.core import Config
@@ -917,6 +917,23 @@ Registration/deployment code (`scripts/ml_asr/`):
 
 The initial models are **candidates**, not active routes. Promote them only after
 isolated latency and multilingual-quality testing (see [`ROADMAP.md`](ROADMAP.md)).
+
+### VoxCPM2 spoken-output integrity eval
+
+Reuse the deployed Qwen STT endpoint as an objective listener for every VoxCPM2
+waveform. The existing streaming benchmark compares the production streaming path
+with buffered generation and native bad-case retry across all 24 app languages:
+
+```bash
+./scripts/ml_asr.sh tts-integrity --languages all --reps 5
+```
+
+The report is written to `.run/tts_integrity_benchmark.json`. It includes TTFA,
+total latency, multilingual CER, and insertion rate for every repetition. Insertion
+rate is the direct guard against TTS rambling: speech recognized by Qwen that was
+not present in the intended response. Use `--max-cer` and
+`--max-insertion-rate` to change the evaluation gate; this benchmark does not add
+an ASR round trip to production playback.
 
 ---
 
