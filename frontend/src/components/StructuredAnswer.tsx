@@ -272,6 +272,33 @@ export function withoutScaffoldingResults(results: AnalysisResult[]): AnalysisRe
   return kept.length ? kept : results;
 }
 
+export function visibleChartResults(results: AnalysisResult[]): AnalysisResult[] {
+  return withoutScaffoldingResults(results).filter(
+    (result) => chartModel(result) !== null
+  );
+}
+
+export function StructuredCharts({
+  results,
+  language,
+}: {
+  results: AnalysisResult[];
+  language?: string;
+}) {
+  const copy = uiCopy(language as InteractionLanguage | undefined);
+  const charted = visibleChartResults(results);
+  if (!charted.length) return null;
+  return (
+    <div className="kb-analysis-visuals">
+      {charted.map((result, index) => (
+        <section className="kb-analysis kb-analysis-chart-card" key={result.itemId || index}>
+          <AnalysisChart result={result} copy={copy} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function withoutEmbeddedQueryMarkdown(
   markdown: string,
   hasTypedResults: boolean
@@ -356,7 +383,6 @@ export function StructuredAnswer({
                 </div>
                 <span>{copy.saRows(String(result.totalRowCount))}</span>
               </div>
-              <AnalysisChart result={result} copy={copy} />
               <ResultTable result={result} copy={copy} language={language ?? ""} />
               {result.sql && (
                 <details className="kb-analysis-sql">

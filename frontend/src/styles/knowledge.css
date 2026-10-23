@@ -271,6 +271,47 @@
   color: var(--kb-text);
   white-space: pre-wrap;
 }
+.kb-clarification {
+  display: grid;
+  gap: 12px;
+}
+.kb-clarification-prompt {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.5;
+  color: var(--kb-text);
+}
+.kb-clarification-options {
+  display: grid;
+  gap: 8px;
+}
+.kb-clarification-option {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid rgba(124, 108, 255, 0.38);
+  border-radius: 11px;
+  background: rgba(124, 108, 255, 0.09);
+  color: #e9e7ff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+.kb-clarification-option:hover:not(:disabled),
+.kb-clarification-option:focus-visible {
+  border-color: rgba(124, 108, 255, 0.78);
+  background: rgba(124, 108, 255, 0.18);
+  transform: translateY(-1px);
+  outline: none;
+}
+.kb-clarification-option:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
 .kb-full-answer {
   margin-top: 16px;
   padding-top: 14px;
@@ -382,6 +423,14 @@
 .kb-analysis-chart {
   width: 100%;
   margin: 4px 0 14px;
+}
+.kb-analysis-visuals {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+.kb-analysis-chart-card .kb-analysis-chart {
+  margin-bottom: 0;
 }
 .kb-analysis-chart-title {
   margin: 0 0 4px 58px;

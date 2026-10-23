@@ -509,7 +509,8 @@ def test_deploy_orders_gateway_before_gpu_and_grants_viewers():
     # caller instead of presenting an open question as a completed answer.
     assert '"kind": "clarification.requested"' in pipeline
     assert 'kind === "clarification.requested"' in knowledge
-    assert "clarificationPending" in knowledge
+    assert "setClarification(readClarification(payload))" in knowledge
+    assert "session.submitText(choice" in knowledge
     # UI-only gates must not prevent the app/Setup page from being deployed.
     assert 'if ! DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE"' in sh
     assert "Continuing so the app and Setup page are deployed" in sh

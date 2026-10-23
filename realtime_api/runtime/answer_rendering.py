@@ -346,6 +346,52 @@ def _first_speakable_sentence(text: str) -> str:
     return (units[0] if units else text).strip()
 
 
+def _table_option_choices(markdown: str, prompt: str) -> tuple[str, ...]:
+    """Read explicit A./B. or 1./2. choices from a preceding Markdown table."""
+    lines = _FENCE_RE.sub("", markdown).splitlines()
+    marker_re = re.compile(r"^\s*([A-Za-z]|\d+)[.)]\s+(.+)$")
+    for index in range(len(lines) - 2):
+        header = lines[index].strip()
+        rule = lines[index + 1].strip()
+        if not (
+            header.count("|") >= 2
+            and re.match(
+                r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$",
+                rule,
+            )
+        ):
+            continue
+        rows: list[list[str]] = []
+        cursor = index + 2
+        while cursor < len(lines) and lines[cursor].count("|") >= 2:
+            cells = [
+                _strip_inline_markdown(cell)
+                for cell in lines[cursor].strip().strip("|").split("|")
+            ]
+            rows.append(cells)
+            cursor += 1
+        marked: list[tuple[str, str]] = []
+        for row in rows:
+            match = marker_re.match(row[0] if row else "")
+            if match:
+                marked.append((match.group(1), row[0]))
+        if len(marked) < 2 or len(marked) != len(rows):
+            continue
+        markers = [marker for marker, _ in marked]
+        if len(set(markers)) != len(markers):
+            continue
+        # The caller-facing question must refer to every marker. This prevents an
+        # ordinary result table whose first column happens to start with a number
+        # from becoming an option selector.
+        if not all(
+            re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", prompt, re.IGNORECASE)
+            for marker in markers
+        ):
+            continue
+        return tuple(label for _, label in marked)
+    return ()
+
+
 def extract_clarification_prompt(text: str) -> ClarificationPrompt | None:
     """Recover an explicit follow-up question and its adjacent choices.
 
@@ -363,6 +409,12 @@ def extract_clarification_prompt(text: str) -> ClarificationPrompt | None:
     if not question_positions:
         return None
     question_index = question_positions[-1]
+    question_units = [
+        unit
+        for unit in _sentence_units(ordered[question_index].text)
+        if any(mark in unit for mark in _QUESTION_END)
+    ]
+    prompt = " ".join(question_units).strip() or ordered[question_index].text
     choices: list[str] = []
     for block in ordered[question_index + 1 :]:
         if block.kind != "list_item":
@@ -370,10 +422,12 @@ def extract_clarification_prompt(text: str) -> ClarificationPrompt | None:
         choice = block.choice_label or _first_speakable_sentence(block.text)
         if choice:
             choices.append(choice)
+    if not choices:
+        choices.extend(_table_option_choices(text, prompt))
     if question_index == 0 and not choices:
         return None
     return ClarificationPrompt(
-        prompt=ordered[question_index].text,
+        prompt=prompt,
         choices=tuple(choices),
     )
 

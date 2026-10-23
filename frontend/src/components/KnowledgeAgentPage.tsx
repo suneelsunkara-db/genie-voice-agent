@@ -15,6 +15,7 @@ import { VoiceOrb } from "./VoiceOrb";
 import {
   AnalysisResult,
   StructuredAnswer,
+  StructuredCharts,
 } from "./StructuredAnswer";
 import { API_BASE_URL, WS_BASE_URL } from "../config";
 import { getAppLanguage } from "../lib/appLanguage";
@@ -72,6 +73,11 @@ type AnswerEvidence = {
   rowCount: number;
   queryResults: AnalysisResult[];
   errorCode: string | null;
+};
+
+type ClarificationRequest = {
+  prompt: string;
+  choices: string[];
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -159,6 +165,19 @@ function readEvidence(payload: Record<string, unknown>): AnswerEvidence | null {
   };
 }
 
+export function readClarification(
+  payload: Record<string, unknown>
+): ClarificationRequest | null {
+  const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+  const choices = Array.isArray(payload.choices)
+    ? payload.choices
+        .filter((choice): choice is string => typeof choice === "string")
+        .map((choice) => choice.trim())
+        .filter(Boolean)
+    : [];
+  return prompt ? { prompt, choices } : null;
+}
+
 export function KnowledgeAgentPage() {
   const [, dispatchTurn] = useReducer(turnReducer, undefined, emptyConversation);
   const [phase, setPhase] = useState<"idle" | "connecting" | "live">("idle");
@@ -187,7 +206,7 @@ export function KnowledgeAgentPage() {
   const [localizationPending, setLocalizationPending] = useState(false);
   const [answerEvidence, setAnswerEvidence] = useState<AnswerEvidence[]>([]);
   const [answerFailure, setAnswerFailure] = useState<string | null>(null);
-  const [clarificationPending, setClarificationPending] = useState(false);
+  const [clarification, setClarification] = useState<ClarificationRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // This page's chrome follows the call language, like the answer does. The
@@ -362,7 +381,7 @@ export function KnowledgeAgentPage() {
             setLocalizationPending(false);
             setAnswerEvidence([]);
             setAnswerFailure(null);
-            setClarificationPending(false);
+            setClarification(null);
           },
           onResponseText: (text, turnId) => {
             dispatchTurn({ type: "response_text", turnId, text });
@@ -408,7 +427,7 @@ export function KnowledgeAgentPage() {
               const evidence = readEvidence(payload);
               if (evidence) setAnswerEvidence((prev) => [...prev, evidence]);
             } else if (kind === "clarification.requested") {
-              setClarificationPending(true);
+              setClarification(readClarification(payload));
             } else if (kind === "turn.failed") {
               const code = typeof payload.code === "string" ? payload.code : "failed";
               setAnswerFailure(code);
@@ -528,6 +547,7 @@ export function KnowledgeAgentPage() {
     setLocalizationPending(false);
     setAnswerEvidence([]);
     setAnswerFailure(null);
+    setClarification(null);
   }, [teardown]);
 
   // A governed workspace read runs for minutes, so the wait gets a visible clock.
@@ -576,12 +596,25 @@ export function KnowledgeAgentPage() {
     setOpenId((prev) => (prev === t.id ? null : t.id));
   }, []);
 
+  const selectClarification = useCallback(
+    (choice: string) => {
+      const session = sessionRef.current;
+      if (!session?.connected || !choice.trim()) return;
+      gateMic();
+      setClarification(null);
+      setCaption(choice);
+      setAgentState("thinking");
+      session.submitText(choice, callLanguageRef.current);
+    },
+    [gateMic]
+  );
+
   const answerStatus = answerFailure
     ? null
     : answerText
       ? agentState === "speaking"
         ? copy.kbStatusSpeaking
-        : clarificationPending
+        : clarification
           ? copy.kbListening
           : copy.kbStatusAnswered
       : copy.kbStatusAsking;
@@ -696,6 +729,25 @@ export function KnowledgeAgentPage() {
                         ? copy.kbTimeout
                         : copy.kbTurnFailed(answerFailure)}
                     </p>
+                  ) : clarification ? (
+                    <div className="kb-clarification">
+                      <p className="kb-clarification-prompt">{clarification.prompt}</p>
+                      {clarification.choices.length > 0 && (
+                        <div className="kb-clarification-options">
+                          {clarification.choices.map((choice) => (
+                            <button
+                              type="button"
+                              className="kb-clarification-option"
+                              key={choice}
+                              disabled={agentState !== "listening"}
+                              onClick={() => selectClarification(choice)}
+                            >
+                              {choice}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ) : answerText ? (
                     <p className="kb-answer-text">{answerText}</p>
                   ) : (
@@ -730,6 +782,12 @@ export function KnowledgeAgentPage() {
                         </ol>
                       )}
                     </div>
+                  )}
+                  {!answerFailure && analysisResults.length > 0 && (
+                    <StructuredCharts
+                      results={analysisResults}
+                      language={callLanguage}
+                    />
                   )}
                   {/* Typed rows render as soon as they arrive, whether or not the
                       spoken summary has landed yet: they come back before the voice

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AnalysisResult,
   chartModel,
+  visibleChartResults,
   withoutEmbeddedQueryMarkdown,
   withoutScaffoldingResults,
 } from "./StructuredAnswer";
@@ -38,6 +39,11 @@ describe("StructuredAnswer data modeling", () => {
 
   it("charts only the measures named by a governed view", () => {
     expect(chartModel(spending)?.measures.map((m) => m.name)).toEqual(["total_spend_sgd"]);
+  });
+
+  it("keeps validated charts visible outside the collapsed evidence disclosure", () => {
+    const tableOnly = { ...spending, itemId: "q2", view: undefined };
+    expect(visibleChartResults([tableOnly, spending])).toEqual([spending]);
   });
 
   it("supports several measures when the governed view selects them", () => {

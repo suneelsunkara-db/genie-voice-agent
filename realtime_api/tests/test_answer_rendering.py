@@ -276,7 +276,7 @@ There is no governed customer-level source.
     prompt = answer_rendering.extract_clarification_prompt(answer)
 
     assert prompt is not None
-    assert prompt.prompt == "How would you like to proceed? I can:"
+    assert prompt.prompt == "How would you like to proceed?"
     assert prompt.choices == (
         "Use a customer cost-allocation source",
         "Forecast account-wide CPU and GPU consumption",
@@ -284,13 +284,44 @@ There is no governed customer-level source.
     )
     spoken = answer_rendering.clarification_speech(prompt)
     assert spoken == (
-        "How would you like to proceed? I can: "
+        "How would you like to proceed? "
         "Use a customer cost-allocation source; "
         "Forecast account-wide CPU and GPU consumption; "
         "Forecast only the small customer-tagged portion."
     )
     assert "…" not in spoken
     assert "There is no governed" not in spoken
+
+
+def test_typed_clarification_reads_marker_labeled_table_choices():
+    answer = """
+## Which workloads do you mean?
+
+The candidates are:
+
+| Scope | Meaning | Usage |
+|---|---|---|
+| **A. Managed databases** | Operational databases | 9M |
+| **B. SQL warehouses** | Analytics queries | 25M |
+| **C. A and B together** | Database and SQL compute | 39M |
+| **D. Every compute workload** | All compute products | 74M |
+
+**Which option should I use: A, B, C or D?** You can also name a workspace.
+"""
+
+    prompt = answer_rendering.extract_clarification_prompt(answer)
+
+    assert prompt is not None
+    assert prompt.prompt == "Which option should I use: A, B, C or D?"
+    assert prompt.choices == (
+        "A. Managed databases",
+        "B. SQL warehouses",
+        "C. A and B together",
+        "D. Every compute workload",
+    )
+    spoken = answer_rendering.clarification_speech(prompt)
+    assert all(choice in spoken for choice in prompt.choices)
+    assert "You can also name a workspace" not in spoken
 
 
 @pytest.mark.parametrize(
