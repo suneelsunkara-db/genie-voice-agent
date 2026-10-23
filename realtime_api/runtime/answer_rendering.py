@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 import re
 import unicodedata
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Iterator
 
@@ -217,6 +218,24 @@ _ENGLISH_DATE_RANGE_RE = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class ClarificationPrompt:
+    """A caller-facing question and its ordered upstream-authored choices."""
+
+    prompt: str
+    choices: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        return {"prompt": self.prompt, "choices": list(self.choices)}
+
+
+@dataclass(frozen=True)
+class _SpeechBlock:
+    kind: str
+    text: str
+    choice_label: str | None = None
+
+
 def _strip_inline_markdown(text: str) -> str:
     """Convert one Markdown block to plain speech without interpreting its facts."""
     def replace_link(match: re.Match[str]) -> str:
@@ -261,13 +280,13 @@ def _clarify_english_date_ranges(text: str) -> str:
 
 def _speech_blocks(
     markdown: str,
-) -> tuple[list[str], list[str], list[str], list[tuple[str, str]]]:
+) -> tuple[list[str], list[str], list[str], list[_SpeechBlock]]:
     """Return categorized and document-ordered plain blocks from Markdown."""
     without_fences = _FENCE_RE.sub("", markdown)
     paragraphs: list[str] = []
     list_items: list[str] = []
     headings: list[str] = []
-    ordered: list[tuple[str, str]] = []
+    ordered: list[_SpeechBlock] = []
     current: list[str] = []
 
     def flush() -> None:
@@ -275,7 +294,7 @@ def _speech_blocks(
             value = _strip_inline_markdown(" ".join(current))
             if value:
                 paragraphs.append(value)
-                ordered.append(("paragraph", value))
+                ordered.append(_SpeechBlock("paragraph", value))
             current.clear()
 
     for raw_line in without_fences.splitlines():
@@ -297,7 +316,7 @@ def _speech_blocks(
             value = _strip_inline_markdown(heading.group(1))
             if value:
                 headings.append(value)
-                ordered.append(("heading", value))
+                ordered.append(_SpeechBlock("heading", value))
             continue
         item = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", line)
         if item:
@@ -305,12 +324,76 @@ def _speech_blocks(
             value = _strip_inline_markdown(item.group(1))
             if value:
                 list_items.append(value)
-                ordered.append(("list_item", value))
+                label_match = re.match(
+                    r"^(?:\*\*|__)(.+?)(?:\*\*|__)(?:\s|[.,:;!?]|$)",
+                    item.group(1),
+                )
+                label = (
+                    _strip_inline_markdown(label_match.group(1))
+                    if label_match
+                    else None
+                )
+                ordered.append(_SpeechBlock("list_item", value, label))
             continue
         line = re.sub(r"^>\s?", "", line)
         current.append(line)
     flush()
     return paragraphs, list_items, headings, ordered
+
+
+def _first_speakable_sentence(text: str) -> str:
+    units = _sentence_units(text)
+    return (units[0] if units else text).strip()
+
+
+def extract_clarification_prompt(text: str) -> ClarificationPrompt | None:
+    """Recover an explicit follow-up question and its adjacent choices.
+
+    This is document-structure parsing, not intent classification: a question only
+    becomes a clarification contract when it follows earlier answer content or owns
+    an immediately adjacent list. Unrelated bullets elsewhere are never attached.
+    """
+    _, _, _, ordered = _speech_blocks(text)
+    question_positions = [
+        index
+        for index, block in enumerate(ordered)
+        if block.kind == "paragraph"
+        and any(mark in block.text for mark in _QUESTION_END)
+    ]
+    if not question_positions:
+        return None
+    question_index = question_positions[-1]
+    choices: list[str] = []
+    for block in ordered[question_index + 1 :]:
+        if block.kind != "list_item":
+            break
+        choice = block.choice_label or _first_speakable_sentence(block.text)
+        if choice:
+            choices.append(choice)
+    if question_index == 0 and not choices:
+        return None
+    return ClarificationPrompt(
+        prompt=ordered[question_index].text,
+        choices=tuple(choices),
+    )
+
+
+def clarification_speech(prompt: ClarificationPrompt) -> str:
+    """Produce bounded speech while guaranteeing every offered choice is present."""
+    question = _bounded_speech_text(prompt.prompt, max_chars=180)
+    if not prompt.choices:
+        return question
+    total_choice_budget = max(240, 520 - len(question))
+    per_choice_budget = max(72, total_choice_budget // len(prompt.choices))
+    choices = [
+        _bounded_speech_text(choice, max_chars=per_choice_budget)
+        for choice in prompt.choices
+    ]
+    spoken_choices = " ".join(
+        f"{choice.rstrip(' .')}{';' if index < len(choices) else '.'}"
+        for index, choice in enumerate(choices, start=1)
+    )
+    return certify_speech_text(f"{question} {spoken_choices}")
 
 
 def _protect_facts(text: str) -> tuple[str, list[str]]:
@@ -418,47 +501,17 @@ def _bounded_speech_text(text: str, *, max_chars: int = _MAX_SPEECH_CHARS) -> st
 
 
 def _extractive_voice_excerpt(text: str) -> str:
-    """Select the outcome and preserve any later question directed at the caller.
+    """Select a concise answer, or the complete typed clarification contract."""
+    clarification = extract_clarification_prompt(text)
+    if clarification is not None:
+        # The panel keeps the full analysis. Voice asks only for the input needed
+        # to continue, avoiding the confusing "I can't … I can …" preamble.
+        return clarification_speech(clarification)
 
-    Governed agents often explain what they found before asking for the one missing
-    input. A prefix-only summary silently drops that question and turns an open
-    conversation into an apparent dead end. Question punctuation is structural
-    across the maintained languages, so this does not classify business intent or
-    rewrite the upstream agent's words.
-    """
-    paragraphs, list_items, headings, ordered = _speech_blocks(text)
+    paragraphs, list_items, headings, _ = _speech_blocks(text)
     candidates = paragraphs or list_items or headings
     if not candidates:
         raise SpeechRenderError("upstream answer contained no speakable prose")
-
-    follow_up = ""
-    paragraph_positions = [
-        index
-        for index, (kind, block) in enumerate(ordered)
-        if kind == "paragraph" and any(mark in block for mark in _QUESTION_END)
-    ]
-    if paragraph_positions:
-        question_index = paragraph_positions[-1]
-        # A clarification's numbered/bulleted choices belong to the question
-        # immediately before them. Preserve that adjacency instead of flattening
-        # all list items from the report into one unrelated collection.
-        follow_up_blocks = [ordered[question_index][1]]
-        for kind, block in ordered[question_index + 1 :]:
-            if kind != "list_item":
-                break
-            follow_up_blocks.append(block)
-        if question_index > 0:
-            follow_up = _bounded_speech_text(
-                " ".join(follow_up_blocks),
-                max_chars=min(400, _MAX_SPEECH_CHARS),
-            )
-
-    if follow_up:
-        # Reserve the voice budget for the caller-facing question. The first
-        # paragraph carries the outcome; intervening detail remains in the panel.
-        outcome_budget = max(160, _MAX_SPEECH_CHARS - len(follow_up) - 1)
-        outcome = _bounded_speech_text(candidates[0], max_chars=outcome_budget)
-        return _bounded_speech_text(f"{outcome} {follow_up}")
 
     selected: list[str] = []
     for block in candidates:

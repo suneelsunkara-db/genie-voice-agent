@@ -187,6 +187,7 @@ export function KnowledgeAgentPage() {
   const [localizationPending, setLocalizationPending] = useState(false);
   const [answerEvidence, setAnswerEvidence] = useState<AnswerEvidence[]>([]);
   const [answerFailure, setAnswerFailure] = useState<string | null>(null);
+  const [clarificationPending, setClarificationPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // This page's chrome follows the call language, like the answer does. The
@@ -361,6 +362,7 @@ export function KnowledgeAgentPage() {
             setLocalizationPending(false);
             setAnswerEvidence([]);
             setAnswerFailure(null);
+            setClarificationPending(false);
           },
           onResponseText: (text, turnId) => {
             dispatchTurn({ type: "response_text", turnId, text });
@@ -405,6 +407,8 @@ export function KnowledgeAgentPage() {
             } else if (kind === "evidence.available") {
               const evidence = readEvidence(payload);
               if (evidence) setAnswerEvidence((prev) => [...prev, evidence]);
+            } else if (kind === "clarification.requested") {
+              setClarificationPending(true);
             } else if (kind === "turn.failed") {
               const code = typeof payload.code === "string" ? payload.code : "failed";
               setAnswerFailure(code);
@@ -577,7 +581,9 @@ export function KnowledgeAgentPage() {
     : answerText
       ? agentState === "speaking"
         ? copy.kbStatusSpeaking
-        : copy.kbStatusAnswered
+        : clarificationPending
+          ? copy.kbListening
+          : copy.kbStatusAnswered
       : copy.kbStatusAsking;
 
   const waitElapsed =

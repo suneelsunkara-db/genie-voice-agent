@@ -1072,6 +1072,12 @@ async def process_turn(
                     returned.get("timeout") if isinstance(returned, dict) else None,
                 )
                 if isinstance(returned, dict):
+                    # Genie One is explicitly instructed to answer in the caller's
+                    # language. Preserve that authoritative session language so
+                    # the renderer does not translate and potentially rewrite a
+                    # typed clarification prompt or its choices.
+                    returned["source_language"] = language
+                    raw = json.dumps(returned, default=str)
                     conversation.bind(returned.get("conversation_id"))
                     conversation.record(
                         question=question,
@@ -1510,8 +1516,12 @@ async def process_turn(
         render_question = request_text
         render_source = ""
         render_source_language = language
+        clarification_payload: dict[str, object] | None = None
         from ..runtime import evidence_from_tool_result
-        from ..runtime.answer_rendering import upstream_answer_render
+        from ..runtime.answer_rendering import (
+            extract_clarification_prompt,
+            upstream_answer_render,
+        )
 
         for invocation in tool_invocations:
             name = str(invocation.get("name") or "")
@@ -1533,6 +1543,9 @@ async def process_turn(
                 render_source_language = str(
                     ev.meta.get("source_language") or language
                 )
+                clarification = extract_clarification_prompt(panel_report)
+                if clarification is not None:
+                    clarification_payload = clarification.as_dict()
                 args = invocation.get("arguments")
                 if isinstance(args, dict) and args.get("question"):
                     render_question = str(args["question"])
@@ -1620,6 +1633,22 @@ async def process_turn(
 
                 localization_task = asyncio.create_task(asyncio.to_thread(_localize))
 
+        if clarification_payload is not None:
+            last_event_seq += 1
+            session.event_seq_by_turn[turn_id] = last_event_seq
+            trace.set_metric("clarification_requested", True)
+            trace.set_metric(
+                "clarification_choice_count",
+                len(clarification_payload.get("choices") or []),
+            )
+            yield {
+                "type": "turn.event",
+                "turn_id": turn_id,
+                "seq": last_event_seq,
+                "kind": "clarification.requested",
+                "payload": clarification_payload,
+            }
+
         # Transport sanitation removes accidental tool-call markup. It does not
         # inspect, rewrite, reject, or replace Genie/Agent Mode answer content.
         speech_admission = admit_speech_output(
@@ -1662,11 +1691,16 @@ async def process_turn(
         # tts_first_ms is this synthesis' own time-to-first-audio; the turn-level
         # figure the caller actually felt is trace.ttft_ms, which may belong to a
         # filler that played earlier.
+        from ..runtime.answer_rendering import split_speech_segments
+
+        speech_segments = split_speech_segments(speech_text)
+        trace.set_metric("tts_segment_count", len(speech_segments))
         tts_span = trace.span(
             "tts",
             "TTS",
             input={
                 "text": speech_text,
+                "segments": speech_segments,
                 "language": language,
                 "basis": "evidence" if tool_invocations else "conversation",
             },

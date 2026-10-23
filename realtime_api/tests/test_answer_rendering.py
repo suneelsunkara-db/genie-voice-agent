@@ -220,7 +220,7 @@ With that, I can show the requested monthly breakdown.
         "en-US",
     )
 
-    assert "can't answer this as asked yet" in spoken
+    assert "can't answer this as asked yet" not in spoken
     assert "Do you have a customer-level cost source I should use?" in spoken
     assert "Or would you like me to use the Databricks billing tables instead?" in spoken
     assert "What I checked" not in spoken
@@ -261,6 +261,38 @@ breaks compute cost down by customer.
     assert serving.calls == []
 
 
+def test_typed_clarification_uses_authored_choice_labels_without_tail_truncation():
+    answer = """
+## I can't forecast customer-level CPU and GPU use
+
+There is no governed customer-level source.
+
+**How would you like to proceed?** I can:
+1. **Use a customer cost-allocation source** you point me to (for example, a mapping from workspace or tag to customer).
+2. **Forecast account-wide CPU and GPU consumption**, by month and in DBUs or list-price USD, for the next 12–18 months.
+3. **Forecast only the small customer-tagged portion**, by customer. It covers less than 1% of usage.
+"""
+
+    prompt = answer_rendering.extract_clarification_prompt(answer)
+
+    assert prompt is not None
+    assert prompt.prompt == "How would you like to proceed? I can:"
+    assert prompt.choices == (
+        "Use a customer cost-allocation source",
+        "Forecast account-wide CPU and GPU consumption",
+        "Forecast only the small customer-tagged portion",
+    )
+    spoken = answer_rendering.clarification_speech(prompt)
+    assert spoken == (
+        "How would you like to proceed? I can: "
+        "Use a customer cost-allocation source; "
+        "Forecast account-wide CPU and GPU consumption; "
+        "Forecast only the small customer-tagged portion."
+    )
+    assert "…" not in spoken
+    assert "There is no governed" not in spoken
+
+
 @pytest.mark.parametrize(
     ("language", "outcome", "question"),
     [
@@ -280,7 +312,7 @@ def test_localized_spoken_excerpt_preserves_follow_up_question(
         source_language=language,
     )
 
-    assert outcome in spoken
+    assert outcome not in spoken
     assert question in spoken
 
 

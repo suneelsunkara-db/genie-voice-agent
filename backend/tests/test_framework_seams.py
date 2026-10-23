@@ -499,6 +499,17 @@ def test_deploy_orders_gateway_before_gpu_and_grants_viewers():
     assert 'app.mount("/story"' in main
     assert 'href="/story/"' in home
     assert "Story Deck" in home
+    pipeline = (
+        REPO / "realtime_api/pipelines/speech_llm_toolassist_speech.py"
+    ).read_text(encoding="utf-8")
+    knowledge = (
+        REPO / "frontend/src/components/KnowledgeAgentPage.tsx"
+    ).read_text(encoding="utf-8")
+    # Genie follow-ups are an explicit wire contract: the page waits for the
+    # caller instead of presenting an open question as a completed answer.
+    assert '"kind": "clarification.requested"' in pipeline
+    assert 'kind === "clarification.requested"' in knowledge
+    assert "clarificationPending" in knowledge
     # UI-only gates must not prevent the app/Setup page from being deployed.
     assert 'if ! DATABRICKS_CONFIG_PROFILE="$DATABRICKS_PROFILE"' in sh
     assert "Continuing so the app and Setup page are deployed" in sh

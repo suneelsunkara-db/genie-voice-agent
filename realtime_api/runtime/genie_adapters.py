@@ -244,7 +244,7 @@ def evidence_from_genie_one(result: dict[str, Any] | None) -> Evidence:
         "conversation_id": result.get("conversation_id"),
         "response_id": result.get("response_id"),
         "status": status or None,
-        "source_language": "en",
+        "source_language": str(result.get("source_language") or "en"),
         # Genie One's own thread URL: the caller can open the exact conversation the
         # spoken answer came from, which is stronger provenance than an id.
         "deep_link": result.get("deep_link"),

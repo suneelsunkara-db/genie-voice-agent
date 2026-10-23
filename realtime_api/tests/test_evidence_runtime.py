@@ -94,6 +94,7 @@ def test_genie_one_live_payload_shape_is_mapped():
             "status": "completed",
             "deep_link": "https://example.cloud.databricks.com/one/chat/threads/5ed7",
             "final_answer": "## Available domains\n\nBanking, contact center, card issuer.",
+            "source_language": "ja-JP",
             "progress_steps": None,
             "narration_instruction": None,
             "query_items": None,
@@ -104,6 +105,7 @@ def test_genie_one_live_payload_shape_is_mapped():
     assert "Banking" in ev.prose.text
     assert ev.prose.citations == ["genie_one:f9ba376b9da448bab481989311dee05d"]
     assert ev.meta["deep_link"].endswith("threads/5ed7")
+    assert ev.meta["source_language"] == "ja-JP"
 
 
 def test_genie_one_typed_query_results_become_table_evidence():
