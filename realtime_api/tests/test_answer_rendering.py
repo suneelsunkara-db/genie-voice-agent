@@ -192,6 +192,64 @@ def test_english_spoken_excerpt_is_extractive_and_model_free(monkeypatch):
     assert serving.calls == []
 
 
+def test_spoken_excerpt_preserves_genie_one_clarification_question(monkeypatch):
+    serving = _Serving()
+    monkeypatch.setattr(
+        "realtime_api.serving_factory.shared_serving",
+        lambda: serving,
+    )
+    answer = """
+## I couldn't find a governed source for customer CPU/GPU spend
+
+None of the governed sources I can reach break down CPU or GPU spend by customer,
+so I can't answer this as asked yet.
+
+**What I checked:**
+
+- Customer records do not hold CPU or GPU costs.
+- The closest match is account-level billing data.
+
+**One question:** Do you have a customer-level cost source I should use?
+Or would you like me to use the Databricks billing tables instead?
+With that, I can show the requested monthly breakdown.
+"""
+
+    spoken = answer_rendering.summarize_for_voice(
+        "How much are we spending on CPUs and GPUs for our customers?",
+        answer,
+        "en-US",
+    )
+
+    assert "can't answer this as asked yet" in spoken
+    assert "Do you have a customer-level cost source I should use?" in spoken
+    assert "Or would you like me to use the Databricks billing tables instead?" in spoken
+    assert "What I checked" not in spoken
+    assert serving.calls == []
+
+
+@pytest.mark.parametrize(
+    ("language", "outcome", "question"),
+    [
+        ("ar-SA", "لم أجد مصدرًا محكومًا.", "هل تريد استخدام بيانات الفوترة؟"),
+        ("ja-JP", "管理対象の情報源が見つかりませんでした。", "請求データを使用しますか？"),
+    ],
+)
+def test_localized_spoken_excerpt_preserves_follow_up_question(
+    language, outcome, question
+):
+    answer = f"{outcome}\n\n追加の詳細です。\n\n{question}"
+
+    spoken = answer_rendering.summarize_for_voice(
+        "question",
+        answer,
+        language,
+        source_language=language,
+    )
+
+    assert outcome in spoken
+    assert question in spoken
+
+
 def test_markdown_spend_answer_preserves_decimal_facts_for_speech(monkeypatch):
     serving = _Serving()
     monkeypatch.setattr(

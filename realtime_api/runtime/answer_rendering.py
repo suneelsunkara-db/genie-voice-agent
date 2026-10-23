@@ -196,6 +196,7 @@ _FACT_ATOM_RE = re.compile(
     re.I,
 )
 _SPEECH_END = frozenset(".!?。！？؟।…;؛")
+_QUESTION_END = frozenset("?？؟")
 _CLAUSE_END = frozenset(",;:—–，；،")
 _MAX_SPEECH_CHARS = 640
 _MAX_SEGMENT_FACTS = 3
@@ -411,11 +412,40 @@ def _bounded_speech_text(text: str, *, max_chars: int = _MAX_SPEECH_CHARS) -> st
 
 
 def _extractive_voice_excerpt(text: str) -> str:
-    """Select answer-bearing Markdown blocks without punctuation tokenization."""
+    """Select the outcome and preserve any later question directed at the caller.
+
+    Governed agents often explain what they found before asking for the one missing
+    input. A prefix-only summary silently drops that question and turns an open
+    conversation into an apparent dead end. Question punctuation is structural
+    across the maintained languages, so this does not classify business intent or
+    rewrite the upstream agent's words.
+    """
     paragraphs, list_items, headings = _speech_blocks(text)
     candidates = paragraphs or list_items or headings
     if not candidates:
         raise SpeechRenderError("upstream answer contained no speakable prose")
+
+    follow_up = ""
+    for block in reversed(paragraphs[1:]):
+        question_units = [
+            unit
+            for unit in _sentence_units(block)
+            if any(mark in unit for mark in _QUESTION_END)
+        ]
+        if question_units:
+            follow_up = _bounded_speech_text(
+                " ".join(question_units),
+                max_chars=min(400, _MAX_SPEECH_CHARS),
+            )
+            break
+
+    if follow_up:
+        # Reserve the voice budget for the caller-facing question. The first
+        # paragraph carries the outcome; intervening detail remains in the panel.
+        outcome_budget = max(160, _MAX_SPEECH_CHARS - len(follow_up) - 1)
+        outcome = _bounded_speech_text(candidates[0], max_chars=outcome_budget)
+        return _bounded_speech_text(f"{outcome} {follow_up}")
+
     selected: list[str] = []
     for block in candidates:
         if selected and len(" ".join((*selected, block))) > _MAX_SPEECH_CHARS:
@@ -531,7 +561,9 @@ def summarize_for_voice(
             "needed to answer the user's question: use at most four placeholders, "
             "never use one twice, and do not invent any number, date, ID, amount, "
             "name, or claim. Write two or three short sentences with at most two "
-            "facts per sentence and no parenthetical asides. Use no markdown, "
+            "facts per sentence and no parenthetical asides. If the extract asks "
+            "the caller a question, preserve and ask that question; it is required "
+            "conversation state. Use no markdown, "
             "headings, bullets, URLs, or citation markers. Output only what the "
             "assistant should speak."
         )
@@ -542,6 +574,7 @@ def summarize_for_voice(
             f"code '{lang}'. Tokens such as [[FACT_0]] are immutable factual placeholders: "
             "return every placeholder exactly once and do not translate, alter, duplicate, "
             "or omit one. Do not summarize, round, omit, infer, or add anything. "
+            "If the extract asks the caller a question, preserve and ask it. "
             "Use no markdown, headings, bullets, or citation markers. Output only the "
             "sentences the agent should speak."
         )
